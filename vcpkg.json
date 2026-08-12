@@ -1,0 +1,11 @@
+{
+  "name": "oiio-bind-ci",
+  "version-string": "0.1.0",
+  "builtin-baseline": "9e593bb18ea69cc5095e012465dcd675a822ed0d",
+  "dependencies": [
+    {
+      "name": "openimageio",
+      "default-features": false
+    }
+  ]
+}

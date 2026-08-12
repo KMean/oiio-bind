@@ -1,0 +1,6 @@
+name: oiio-bind-ci
+channels:
+  - conda-forge
+dependencies:
+  - libopenimageio=3.1.14.1
+  - pkg-config

@@ -97,10 +97,12 @@ directory available through `PATH`.
 
 ### Development
 
-Build `oiio` and `oiio-sys` using `cargo`.
+Build `oiio` and `oiio-sys` using `cargo`. The workspace `Cargo.lock` is
+committed so CI and contributors test the same Rust dependency graph; it does
+not constrain applications that depend on these library crates.
 
 ```bash
-cargo build --all
+cargo build --workspace --locked
 ```
 
 
@@ -109,8 +111,15 @@ cargo build --all
 The test suite in the `tests` directory is used to validate the `oiio` crate.
 
 ```bash
-cargo test --all
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+cargo test --workspace --release --locked
 ```
+
+GitHub Actions runs the optimized suite against OpenImageIO 3.1.14 on Linux,
+macOS, and Windows. The Windows job deliberately uses the vcpkg discovery path;
+the Unix jobs use `pkg-config`.
 
 
 ## Links
