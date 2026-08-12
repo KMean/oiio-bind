@@ -16,7 +16,7 @@ line is established and tested deliberately.
 - [x] Build and run PNG smoke tests on Windows with OIIO 3.1.
 - [x] Migrate `ImageCache` and `ImageBuf` cache ownership to `std::shared_ptr`.
 - [x] Make trivial cross-language layouts explicit and test them.
-- [ ] Add Linux, Windows, and macOS CI for supported OIIO versions.
+- [x] Add Linux, Windows, and macOS CI for supported OIIO versions.
 
 ## 1. Safety foundation
 
