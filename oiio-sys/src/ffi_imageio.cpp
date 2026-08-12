@@ -1,4 +1,5 @@
 #include "ffi_imageio.h"
+#include "ffi_pixel.h"
 #include "oiio-sys/src/imageio.rs.h"
 #include <OpenImageIO/imageio.h>
 #include <OpenImageIO/string_view.h>
@@ -223,6 +224,12 @@ imagespec_deep(const ImageSpec& spec)
     return spec.deep;
 }
 
+bool
+imagespec_valid(const ImageSpec& spec)
+{
+    return spec.format != OIIO::TypeDesc::UNKNOWN;
+}
+
 std::unique_ptr<std::vector<std::string>>
 imagespec_channel_names(const ImageSpec& spec)
 {
@@ -309,32 +316,25 @@ imageinput_valid_file(const ImageInput& imageinput, const rust::Str filename)
     return imageinput.valid_file(std::string(filename));
 }
 
-rust::String
-imageinput_spec(OIIO::ImageInput& imageinput)
-{
-    std::string err = imageinput.geterror();
-
-    return rust::String(err);
-}
-
 const ImageSpec&
 imageinput_spec(const OIIO::ImageInput& imageinput)
 {
     return imageinput.spec();
 }
 
-const ImageSpec&
+std::unique_ptr<ImageSpec>
 imageinput_spec_subimage_miplevel(OIIO::ImageInput& imageinput,
                                   int32_t subimage, int32_t miplevel)
 {
-    return imageinput.spec(subimage, miplevel);
+    return std::make_unique<ImageSpec>(imageinput.spec(subimage, miplevel));
 }
 
-const ImageSpec&
+std::unique_ptr<ImageSpec>
 imageinput_spec_dimensions(OIIO::ImageInput& imageinput, int32_t subimage,
                            int32_t miplevel)
 {
-    return imageinput.spec_dimensions(subimage, miplevel);
+    return std::make_unique<ImageSpec>(
+        imageinput.spec_dimensions(subimage, miplevel));
 }
 
 bool
@@ -387,6 +387,29 @@ imageinput_read_image(ImageInput& imageinput, int subimage, int miplevel,
 {
     return imageinput.read_image(subimage, miplevel, chbegin, chend, format,
                                  data.data(), xstride, ystride, zstride);
+}
+
+bool
+imageinput_read_image_span(ImageInput& imageinput, int subimage, int miplevel,
+                           int chbegin, int chend, TypeDesc format,
+                           rust::Slice<uint8_t> data)
+{
+    const ImageSpec spec = imageinput.spec_dimensions(subimage, miplevel);
+    if (chend < 0 || chend > spec.nchannels)
+        chend = spec.nchannels;
+
+    detail::PixelLayout layout;
+    if (!imagespec_valid(spec) || chbegin < 0 || chbegin >= chend
+        || !detail::bounded_pixel_layout(
+            static_cast<int64_t>(chend) - chbegin, spec.width, spec.height,
+            spec.depth, format, data.size(), layout)) {
+        imageinput.errorfmt("invalid dimensions or destination buffer for bounded image read");
+        return false;
+    }
+
+    const auto output = detail::writable_byte_span(data, layout);
+    return imageinput.read_image(subimage, miplevel, chbegin, chend, format,
+                                 output);
 }
 
 bool

@@ -42,6 +42,7 @@ fn main() -> Result<()> {
 
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/lib.rs");
+    println!("cargo:rerun-if-changed=src/ffi_pixel.h");
 
     for name in NAMES {
         println!("cargo:rerun-if-changed=src/{name}.rs");

@@ -19,14 +19,35 @@ including first-class `ImageCache` support.
 
 ## Usage
 
-Building `oiio-sys` requires an OpenImageIO 3.1.x development installation,
+Building `oiio-sys` requires an OpenImageIO 3.1.4 or newer 3.1.x development installation,
 including the C++ headers and libraries. The bindings currently target the
 OpenImageIO 3.1 API.
 
-Add oiio to your `Cargo.toml`:
+Until the next crates.io release, depend on the modernization branch:
 
-    [dependencies]
-    oiio = "0.2.0"
+```toml
+[dependencies]
+oiio = { git = "https://github.com/KMean/oiio-bind", branch = "codex/modern-oiio-3" }
+```
+
+Read an image through a private, thread-safe cache:
+
+```rust,no_run
+use oiio::ImageCache;
+use std::path::Path;
+
+let cache = ImageCache::new()?;
+let path = Path::new("image.exr");
+let spec = cache.image_spec(path)?;
+let roi = spec.data_window()?;
+let mut pixels = vec![0.0_f32; roi.element_count()?];
+cache.get_pixels_into(path, roi, &mut pixels)?;
+# Ok::<(), oiio::Error>(())
+```
+
+The contiguous safe APIs support `u8`, `u16`, [`half::f16`](https://docs.rs/half),
+and `f32` pixel components. A sealed `Pixel` trait keeps the Rust element type,
+OpenImageIO type descriptor, alignment, and buffer byte size consistent.
 
 The `oiio` crate is built using `cargo build`. `oiio-sys` discovers
 OpenImageIO in this order:
@@ -94,9 +115,9 @@ cargo test --all
 
 ## Links
 
-- [source repository](https://github.com/vfx-rs/oiio-bind)
+- [source repository](https://github.com/KMean/oiio-bind)
 - [oiio on crates.io](https://crates.io/crates/oiio/latest)
 - [oiio-sys on crates.io](https://crates.io/crates/oiio-sys/latest)
 - [oiio documentation](https://docs.rs/crate/oiio/latest)
 - [oiio-sys documentation](https://docs.rs/crate/oiio-sys/latest)
-- [OpenImageIO C++ documentation](https://openimageio.readthedocs.io/en/latest/)
+- [OpenImageIO 3.1 C++ documentation](https://openimageio.readthedocs.io/en/v3.1.12.0/)

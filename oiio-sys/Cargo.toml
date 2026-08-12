@@ -12,8 +12,8 @@ license = "Apache-2.0"
 keywords = ["graphics", "images", "render", "texture", "vfx"]
 categories = ["graphics", "multimedia::images", "rendering::data-formats"]
 readme = "README.md"
-homepage = "https://github.com/vfx-rs/oiio-bind"
-repository = "https://github.com/vfx-rs/oiio-bind.git"
+homepage = "https://github.com/KMean/oiio-bind"
+repository = "https://github.com/KMean/oiio-bind.git"
 links = "OpenImageIO"
 
 [dependencies]

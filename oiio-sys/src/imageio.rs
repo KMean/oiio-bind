@@ -100,6 +100,7 @@ mod ffi {
         pub fn imagespec_alpha_channel(spec: &ImageSpec) -> i32;
         pub fn imagespec_z_channel(spec: &ImageSpec) -> i32;
         pub fn imagespec_deep(spec: &ImageSpec) -> bool;
+        pub fn imagespec_valid(spec: &ImageSpec) -> bool;
         pub fn imagespec_channel_names(spec: &ImageSpec) -> UniquePtr<CxxVector<CxxString>>;
 
         // ImageInput
@@ -129,12 +130,12 @@ mod ffi {
             imageinput: Pin<&mut ImageInput>,
             subimage: i32,
             miplevel: i32,
-        ) -> &ImageSpec;
+        ) -> UniquePtr<ImageSpec>;
         pub fn imageinput_spec_dimensions(
             imageinput: Pin<&mut ImageInput>,
             subimage: i32,
             miplevel: i32,
-        ) -> &ImageSpec;
+        ) -> UniquePtr<ImageSpec>;
         pub fn imageinput_close(imageinput: Pin<&mut ImageInput>) -> bool;
         pub fn imageinput_current_subimage(imageinput: &ImageInput) -> i32;
         pub fn imageinput_current_miplevel(imageinput: &ImageInput) -> i32;
@@ -143,7 +144,7 @@ mod ffi {
             subimage: i32,
             miplevel: i32,
         ) -> bool;
-        pub fn imageinput_read_scanline(
+        pub unsafe fn imageinput_read_scanline(
             imageinput: Pin<&mut ImageInput>,
             y: i32,
             z: i32,
@@ -152,7 +153,7 @@ mod ffi {
             xstride: i64,
         ) -> bool;
         #[allow(clippy::too_many_arguments)]
-        pub fn imageinput_read_scanlines(
+        pub unsafe fn imageinput_read_scanlines(
             imageinput: Pin<&mut ImageInput>,
             subimage: i32,
             miplevel: i32,
@@ -167,7 +168,7 @@ mod ffi {
             ystride: i64,
         ) -> bool;
         #[allow(clippy::too_many_arguments)]
-        pub fn imageinput_read_image(
+        pub unsafe fn imageinput_read_image(
             imageinput: Pin<&mut ImageInput>,
             subimage: i32,
             miplevel: i32,
@@ -178,6 +179,17 @@ mod ffi {
             xstride: i64,
             ystride: i64,
             zstride: i64,
+        ) -> bool;
+        /// The byte slice must be aligned for and contain initialized storage
+        /// for `format`. Its length must exactly match the requested image.
+        pub unsafe fn imageinput_read_image_span(
+            imageinput: Pin<&mut ImageInput>,
+            subimage: i32,
+            miplevel: i32,
+            chbegin: i32,
+            chend: i32,
+            format: TypeDesc,
+            data: &mut [u8],
         ) -> bool;
         #[allow(clippy::too_many_arguments)]
         pub fn imageinput_read_native_deep_scanlines(
@@ -212,7 +224,7 @@ mod ffi {
             miplevel: i32,
             data: Pin<&mut DeepData>,
         ) -> bool;
-        pub fn imageinput_read_native_scanline(
+        pub unsafe fn imageinput_read_native_scanline(
             imageinput: Pin<&mut ImageInput>,
             subimage: i32,
             miplevel: i32,
@@ -222,7 +234,7 @@ mod ffi {
         ) -> bool;
 
         #[allow(clippy::too_many_arguments)]
-        pub fn imageinput_read_native_scanlines(
+        pub unsafe fn imageinput_read_native_scanlines(
             imageinput: Pin<&mut ImageInput>,
             subimage: i32,
             miplevel: i32,
@@ -234,7 +246,7 @@ mod ffi {
             data: &mut [u8],
         ) -> bool;
 
-        pub fn imageinput_read_native_tile(
+        pub unsafe fn imageinput_read_native_tile(
             imageinput: Pin<&mut ImageInput>,
             subimage: i32,
             miplevel: i32,
@@ -312,7 +324,7 @@ mod ffi {
 
         pub fn imageoutput_close(imageoutput: Pin<&mut ImageOutput>) -> bool;
 
-        pub fn imageoutput_write_scanline(
+        pub unsafe fn imageoutput_write_scanline(
             imageoutput: Pin<&mut ImageOutput>,
             y: i32,
             z: i32,
@@ -321,7 +333,7 @@ mod ffi {
             xstride: i64,
         ) -> bool;
 
-        pub fn imageoutput_write_scanlines(
+        pub unsafe fn imageoutput_write_scanlines(
             imageoutput: Pin<&mut ImageOutput>,
             ybegin: i32,
             yend: i32,
@@ -332,7 +344,7 @@ mod ffi {
             ystride: i64,
         ) -> bool;
 
-        pub fn imageoutput_write_tile(
+        pub unsafe fn imageoutput_write_tile(
             imageoutput: Pin<&mut ImageOutput>,
             x: i32,
             y: i32,
@@ -344,7 +356,7 @@ mod ffi {
             zstride: i64,
         ) -> bool;
 
-        pub fn imageoutput_write_tiles(
+        pub unsafe fn imageoutput_write_tiles(
             imageoutput: Pin<&mut ImageOutput>,
             xbegin: i32,
             xend: i32,
@@ -359,7 +371,7 @@ mod ffi {
             zstride: i64,
         ) -> bool;
 
-        pub fn imageoutput_write_rectangle(
+        pub unsafe fn imageoutput_write_rectangle(
             imageoutput: Pin<&mut ImageOutput>,
             xbegin: i32,
             xend: i32,
@@ -374,7 +386,7 @@ mod ffi {
             zstride: i64,
         ) -> bool;
 
-        pub fn imageoutput_write_image(
+        pub unsafe fn imageoutput_write_image(
             imageoutput: Pin<&mut ImageOutput>,
             format: TypeDesc,
             data: &mut [u8],
@@ -442,13 +454,13 @@ mod ffi {
 
         pub fn get_error(clear: bool) -> String;
 
-        pub fn attribute(name: &str, type_: TypeDesc, value: &mut [u8]) -> bool;
+        pub unsafe fn attribute(name: &str, type_: TypeDesc, value: &mut [u8]) -> bool;
 
         pub fn attribute_float(name: &str, value: f32) -> bool;
 
         pub fn attribute_int(name: &str, value: i32) -> bool;
 
-        pub fn getattribute(name: &str, type_: TypeDesc, value: &mut [u8]) -> bool;
+        pub unsafe fn getattribute(name: &str, type_: TypeDesc, value: &mut [u8]) -> bool;
 
         pub fn getattribute_int(name: &str, value: &mut i32) -> bool;
 
@@ -475,14 +487,14 @@ mod ffi {
 
         pub fn get_extension_map() -> Vec<ExtensionMapItem>;
 
-        pub fn convert_pixel_values(
+        pub unsafe fn convert_pixel_values(
             src_type: TypeDesc,
             src: &[u8],
             dst_type: TypeDesc,
             dst: &mut [u8],
         ) -> bool;
 
-        pub fn convert_image(
+        pub unsafe fn convert_image(
             nchannels: i32,
             width: i32,
             height: i32,
@@ -499,7 +511,7 @@ mod ffi {
             dst_zstride: i64,
         ) -> bool;
 
-        pub fn parallel_convert_image(
+        pub unsafe fn parallel_convert_image(
             nchannels: i32,
             width: i32,
             height: i32,
@@ -536,7 +548,7 @@ mod ffi {
             zorigin: i32,
         );
 
-        pub fn premult(
+        pub unsafe fn premult(
             nchannels: i32,
             width: i32,
             height: i32,
@@ -552,7 +564,7 @@ mod ffi {
             z_channel: i32,
         );
 
-        pub fn copy_image(
+        pub unsafe fn copy_image(
             nchannels: i32,
             width: i32,
             height: i32,

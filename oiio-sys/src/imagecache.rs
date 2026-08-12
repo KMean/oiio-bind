@@ -29,16 +29,30 @@ mod ffi {
             val: *const u8,
         ) -> bool;
 
-        pub unsafe fn imagecache_attribute_int(
+        pub fn imagecache_attribute_int(
             imagecache: Pin<&mut ImageCache>,
             name: &str,
             val: i32,
+        ) -> bool;
+
+        pub fn imagecache_attribute_int_with_error(
+            imagecache: Pin<&mut ImageCache>,
+            name: &str,
+            val: i32,
+            error: &mut String,
         ) -> bool;
 
         pub fn imagecache_attribute_float(
             imagecache: Pin<&mut ImageCache>,
             name: &str,
             val: f32,
+        ) -> bool;
+
+        pub fn imagecache_attribute_float_with_error(
+            imagecache: Pin<&mut ImageCache>,
+            name: &str,
+            val: f32,
+            error: &mut String,
         ) -> bool;
 
         pub fn imagecache_attribute_double(
@@ -141,6 +155,9 @@ mod ffi {
             data: *const u8,
         ) -> bool;
 
+        #[deprecated(
+            note = "OpenImageIO 3.x ignores miplevel/native here; use imagecache_get_imagespec_copy or imagecache_get_cache_dimensions_copy"
+        )]
         pub fn imagecache_get_imagespec(
             imagecache: Pin<&mut ImageCache>,
             filename: &str,
@@ -150,6 +167,37 @@ mod ffi {
             native: bool,
         ) -> bool;
 
+        pub fn imagecache_get_imagespec_copy(
+            imagecache: Pin<&mut ImageCache>,
+            filename: &str,
+            subimage: i32,
+        ) -> UniquePtr<ImageSpec>;
+
+        pub fn imagecache_get_imagespec_copy_with_error(
+            imagecache: Pin<&mut ImageCache>,
+            filename: &str,
+            subimage: i32,
+            error: &mut String,
+        ) -> UniquePtr<ImageSpec>;
+
+        pub fn imagecache_get_cache_dimensions_copy(
+            imagecache: Pin<&mut ImageCache>,
+            filename: &str,
+            subimage: i32,
+            miplevel: i32,
+        ) -> UniquePtr<ImageSpec>;
+
+        pub fn imagecache_get_image_spec_at_copy_with_error(
+            imagecache: Pin<&mut ImageCache>,
+            filename: &str,
+            subimage: i32,
+            miplevel: i32,
+            error: &mut String,
+        ) -> UniquePtr<ImageSpec>;
+
+        #[deprecated(
+            note = "OpenImageIO 3.x ignores miplevel/native here; use a cache-dimensions binding"
+        )]
         pub unsafe fn imagecache_get_imagespec_with_handle(
             imagecache: Pin<&mut ImageCache>,
             file: *mut ImageHandle,
@@ -160,6 +208,9 @@ mod ffi {
             native: bool,
         ) -> bool;
 
+        #[deprecated(
+            note = "OpenImageIO 3.x ignores miplevel/native and the returned pointer can be invalidated"
+        )]
         pub unsafe fn imagecache_imagespec(
             imagecache: Pin<&mut ImageCache>,
             filename: &str,
@@ -168,6 +219,9 @@ mod ffi {
             native: bool,
         ) -> *const ImageSpec;
 
+        #[deprecated(
+            note = "OpenImageIO 3.x ignores miplevel/native and the returned pointer can be invalidated"
+        )]
         pub unsafe fn imagecache_imagespec_with_handle(
             imagecache: Pin<&mut ImageCache>,
             file: *mut ImageHandle,
@@ -212,6 +266,32 @@ mod ffi {
             zstride: i64,
             cache_chbegin: i32,
             cache_chend: i32,
+        ) -> bool;
+
+        /// The byte slice must be aligned for and contain initialized storage
+        /// for `format`. Its length must exactly match `roi`.
+        pub unsafe fn imagecache_get_pixels_span(
+            imagecache: Pin<&mut ImageCache>,
+            filename: &str,
+            subimage: i32,
+            miplevel: i32,
+            roi: &ROI,
+            format: TypeDesc,
+            result: &mut [u8],
+        ) -> bool;
+
+        /// Reports success separately and captures the ImageCache error into
+        /// `error` on failure. The byte-slice safety contract is the same as
+        /// `imagecache_get_pixels_span`.
+        pub unsafe fn imagecache_get_pixels_span_with_error(
+            imagecache: Pin<&mut ImageCache>,
+            filename: &str,
+            subimage: i32,
+            miplevel: i32,
+            roi: &ROI,
+            format: TypeDesc,
+            result: &mut [u8],
+            error: &mut String,
         ) -> bool;
 
         pub unsafe fn imagecache_get_pixels_with_handle(

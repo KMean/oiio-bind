@@ -7,9 +7,13 @@ sys binding to the C++
 `oiio-sys` provides a low-level API that is used as the foundation for the
 high-level [oiio](https://crates.io/crates/oiio) crate.
 
+This is a partially modernized compatibility surface, not a safe Rust API.
+Several legacy functions expose raw pointers or require callers to uphold
+buffer, lifetime, and threading contracts. Applications should prefer `oiio`.
+
 ## Building
 
-The crate currently targets OpenImageIO 3.1.x and requires an installed
+The crate currently targets OpenImageIO 3.1.4 or newer 3.1.x and requires an installed
 OpenImageIO development package.
 
 Discovery checks explicit configuration first. Set `OIIO_ROOT` for an install
@@ -37,7 +41,7 @@ directory matches the Rust target architecture and MSVC ABI.
 
 ## Links
 
-- [source repository](https://github.com/vfx-rs/oiio-bind)
+- [source repository](https://github.com/KMean/oiio-bind)
 - [oiio-sys on crates.io](https://crates.io/crates/oiio-sys/latest)
 - [oiio-sys documentation](https://docs.rs/crate/oiio-sys/latest)
-- [OpenImageIO C++ documentation](https://openimageio.readthedocs.io/en/latest/)
+- [OpenImageIO 3.1 C++ documentation](https://openimageio.readthedocs.io/en/v3.1.12.0/)

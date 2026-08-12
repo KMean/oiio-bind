@@ -4,7 +4,7 @@ The goal is a production-quality, community-maintained Rust interface to
 OpenImageIO. The public `oiio` crate should be safe and idiomatic; C++ types,
 version differences, and ownership details stay inside `oiio-sys`.
 
-The current compatibility baseline is OpenImageIO 3.1.x. Its patch releases
+The current compatibility baseline is OpenImageIO 3.1.4 or newer 3.1.x. Its patch releases
 are expected to retain ABI compatibility, while support for a new OIIO minor
 line is established and tested deliberately.
 
@@ -20,17 +20,21 @@ line is established and tested deliberately.
 
 ## 1. Safety foundation
 
-- Replace raw pixel-pointer overloads with OIIO 3.1 span-based shims.
-- Add a sealed Rust pixel-type abstraction for `u8`, `u16`, `half`, and `f32`.
-- Validate dimensions, channels, strides, multiplication overflow, and buffer
+- [x] Replace core input/cache raw pixel-pointer overloads with OIIO 3.1
+  span-based shims. Remaining low-level compatibility calls are unsafe.
+- [x] Add a sealed Rust pixel-type abstraction for `u8`, `u16`, `half`, and
+  `f32`.
+- [x] Validate dimensions, channels, strides, multiplication overflow, and buffer
   lengths before entering C++.
-- Introduce safe `ImageSpec`, `ROI`, metadata, and error types.
-- Give `ImageInput` and `ImageOutput` explicit fallible `close` operations.
+- [x] Introduce safe `ImageSpec`, `Roi`, and error types. Metadata coverage is
+  still intentionally narrow.
+- [ ] Give `ImageInput` and `ImageOutput` explicit fallible `close` operations.
+  (`ImageInput` is complete.)
 
 ## 2. ImageCache as a first-class API
 
-- Add a private-cache builder with typed configuration attributes.
-- Implement `image_spec`, `get_pixels_into`, invalidation, errors, and stats.
+- [x] Add a private-cache builder with typed configuration attributes.
+- [x] Implement `image_spec`, `get_pixels_into`, invalidation, errors, and stats.
 - Add cache-owning `ImageHandle` and `TileGuard` types; releasing a tile must be
   automatic on drop.
 - Model per-thread cache state as neither `Send` nor `Sync`.
