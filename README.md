@@ -49,6 +49,21 @@ The contiguous safe APIs support `u8`, `u16`, [`half::f16`](https://docs.rs/half
 and `f32` pixel components. A sealed `Pixel` trait keeps the Rust element type,
 OpenImageIO type descriptor, alignment, and buffer byte size consistent.
 
+Write a two-dimensional image from a contiguous channel buffer. The generic
+type passed to `create` is the file's storage type; the source buffer may use a
+different supported type and OpenImageIO will convert it:
+
+```rust,no_run
+use oiio::ImageOutput;
+use std::path::Path;
+
+let pixels = vec![0.5_f32; 64 * 64 * 4];
+let mut output = ImageOutput::create::<u16>(Path::new("image.png"), 64, 64, 4)?;
+output.write_image(&pixels)?;
+output.close()?;
+# Ok::<(), oiio::Error>(())
+```
+
 The `oiio` crate is built using `cargo build`. `oiio-sys` discovers
 OpenImageIO in this order:
 

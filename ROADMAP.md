@@ -28,8 +28,7 @@ line is established and tested deliberately.
   lengths before entering C++.
 - [x] Introduce safe `ImageSpec`, `Roi`, and error types. Metadata coverage is
   still intentionally narrow.
-- [ ] Give `ImageInput` and `ImageOutput` explicit fallible `close` operations.
-  (`ImageInput` is complete.)
+- [x] Give `ImageInput` and `ImageOutput` explicit fallible `close` operations.
 
 ## 2. ImageCache as a first-class API
 
@@ -43,7 +42,8 @@ line is established and tested deliberately.
 ## 3. Image I/O
 
 - Complete safe, caller-buffer `ImageInput` reads.
-- Complete `ImageOutput` creation, writes, and round-trip tests.
+- [x] Complete contiguous `ImageOutput` creation, whole-image writes, and
+  round-trip tests.
 - Cover subimages, mip levels, tiled data, channel subsets, and metadata.
 
 ## Later subsystems

@@ -40,6 +40,7 @@ use oiio_sys as sys;
 
 mod error;
 mod image_cache;
+mod image_output;
 mod image_spec;
 mod imageio;
 mod pixel;
@@ -48,6 +49,7 @@ mod roi;
 pub use error::{Error, Result};
 pub use half::f16;
 pub use image_cache::{ImageCache, ImageCacheBuilder};
+pub use image_output::ImageOutput;
 pub use image_spec::ImageSpec;
 pub use imageio::ImageInput;
 pub use pixel::Pixel;

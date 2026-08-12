@@ -81,6 +81,12 @@ mod ffi {
 
         pub fn imagespec_from_resolution(xres: i32, yres: i32, nchans: i32)
             -> UniquePtr<ImageSpec>;
+        pub fn imagespec_from_resolution_format(
+            xres: i32,
+            yres: i32,
+            nchans: i32,
+            format: TypeDesc,
+        ) -> UniquePtr<ImageSpec>;
         pub fn imagespec_x(spec: &ImageSpec) -> i32;
         pub fn imagespec_y(spec: &ImageSpec) -> i32;
         pub fn imagespec_z(spec: &ImageSpec) -> i32;
@@ -293,10 +299,15 @@ mod ffi {
 
         pub type ImageOutput;
 
-        /// Safety: must be called with a valid ioproxy pointer.
+        /// Safety: `ioproxy` must be null or point to a valid, live IOProxy.
         pub unsafe fn imageoutput_create(
             filename: &str,
             ioproxy: *mut IOProxy,
+            plugin_searchpath: &str,
+        ) -> UniquePtr<ImageOutput>;
+
+        pub fn imageoutput_create_without_ioproxy(
+            filename: &str,
             plugin_searchpath: &str,
         ) -> UniquePtr<ImageOutput>;
 
@@ -393,6 +404,14 @@ mod ffi {
             xstride: i64,
             ystride: i64,
             zstride: i64,
+        ) -> bool;
+
+        /// The byte slice must be aligned for and contain initialized storage
+        /// for `format`. Its length must exactly match the open image.
+        pub unsafe fn imageoutput_write_image_span(
+            imageoutput: Pin<&mut ImageOutput>,
+            format: TypeDesc,
+            data: &[u8],
         ) -> bool;
 
         pub fn imageoutput_write_deep_scanlines(

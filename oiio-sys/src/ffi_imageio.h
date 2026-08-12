@@ -78,6 +78,10 @@ roi_intersection(const ROI& roi, const ROI& other) noexcept;
 std::unique_ptr<ImageSpec>
 imagespec_from_resolution(int xres, int yres, int nchans);
 
+std::unique_ptr<ImageSpec>
+imagespec_from_resolution_format(int xres, int yres, int nchans,
+                                 TypeDesc format);
+
 int
 imagespec_x(const ImageSpec& spec);
 
@@ -283,6 +287,10 @@ std::unique_ptr<ImageOutput>
 imageoutput_create(const rust::Str filename, IOProxy* ioproxy,
                    const rust::Str plugin_searchpath);
 
+std::unique_ptr<ImageOutput>
+imageoutput_create_without_ioproxy(const rust::Str filename,
+                                   const rust::Str plugin_searchpath);
+
 rust::Str
 imageoutput_format_name(const ImageOutput& imageoutput);
 
@@ -336,6 +344,10 @@ bool
 imageoutput_write_image(ImageOutput& imageoutput, TypeDesc format,
                         const rust::Slice<uint8_t> data, int64_t xstride,
                         int64_t ystride, int64_t zstride);
+
+bool
+imageoutput_write_image_span(ImageOutput& imageoutput, TypeDesc format,
+                             rust::Slice<const uint8_t> data);
 
 bool
 imageoutput_write_deep_scanlines(ImageOutput& imageoutput, int ybegin, int yend,

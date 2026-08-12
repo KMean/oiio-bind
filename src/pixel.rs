@@ -24,7 +24,7 @@ mod sealed {
     }
 }
 
-/// A scalar pixel channel type that OpenImageIO can read directly.
+/// A scalar pixel channel type that OpenImageIO can transfer directly.
 ///
 /// This trait is sealed so callers cannot associate an arbitrary Rust layout
 /// with an unrelated OpenImageIO `TypeDesc`.
@@ -44,4 +44,11 @@ pub(crate) fn as_bytes_mut<T: Pixel>(pixels: &mut [T]) -> &mut [u8] {
     // Pixel is sealed to types for which every bit pattern is valid, and the
     // byte slice cannot outlive or exceed the original mutable slice.
     unsafe { std::slice::from_raw_parts_mut(pixels.as_mut_ptr().cast::<u8>(), byte_len) }
+}
+
+pub(crate) fn as_bytes<T: Pixel>(pixels: &[T]) -> &[u8] {
+    let byte_len = std::mem::size_of_val(pixels);
+    // Pixel is sealed to types with initialized scalar layouts, and the byte
+    // slice cannot outlive or exceed the original slice.
+    unsafe { std::slice::from_raw_parts(pixels.as_ptr().cast::<u8>(), byte_len) }
 }

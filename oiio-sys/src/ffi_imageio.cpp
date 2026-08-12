@@ -110,6 +110,13 @@ imagespec_from_resolution(int xres, int yres, int nchans)
     return std::unique_ptr<ImageSpec>(spec);
 }
 
+std::unique_ptr<ImageSpec>
+imagespec_from_resolution_format(int xres, int yres, int nchans,
+                                 TypeDesc format)
+{
+    return std::make_unique<ImageSpec>(xres, yres, nchans, format);
+}
+
 int
 imagespec_x(const ImageSpec& spec)
 {
@@ -513,7 +520,7 @@ imageinput_geterror(ImageInput& imageinput)
 void
 imageinput_seterror(ImageInput& imageinput, const rust::Str message)
 {
-    imageinput.errorfmt(message.data());
+    imageinput.errorfmt("{}", std::string(message.data(), message.size()));
 }
 
 void
@@ -538,6 +545,16 @@ imageoutput_create(const rust::Str filename, IOProxy* ioproxy,
     OIIO::string_view c_plugin_searchpath(plugin_searchpath.data(),
                                           plugin_searchpath.size());
     return ImageOutput::create(c_filename, ioproxy, c_plugin_searchpath);
+}
+
+std::unique_ptr<ImageOutput>
+imageoutput_create_without_ioproxy(const rust::Str filename,
+                                   const rust::Str plugin_searchpath)
+{
+    OIIO::string_view c_filename(filename.data(), filename.size());
+    OIIO::string_view c_plugin_searchpath(plugin_searchpath.data(),
+                                          plugin_searchpath.size());
+    return ImageOutput::create(c_filename, nullptr, c_plugin_searchpath);
 }
 
 rust::Str
@@ -639,6 +656,25 @@ imageoutput_write_image(ImageOutput& imageoutput, TypeDesc format,
 }
 
 bool
+imageoutput_write_image_span(ImageOutput& imageoutput, TypeDesc format,
+                             rust::Slice<const uint8_t> data)
+{
+    const ImageSpec& spec = imageoutput.spec();
+    detail::PixelLayout layout;
+    if (spec.deep || !imagespec_valid(spec)
+        || !detail::bounded_pixel_layout(spec.nchannels, spec.width,
+                                         spec.height, spec.depth, format,
+                                         data.size(), layout)) {
+        imageoutput.errorfmt(
+            "invalid dimensions or source buffer for bounded image write");
+        return false;
+    }
+
+    const auto input = detail::readonly_byte_span(data, layout);
+    return imageoutput.write_image(format, input);
+}
+
+bool
 imageoutput_write_deep_scanlines(ImageOutput& imageoutput, int ybegin, int yend,
                                  int z, const DeepData& deepdata)
 {
@@ -693,7 +729,7 @@ imageoutput_geterror(const ImageOutput& imageoutput, bool clear)
 void
 imageoutput_seterror(ImageOutput& imageoutput, const rust::Str message)
 {
-    imageoutput.errorfmt(message.data());
+    imageoutput.errorfmt("{}", std::string(message.data(), message.size()));
 }
 
 void

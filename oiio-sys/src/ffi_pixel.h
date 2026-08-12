@@ -108,4 +108,14 @@ writable_byte_span(rust::Slice<uint8_t> data, const PixelLayout& layout)
         layout.channel_size);
 }
 
+inline OIIO::image_span<const std::byte>
+readonly_byte_span(rust::Slice<const uint8_t> data, const PixelLayout& layout)
+{
+    return OIIO::image_span<const std::byte>(
+        reinterpret_cast<const std::byte*>(data.data()), layout.channels,
+        layout.width, layout.height, layout.depth, layout.channel_stride,
+        layout.x_stride, layout.y_stride, layout.z_stride,
+        layout.channel_size);
+}
+
 }  // namespace oiio::detail
