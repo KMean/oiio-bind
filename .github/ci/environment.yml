@@ -1,0 +1,9 @@
+name: oiio-bind-ci
+channels:
+  - conda-forge
+dependencies:
+  # OpenImageIO's public headers include fmt headers, but libopenimageio's
+  # runtime package intentionally omits this build dependency.
+  - fmt=12.1.*
+  - libopenimageio=3.1.14.1
+  - pkg-config

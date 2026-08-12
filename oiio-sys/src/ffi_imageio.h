@@ -135,6 +135,9 @@ imagespec_z_channel(const ImageSpec& spec);
 bool
 imagespec_deep(const ImageSpec& spec);
 
+bool
+imagespec_valid(const ImageSpec& spec);
+
 std::unique_ptr<std::vector<std::string>>
 imagespec_channel_names(const ImageSpec& spec);
 #pragma endregion
@@ -171,11 +174,11 @@ imageinput_geterror(ImageInput& imageinput);
 const ImageSpec&
 imageinput_spec(const ImageInput& imageinput);
 
-const ImageSpec&
+std::unique_ptr<ImageSpec>
 imageinput_spec_subimage_miplevel(ImageInput& imageinput, int32_t subimage,
                                   int32_t miplevel);
 
-const ImageSpec&
+std::unique_ptr<ImageSpec>
 imageinput_spec_dimensions(ImageInput& imageinput, int32_t subimage,
                            int32_t miplevel);
 
@@ -220,6 +223,11 @@ imageinput_read_image(ImageInput& imageinput, int subimage, int miplevel,
                       int64_t ystride, int64_t zstride);
 
 bool
+imageinput_read_image_span(ImageInput& imageinput, int subimage, int miplevel,
+                           int chbegin, int chend, TypeDesc format,
+                           rust::Slice<uint8_t> data);
+
+bool
 imageinput_read_native_deep_scanlines(ImageInput& imageinput, int subimage,
                                       int miplevel, int ybegin, int yend, int z,
                                       int chbegin, int chend, DeepData& data);
@@ -259,9 +267,6 @@ imageinput_set_ioproxy(ImageInput& imageinput, IOProxy* ioproxy);
 
 bool
 imageinput_has_error(const ImageInput& imageinput);
-
-rust::String
-imageinput_geterror(const ImageInput& imageinput, bool clear);
 
 void
 imageinput_seterror(ImageInput& imageinput, const rust::Str message);
@@ -376,6 +381,9 @@ shutdown();
 
 int
 openimageio_version();
+
+int
+openimageio_build_version();
 
 bool
 has_error();

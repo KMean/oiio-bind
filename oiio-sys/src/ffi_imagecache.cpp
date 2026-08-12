@@ -1,14 +1,23 @@
 #include "ffi_imagecache.h"
+#include "ffi_pixel.h"
 
 namespace oiio {
-ImageCache*
+namespace {
+rust::String
+take_cache_error(ImageCache& imagecache)
+{
+    return rust::String(imagecache.geterror(true));
+}
+}  // namespace
+
+std::shared_ptr<ImageCache>
 imagecache_create(bool shared)
 {
     return OIIO::ImageCache::create(shared);
 }
 
 void
-imagecache_destroy(ImageCache* imagecache, bool teardown)
+imagecache_destroy(std::shared_ptr<ImageCache> imagecache, bool teardown)
 {
     OIIO::ImageCache::destroy(imagecache, teardown);
 }
@@ -29,10 +38,32 @@ imagecache_attribute_int(ImageCache& imagecache, rust::Str name, int val)
 }
 
 bool
+imagecache_attribute_int_with_error(ImageCache& imagecache, rust::Str name,
+                                    int val, rust::String& error)
+{
+    error = rust::String();
+    if (imagecache_attribute_int(imagecache, name, val))
+        return true;
+    error = take_cache_error(imagecache);
+    return false;
+}
+
+bool
 imagecache_attribute_float(ImageCache& imagecache, rust::Str name, float val)
 {
     std::string_view c_name(name.data(), name.size());
     return imagecache.attribute(c_name, val);
+}
+
+bool
+imagecache_attribute_float_with_error(ImageCache& imagecache, rust::Str name,
+                                      float val, rust::String& error)
+{
+    error = rust::String();
+    if (imagecache_attribute_float(imagecache, name, val))
+        return true;
+    error = take_cache_error(imagecache);
+    return false;
 }
 
 bool
@@ -166,6 +197,74 @@ imagecache_get_imagespec(ImageCache& imagecache, rust::Str filename,
                                     native);
 }
 
+std::unique_ptr<ImageSpec>
+imagecache_get_imagespec_copy(ImageCache& imagecache, rust::Str filename,
+                              int subimage)
+{
+    auto spec = std::make_unique<ImageSpec>();
+    OIIO::ustring c_filename(filename.data(), filename.size());
+    if (!imagecache.get_imagespec(c_filename, *spec, subimage))
+        return {};
+    return spec;
+}
+
+std::unique_ptr<ImageSpec>
+imagecache_get_imagespec_copy_with_error(ImageCache& imagecache,
+                                         rust::Str filename, int subimage,
+                                         rust::String& error)
+{
+    error = rust::String();
+    auto spec = imagecache_get_imagespec_copy(imagecache, filename, subimage);
+    if (!spec)
+        error = take_cache_error(imagecache);
+    return spec;
+}
+
+std::unique_ptr<ImageSpec>
+imagecache_get_cache_dimensions_copy(ImageCache& imagecache,
+                                     rust::Str filename, int subimage,
+                                     int miplevel)
+{
+    OIIO::ustring c_filename(filename.data(), filename.size());
+    ImageSpec native_spec;
+    if (!imagecache.get_imagespec(c_filename, native_spec, subimage))
+        return {};
+
+    // get_cache_dimensions only overwrites the compact ImageDims prefix.
+    // Seed the object so the untouched format and semantic fields stay valid.
+    auto spec = std::make_unique<ImageSpec>(native_spec);
+    if (!imagecache.get_cache_dimensions(c_filename, *spec, subimage,
+                                         miplevel))
+        return {};
+    return spec;
+}
+
+std::unique_ptr<ImageSpec>
+imagecache_get_image_spec_at_copy_with_error(ImageCache& imagecache,
+                                             rust::Str filename, int subimage,
+                                             int miplevel,
+                                             rust::String& error)
+{
+    error = rust::String();
+    ImageSpec native_spec;
+    OIIO::ustring c_filename(filename.data(), filename.size());
+    if (!imagecache.get_imagespec(c_filename, native_spec, subimage)) {
+        error = take_cache_error(imagecache);
+        return {};
+    }
+
+    // Start with the native spec because get_cache_dimensions overwrites
+    // only the compact, mip-varying ImageDims prefix. This retains the
+    // native format, channel names, deep flag, and semantic channel indices.
+    auto cache_spec = std::make_unique<ImageSpec>(native_spec);
+    if (!imagecache.get_cache_dimensions(c_filename, *cache_spec, subimage,
+                                         miplevel)) {
+        error = take_cache_error(imagecache);
+        return {};
+    }
+    return cache_spec;
+}
+
 bool
 imagecache_get_imagespec_with_handle(ImageCache& imagecache, ImageHandle* file,
                                      Perthread* thread_info, ImageSpec& spec,
@@ -220,6 +319,54 @@ imagecache_get_pixels(ImageCache& imagecache, rust::Str filename, int subimage,
                                  ybegin, yend, zbegin, zend, chbegin, chend,
                                  format, (void*)result, xstride, ystride,
                                  zstride, cache_chbegin, cache_chend);
+}
+
+bool
+imagecache_get_pixels_span(ImageCache& imagecache, rust::Str filename,
+                           int subimage, int miplevel, const ROI& roi,
+                           TypeDesc format, rust::Slice<uint8_t> result)
+{
+    const int64_t width = static_cast<int64_t>(roi.xend) - roi.xbegin;
+    const int64_t height = static_cast<int64_t>(roi.yend) - roi.ybegin;
+    const int64_t depth = static_cast<int64_t>(roi.zend) - roi.zbegin;
+    const int64_t channels = static_cast<int64_t>(roi.chend) - roi.chbegin;
+
+    detail::PixelLayout layout;
+    if (!detail::bounded_pixel_layout(channels, width, height, depth, format,
+                                      result.size(), layout))
+        return false;
+
+    OIIO::ustring c_filename(filename.data(), filename.size());
+    const auto output = detail::writable_byte_span(result, layout);
+    return imagecache.get_pixels(c_filename, subimage, miplevel, roi, format,
+                                 output);
+}
+
+bool
+imagecache_get_pixels_span_with_error(
+    ImageCache& imagecache, rust::Str filename, int subimage, int miplevel,
+    const ROI& roi, TypeDesc format, rust::Slice<uint8_t> result,
+    rust::String& error)
+{
+    error = rust::String();
+
+    const int64_t width = static_cast<int64_t>(roi.xend) - roi.xbegin;
+    const int64_t height = static_cast<int64_t>(roi.yend) - roi.ybegin;
+    const int64_t depth = static_cast<int64_t>(roi.zend) - roi.zbegin;
+    const int64_t channels = static_cast<int64_t>(roi.chend) - roi.chbegin;
+    detail::PixelLayout layout;
+    if (!detail::bounded_pixel_layout(channels, width, height, depth, format,
+                                      result.size(), layout)) {
+        error = rust::String(
+            "invalid pixel layout or destination buffer byte length");
+        return false;
+    }
+
+    if (imagecache_get_pixels_span(imagecache, filename, subimage, miplevel,
+                                   roi, format, result))
+        return true;
+    error = take_cache_error(imagecache);
+    return false;
 }
 
 bool

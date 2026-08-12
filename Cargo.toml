@@ -12,8 +12,8 @@ license = "Apache-2.0"
 keywords = ["graphics", "images", "render", "texture", "vfx"]
 categories = ["graphics", "multimedia::images", "rendering::data-formats"]
 readme = "README.md"
-homepage = "https://github.com/vfx-rs/oiio-bind"
-repository = "https://github.com/vfx-rs/oiio-bind.git"
+homepage = "https://github.com/KMean/oiio-bind"
+repository = "https://github.com/KMean/oiio-bind.git"
 
 [workspace]
 members = ["oiio-sys"]
@@ -21,11 +21,13 @@ members = ["oiio-sys"]
 [workspace.dependencies]
 anyhow = "1.0.80"
 cxx = { version = "1.0.117", features = ["c++17"] }
+half = "2.7.1"
 thiserror = "1.0.57"
 
 [dependencies]
 anyhow = { workspace = true }
 cxx = { workspace = true }
+half = { workspace = true }
 oiio-sys = { path = "oiio-sys", version = "0.2.0-beta0" }
 thiserror = { workspace = true }
 

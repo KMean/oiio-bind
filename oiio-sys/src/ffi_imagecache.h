@@ -6,6 +6,7 @@
 #include <OpenImageIO/texture.h>
 #include <OpenImageIO/typedesc.h>
 #include <rust/cxx.h>
+#include <memory>
 #include <string>
 
 namespace oiio {
@@ -19,12 +20,11 @@ using TextureOpt  = OIIO::TextureOpt;
 using Tile        = OIIO::ImageCache::Tile;
 using TypeDesc    = OIIO::TypeDesc;
 
-
-ImageCache*
+std::shared_ptr<ImageCache>
 imagecache_create(bool shared);
 
 void
-imagecache_destroy(ImageCache* imagecache, bool teardown);
+imagecache_destroy(std::shared_ptr<ImageCache> imagecache, bool teardown);
 
 bool
 imagecache_attribute(ImageCache& imagecache, rust::Str name, TypeDesc type,
@@ -34,7 +34,15 @@ bool
 imagecache_attribute_int(ImageCache& imagecache, rust::Str name, int val);
 
 bool
+imagecache_attribute_int_with_error(ImageCache& imagecache, rust::Str name,
+                                    int val, rust::String& error);
+
+bool
 imagecache_attribute_float(ImageCache& imagecache, rust::Str name, float val);
+
+bool
+imagecache_attribute_float_with_error(ImageCache& imagecache, rust::Str name,
+                                      float val, rust::String& error);
 
 bool
 imagecache_attribute_double(ImageCache& imagecache, rust::Str name, double val);
@@ -99,6 +107,26 @@ imagecache_get_imagespec(ImageCache& imagecache, rust::Str filename,
                          ImageSpec& spec, int subimage, int miplevel,
                          bool native);
 
+std::unique_ptr<ImageSpec>
+imagecache_get_imagespec_copy(ImageCache& imagecache, rust::Str filename,
+                              int subimage);
+
+std::unique_ptr<ImageSpec>
+imagecache_get_imagespec_copy_with_error(ImageCache& imagecache,
+                                         rust::Str filename, int subimage,
+                                         rust::String& error);
+
+std::unique_ptr<ImageSpec>
+imagecache_get_cache_dimensions_copy(ImageCache& imagecache,
+                                     rust::Str filename, int subimage,
+                                     int miplevel);
+
+std::unique_ptr<ImageSpec>
+imagecache_get_image_spec_at_copy_with_error(ImageCache& imagecache,
+                                             rust::Str filename, int subimage,
+                                             int miplevel,
+                                             rust::String& error);
+
 bool
 imagecache_get_imagespec_with_handle(ImageCache& imagecache, ImageHandle* file,
                                      Perthread* thread_info, ImageSpec& spec,
@@ -129,6 +157,17 @@ imagecache_get_pixels(ImageCache& imagecache, rust::Str filename, int subimage,
                       TypeDesc format, const uint8_t* result, int64_t xstride,
                       int64_t ystride, int64_t zstride, int cache_chbegin,
                       int cache_chend);
+
+bool
+imagecache_get_pixels_span(ImageCache& imagecache, rust::Str filename,
+                           int subimage, int miplevel, const ROI& roi,
+                           TypeDesc format, rust::Slice<uint8_t> result);
+
+bool
+imagecache_get_pixels_span_with_error(
+    ImageCache& imagecache, rust::Str filename, int subimage, int miplevel,
+    const ROI& roi, TypeDesc format, rust::Slice<uint8_t> result,
+    rust::String& error);
 
 bool
 imagecache_get_pixels_with_handle(ImageCache& imagecache, ImageHandle* file,

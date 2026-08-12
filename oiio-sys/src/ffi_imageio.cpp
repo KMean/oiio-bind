@@ -1,7 +1,9 @@
 #include "ffi_imageio.h"
+#include "ffi_pixel.h"
 #include "oiio-sys/src/imageio.rs.h"
 #include <OpenImageIO/imageio.h>
 #include <OpenImageIO/string_view.h>
+#include <cstddef>
 #include <memory>
 #include <stdexcept>
 #include <stdio.h>
@@ -222,6 +224,12 @@ imagespec_deep(const ImageSpec& spec)
     return spec.deep;
 }
 
+bool
+imagespec_valid(const ImageSpec& spec)
+{
+    return spec.format != OIIO::TypeDesc::UNKNOWN;
+}
+
 std::unique_ptr<std::vector<std::string>>
 imagespec_channel_names(const ImageSpec& spec)
 {
@@ -263,7 +271,7 @@ imageinput_create_with_config(const rust::Str filename, bool do_open,
                                           plugin_searchpath.size());
     std::unique_ptr<OIIO::ImageInput> image_input(
         OIIO::ImageInput::create(std::string(filename), do_open, &config,
-                                 c_plugin_searchpath));
+                                  nullptr, c_plugin_searchpath));
 
     if (image_input) {
         return image_input;
@@ -280,7 +288,7 @@ imageinput_create_without_config(const rust::Str filename, bool do_open,
                                           plugin_searchpath.size());
     std::unique_ptr<OIIO::ImageInput> image_input(
         OIIO::ImageInput::create(std::string(filename), do_open, nullptr,
-                                 c_plugin_searchpath));
+                                  nullptr, c_plugin_searchpath));
 
     if (image_input) {
         return image_input;
@@ -308,32 +316,25 @@ imageinput_valid_file(const ImageInput& imageinput, const rust::Str filename)
     return imageinput.valid_file(std::string(filename));
 }
 
-rust::String
-imageinput_spec(OIIO::ImageInput& imageinput)
-{
-    std::string err = imageinput.geterror();
-
-    return rust::String(err);
-}
-
 const ImageSpec&
 imageinput_spec(const OIIO::ImageInput& imageinput)
 {
     return imageinput.spec();
 }
 
-const ImageSpec&
+std::unique_ptr<ImageSpec>
 imageinput_spec_subimage_miplevel(OIIO::ImageInput& imageinput,
                                   int32_t subimage, int32_t miplevel)
 {
-    return imageinput.spec(subimage, miplevel);
+    return std::make_unique<ImageSpec>(imageinput.spec(subimage, miplevel));
 }
 
-const ImageSpec&
+std::unique_ptr<ImageSpec>
 imageinput_spec_dimensions(OIIO::ImageInput& imageinput, int32_t subimage,
                            int32_t miplevel)
 {
-    return imageinput.spec_dimensions(subimage, miplevel);
+    return std::make_unique<ImageSpec>(
+        imageinput.spec_dimensions(subimage, miplevel));
 }
 
 bool
@@ -386,6 +387,29 @@ imageinput_read_image(ImageInput& imageinput, int subimage, int miplevel,
 {
     return imageinput.read_image(subimage, miplevel, chbegin, chend, format,
                                  data.data(), xstride, ystride, zstride);
+}
+
+bool
+imageinput_read_image_span(ImageInput& imageinput, int subimage, int miplevel,
+                           int chbegin, int chend, TypeDesc format,
+                           rust::Slice<uint8_t> data)
+{
+    const ImageSpec spec = imageinput.spec_dimensions(subimage, miplevel);
+    if (chend < 0 || chend > spec.nchannels)
+        chend = spec.nchannels;
+
+    detail::PixelLayout layout;
+    if (!imagespec_valid(spec) || chbegin < 0 || chbegin >= chend
+        || !detail::bounded_pixel_layout(
+            static_cast<int64_t>(chend) - chbegin, spec.width, spec.height,
+            spec.depth, format, data.size(), layout)) {
+        imageinput.errorfmt("invalid dimensions or destination buffer for bounded image read");
+        return false;
+    }
+
+    const auto output = detail::writable_byte_span(data, layout);
+    return imageinput.read_image(subimage, miplevel, chbegin, chend, format,
+                                 output);
 }
 
 bool
@@ -445,7 +469,28 @@ imageinput_read_native_tile(ImageInput& imageinput, int subimage, int miplevel,
 bool
 imageinput_read_native_tiles(ImageInput& imageinput, int xbegin, int xend,
                              int ybegin, int yend, int zbegin, int zend,
-                             int chbegin, int chend, rust::Slice<uint8_t> data);
+                             int chbegin, int chend, rust::Slice<uint8_t> data)
+{
+    const int subimage = imageinput.current_subimage();
+    const int miplevel = imageinput.current_miplevel();
+    const ImageSpec dimensions
+        = imageinput.spec_dimensions(subimage, miplevel);
+    OIIO::span<std::byte> c_data(reinterpret_cast<std::byte*>(data.data()),
+                                 data.size());
+
+    if (dimensions.depth > 1) {
+        return imageinput.read_native_volumetric_tiles(
+            subimage, miplevel, xbegin, xend, ybegin, yend, zbegin, zend,
+            chbegin, chend, c_data);
+    }
+
+    if (zbegin != dimensions.z || zend != dimensions.z + 1) {
+        return false;
+    }
+
+    return imageinput.read_native_tiles(subimage, miplevel, xbegin, xend,
+                                        ybegin, yend, chbegin, chend, c_data);
+}
 
 bool
 imageinput_set_ioproxy(ImageInput& imageinput, IOProxy* ioproxy)
@@ -460,9 +505,9 @@ imageinput_has_error(const ImageInput& imageinput)
 }
 
 rust::String
-imageinput_geterror(const ImageInput& imageinput, bool clear)
+imageinput_geterror(ImageInput& imageinput)
 {
-    return rust::String(imageinput.geterror(clear));
+    return rust::String(imageinput.geterror());
 }
 
 void
@@ -675,6 +720,12 @@ int
 openimageio_version()
 {
     return OIIO::openimageio_version();
+}
+
+int
+openimageio_build_version()
+{
+    return OIIO_VERSION;
 }
 
 bool
