@@ -6,6 +6,7 @@
 #include <OpenImageIO/texture.h>
 #include <OpenImageIO/typedesc.h>
 #include <rust/cxx.h>
+#include <memory>
 #include <string>
 
 namespace oiio {
@@ -19,12 +20,11 @@ using TextureOpt  = OIIO::TextureOpt;
 using Tile        = OIIO::ImageCache::Tile;
 using TypeDesc    = OIIO::TypeDesc;
 
-
-ImageCache*
+std::shared_ptr<ImageCache>
 imagecache_create(bool shared);
 
 void
-imagecache_destroy(ImageCache* imagecache, bool teardown);
+imagecache_destroy(std::shared_ptr<ImageCache> imagecache, bool teardown);
 
 bool
 imagecache_attribute(ImageCache& imagecache, rust::Str name, TypeDesc type,

@@ -1,5 +1,6 @@
 pub use ffi::*;
 
+#[repr(i32)]
 pub enum IBStorage {
     UNINITIALIZED,
     LOCALBUFFER,
@@ -12,6 +13,7 @@ unsafe impl cxx::ExternType for IBStorage {
     type Kind = cxx::kind::Trivial;
 }
 
+#[repr(i32)]
 pub enum WrapMode {
     WrapDefault,
     WrapBlack,
@@ -26,6 +28,7 @@ unsafe impl cxx::ExternType for WrapMode {
     type Kind = cxx::kind::Trivial;
 }
 
+#[repr(i32)]
 pub enum InitializePixels {
     No = 0,
     Yes = 1,
@@ -36,6 +39,9 @@ unsafe impl cxx::ExternType for InitializePixels {
     type Kind = cxx::kind::Trivial;
 }
 
+// This is the raw, signature-compatible FFI layer. Safety contracts and
+// operation-oriented arguments belong on the public wrappers in `oiio`.
+#[allow(clippy::missing_safety_doc, clippy::too_many_arguments)]
 #[cxx::bridge(namespace = oiio)]
 mod ffi {
     unsafe extern "C++" {
@@ -61,7 +67,7 @@ mod ffi {
             name: &str,
             subimage: i32,
             miplevel: i32,
-            imagecache: *mut ImageCache,
+            imagecache: SharedPtr<ImageCache>,
             config: *const ImageSpec,
             ioproxy: *mut IOProxy,
         ) -> UniquePtr<ImageBuf>;
@@ -88,7 +94,7 @@ mod ffi {
             name: &str,
             subimage: i32,
             miplevel: i32,
-            imagecache: *mut ImageCache,
+            imagecache: SharedPtr<ImageCache>,
             config: *const ImageSpec,
             ioproxy: *mut IOProxy,
         );
@@ -388,7 +394,7 @@ mod ffi {
 
         pub fn imagebuf_cachedpixels(imagebuf: &ImageBuf) -> bool;
 
-        pub unsafe fn imagebuf_imagecache(imagebuf: &ImageBuf) -> *mut ImageCache;
+        pub fn imagebuf_imagecache(imagebuf: &ImageBuf) -> SharedPtr<ImageCache>;
 
         pub unsafe fn imagebuf_pixeladdr(
             imagebuf: &ImageBuf,

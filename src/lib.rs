@@ -2,4 +2,4 @@
 use oiio_sys as sys;
 
 mod imageio;
-pub use imageio::ImageInput;
+pub use imageio::{ImageInput, ImageInputIoError};

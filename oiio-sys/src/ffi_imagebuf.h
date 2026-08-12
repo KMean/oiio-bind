@@ -28,7 +28,8 @@ imagebuf_default();
 
 std::unique_ptr<ImageBuf>
 imagebuf_new_from_file(rust::Str name, int subimage, int miplevel,
-                       ImageCache* imagecache, const ImageSpec* config,
+                       std::shared_ptr<ImageCache> imagecache,
+                       const ImageSpec* config,
                        IOProxy* ioproxy);
 
 std::unique_ptr<ImageBuf>
@@ -46,7 +47,7 @@ imagebuf_reset(ImageBuf& imagebuf);
 
 void
 imagebuf_reset_from_file(ImageBuf& imagebuf, rust::Str name, int subimage,
-                         int miplevel, ImageCache* imagecache,
+                         int miplevel, std::shared_ptr<ImageCache> imagecache,
                          const ImageSpec* config, IOProxy* ioproxy);
 
 void
@@ -315,7 +316,7 @@ imagebuf_contiguous(const ImageBuf& imagebuf);
 bool
 imagebuf_cachedpixels(const ImageBuf& imagebuf);
 
-ImageCache*
+std::shared_ptr<ImageCache>
 imagebuf_imagecache(const ImageBuf& imagebuf);
 
 const uint8_t*

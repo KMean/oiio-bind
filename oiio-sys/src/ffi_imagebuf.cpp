@@ -15,12 +15,13 @@ imagebuf_default()
 
 std::unique_ptr<ImageBuf>
 imagebuf_new_from_file(rust::Str name, int subimage, int miplevel,
-                       ImageCache* imagecache, const ImageSpec* config,
+                       std::shared_ptr<ImageCache> imagecache,
+                       const ImageSpec* config,
                        IOProxy* ioproxy)
 {
     std::string_view c_name(name.data(), name.size());
-    return std::make_unique<ImageBuf>(c_name, subimage, miplevel, imagecache,
-                                      config, ioproxy);
+    return std::make_unique<ImageBuf>(c_name, subimage, miplevel,
+                                      std::move(imagecache), config, ioproxy);
 }
 
 std::unique_ptr<ImageBuf>
@@ -50,11 +51,12 @@ imagebuf_reset(ImageBuf& imagebuf)
 
 void
 imagebuf_reset_from_file(ImageBuf& imagebuf, rust::Str name, int subimage,
-                         int miplevel, ImageCache* imagecache,
+                         int miplevel, std::shared_ptr<ImageCache> imagecache,
                          const ImageSpec* config, IOProxy* ioproxy)
 {
     std::string_view c_name(name.data(), name.size());
-    imagebuf.reset(c_name, subimage, miplevel, imagecache, config, ioproxy);
+    imagebuf.reset(c_name, subimage, miplevel, std::move(imagecache), config,
+                   ioproxy);
 }
 
 void
@@ -75,7 +77,7 @@ imagebuf_reset_from_buffer(ImageBuf& imagebuf, const ImageSpec& spec,
 bool
 imagebuf_make_writeable(ImageBuf& imagebuf, bool keep_cache_type)
 {
-    return imagebuf.make_writeable(keep_cache_type);
+    return imagebuf.make_writable(keep_cache_type);
 }
 
 
@@ -237,7 +239,7 @@ imagebuf_setpixel_with_coordinates(ImageBuf& imagebuf, int x, int y, int z,
 }
 
 bool
-imagebuf_get_pixels(const ImageBuf& imagebuf, const ROI& roi, TypeDesc format,
+imagebuf_get_pixels(const ImageBuf& imagebuf, ROI roi, TypeDesc format,
                     uint8_t* result, int64_t xstride, int64_t ystride,
                     int64_t zstride)
 {
@@ -245,7 +247,7 @@ imagebuf_get_pixels(const ImageBuf& imagebuf, const ROI& roi, TypeDesc format,
 }
 
 bool
-imagebuf_set_pixels(ImageBuf& imagebuf, const ROI& roi, TypeDesc format,
+imagebuf_set_pixels(ImageBuf& imagebuf, ROI roi, TypeDesc format,
                     const uint8_t* data, int64_t xstride, int64_t ystride,
                     int64_t zstride)
 {
@@ -572,7 +574,7 @@ imagebuf_cachedpixels(const ImageBuf& imagebuf)
     return imagebuf.cachedpixels();
 }
 
-ImageCache*
+std::shared_ptr<ImageCache>
 imagebuf_imagecache(const ImageBuf& imagebuf)
 {
     return imagebuf.imagecache();

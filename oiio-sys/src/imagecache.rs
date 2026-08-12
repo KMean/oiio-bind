@@ -1,5 +1,8 @@
 pub use ffi::*;
 
+// This is the raw, signature-compatible FFI layer. Safety contracts and
+// operation-oriented arguments belong on the public wrappers in `oiio`.
+#[allow(clippy::missing_safety_doc, clippy::too_many_arguments)]
 #[cxx::bridge(namespace = oiio)]
 mod ffi {
     unsafe extern "C++" {
@@ -15,9 +18,9 @@ mod ffi {
         pub type ROI = crate::imageio::ROI;
         pub type TypeDesc = crate::typedesc::TypeDesc;
 
-        pub unsafe fn imagecache_create(shared: bool) -> *mut ImageCache;
+        pub fn imagecache_create(shared: bool) -> SharedPtr<ImageCache>;
 
-        pub unsafe fn imagecache_destroy(imagecache: *mut ImageCache, teardown: bool);
+        pub fn imagecache_destroy(imagecache: SharedPtr<ImageCache>, teardown: bool);
 
         pub unsafe fn imagecache_attribute(
             imagecache: Pin<&mut ImageCache>,

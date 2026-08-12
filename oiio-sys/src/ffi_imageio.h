@@ -260,9 +260,6 @@ imageinput_set_ioproxy(ImageInput& imageinput, IOProxy* ioproxy);
 bool
 imageinput_has_error(const ImageInput& imageinput);
 
-rust::String
-imageinput_geterror(const ImageInput& imageinput, bool clear);
-
 void
 imageinput_seterror(ImageInput& imageinput, const rust::Str message);
 
@@ -376,6 +373,9 @@ shutdown();
 
 int
 openimageio_version();
+
+int
+openimageio_build_version();
 
 bool
 has_error();

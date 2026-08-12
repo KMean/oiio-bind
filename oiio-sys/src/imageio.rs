@@ -1,6 +1,7 @@
 pub use ffi::*;
 
 // ROI
+#[repr(C)]
 pub struct ROI {
     pub xbegin: i32,
     pub xend: i32,
@@ -17,6 +18,7 @@ unsafe impl cxx::ExternType for ROI {
     type Kind = cxx::kind::Trivial;
 }
 
+#[repr(i32)]
 pub enum OpenMode {
     Create,
     AppendSubimage,
@@ -28,6 +30,9 @@ unsafe impl cxx::ExternType for OpenMode {
     type Kind = cxx::kind::Trivial;
 }
 
+// This is the raw, signature-compatible FFI layer. Safety contracts and
+// operation-oriented arguments belong on the public wrappers in `oiio`.
+#[allow(clippy::missing_safety_doc, clippy::too_many_arguments)]
 #[cxx::bridge(namespace = oiio)]
 mod ffi {
     struct ExtensionMapItem {
@@ -430,6 +435,8 @@ mod ffi {
         pub fn shutdown();
 
         pub fn openimageio_version() -> i32;
+
+        pub fn openimageio_build_version() -> i32;
 
         pub fn has_error() -> bool;
 

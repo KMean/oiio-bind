@@ -2,6 +2,7 @@
 #include "oiio-sys/src/imageio.rs.h"
 #include <OpenImageIO/imageio.h>
 #include <OpenImageIO/string_view.h>
+#include <cstddef>
 #include <memory>
 #include <stdexcept>
 #include <stdio.h>
@@ -263,7 +264,7 @@ imageinput_create_with_config(const rust::Str filename, bool do_open,
                                           plugin_searchpath.size());
     std::unique_ptr<OIIO::ImageInput> image_input(
         OIIO::ImageInput::create(std::string(filename), do_open, &config,
-                                 c_plugin_searchpath));
+                                  nullptr, c_plugin_searchpath));
 
     if (image_input) {
         return image_input;
@@ -280,7 +281,7 @@ imageinput_create_without_config(const rust::Str filename, bool do_open,
                                           plugin_searchpath.size());
     std::unique_ptr<OIIO::ImageInput> image_input(
         OIIO::ImageInput::create(std::string(filename), do_open, nullptr,
-                                 c_plugin_searchpath));
+                                  nullptr, c_plugin_searchpath));
 
     if (image_input) {
         return image_input;
@@ -445,7 +446,28 @@ imageinput_read_native_tile(ImageInput& imageinput, int subimage, int miplevel,
 bool
 imageinput_read_native_tiles(ImageInput& imageinput, int xbegin, int xend,
                              int ybegin, int yend, int zbegin, int zend,
-                             int chbegin, int chend, rust::Slice<uint8_t> data);
+                             int chbegin, int chend, rust::Slice<uint8_t> data)
+{
+    const int subimage = imageinput.current_subimage();
+    const int miplevel = imageinput.current_miplevel();
+    const ImageSpec dimensions
+        = imageinput.spec_dimensions(subimage, miplevel);
+    OIIO::span<std::byte> c_data(reinterpret_cast<std::byte*>(data.data()),
+                                 data.size());
+
+    if (dimensions.depth > 1) {
+        return imageinput.read_native_volumetric_tiles(
+            subimage, miplevel, xbegin, xend, ybegin, yend, zbegin, zend,
+            chbegin, chend, c_data);
+    }
+
+    if (zbegin != dimensions.z || zend != dimensions.z + 1) {
+        return false;
+    }
+
+    return imageinput.read_native_tiles(subimage, miplevel, xbegin, xend,
+                                        ybegin, yend, chbegin, chend, c_data);
+}
 
 bool
 imageinput_set_ioproxy(ImageInput& imageinput, IOProxy* ioproxy)
@@ -460,9 +482,9 @@ imageinput_has_error(const ImageInput& imageinput)
 }
 
 rust::String
-imageinput_geterror(const ImageInput& imageinput, bool clear)
+imageinput_geterror(ImageInput& imageinput)
 {
-    return rust::String(imageinput.geterror(clear));
+    return rust::String(imageinput.geterror());
 }
 
 void
@@ -675,6 +697,12 @@ int
 openimageio_version()
 {
     return OIIO::openimageio_version();
+}
+
+int
+openimageio_build_version()
+{
+    return OIIO_VERSION;
 }
 
 bool

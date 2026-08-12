@@ -13,29 +13,65 @@ The `oiio-sys` directory contains the [oiio-sys](https://crates.io/crates/oiio-s
 
 The `oiio-sys` crate should not be used directly.
 
+See [ROADMAP.md](ROADMAP.md) for the compatibility policy and planned safe API,
+including first-class `ImageCache` support.
+
 
 ## Usage
 
-Building the `oiio-sys` crates requires you to install the C++
-[OpenImageIO](https://github.com/AcademySoftwareFoundation/OpenImageIO)
-library in order to build the `oiio` crate.
+Building `oiio-sys` requires an OpenImageIO 3.1.x development installation,
+including the C++ headers and libraries. The bindings currently target the
+OpenImageIO 3.1 API.
 
 Add oiio to your `Cargo.toml`:
 
     [dependencies]
     oiio = "0.2.0"
 
-The `oiio` crate is built using `cargo build` but you must ensure that
-`pkg-config` is able to find your OpenImageIO installation.
+The `oiio` crate is built using `cargo build`. `oiio-sys` discovers
+OpenImageIO in this order:
 
-If the C++ OpenImageIO library is installed to a non-system directory then
-you must configure  the `PKG_CONFIG_PATH` environment variable to point to the
-`lib*/pkgconfig` directory inside the OpenImageIO installtion.
+1. An explicit `OIIO_ROOT`, or both `OIIO_INCLUDE_DIR` and
+   `OIIO_LIBRARY_DIR`. `OIIO_DLL_DIR` may specify a separate Windows runtime
+   directory.
+2. vcpkg when targeting Windows with the MSVC Rust toolchain.
+3. `pkg-config` on other targets.
 
-`pkg-config` is used by `oiio-sys/build.rs` in order to locate the
-`OpenImageIO` libraries and C++ headers. If OpenImageIO is installed to a
-global system location such as `/usr/local` then `PKG_CONFIG_PATH` does not
-need to be configured. `pkg-config` searches in the system locations by default.
+`OIIO_ROOT` must contain `include/OpenImageIO` and `lib`. The separate include
+and library overrides are useful when a custom installation does not follow
+that layout.
+
+On Windows, the default vcpkg triplet is derived from the Rust target:
+`x64-windows`, `x86-windows`, or `arm64-windows`. These are dynamic-library
+triplets. Set `VCPKG_ROOT` to the vcpkg checkout and install the matching port,
+for example:
+
+```powershell
+vcpkg install openimageio:x64-windows
+cargo build --all
+```
+
+Set `OIIO_VCPKG_TRIPLET` to select another triplet. If it is unset,
+`VCPKG_DEFAULT_TRIPLET` is honored before the target-derived default.
+
+On Linux, macOS, and other Unix-like systems, `pkg-config` must be able to
+locate `OpenImageIO`. For a non-system installation, set `PKG_CONFIG_PATH` to
+the directory containing its `OpenImageIO.pc` file.
+
+### Troubleshooting
+
+If discovery fails, first check that the OpenImageIO installation matches the
+Rust target architecture and ABI. On Windows, verify `VCPKG_ROOT` and the
+selected triplet. With explicit overrides, `OIIO_INCLUDE_DIR` must contain the
+`OpenImageIO` directory and `OIIO_LIBRARY_DIR` must contain the OpenImageIO
+libraries.
+
+Dynamic Windows builds also need `OpenImageIO.dll`, `OpenImageIO_Util.dll`,
+and their dependency DLLs at runtime. vcpkg discovery stages these for Cargo
+commands. Explicit installs stage DLLs from `OIIO_DLL_DIR`, or from
+`OIIO_ROOT/bin` when present. Applications launched or distributed outside
+Cargo must still place the required DLLs beside the executable or make their
+directory available through `PATH`.
 
 
 ### Development

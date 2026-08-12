@@ -1,14 +1,14 @@
 #include "ffi_imagecache.h"
 
 namespace oiio {
-ImageCache*
+std::shared_ptr<ImageCache>
 imagecache_create(bool shared)
 {
     return OIIO::ImageCache::create(shared);
 }
 
 void
-imagecache_destroy(ImageCache* imagecache, bool teardown)
+imagecache_destroy(std::shared_ptr<ImageCache> imagecache, bool teardown)
 {
     OIIO::ImageCache::destroy(imagecache, teardown);
 }

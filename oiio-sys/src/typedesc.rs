@@ -1,6 +1,7 @@
 pub use ffi::*;
 
 #[derive(Debug, Clone, Copy)]
+#[repr(u8)]
 pub enum BaseType {
     Unknown,
     None,
@@ -17,6 +18,7 @@ pub enum BaseType {
     Float64,
     String,
     Ptr,
+    UStringHash,
     LastBase,
 }
 
@@ -26,6 +28,7 @@ unsafe impl cxx::ExternType for BaseType {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[repr(u8)]
 pub enum Aggregate {
     Scalar = 1,
     Vec2 = 2,
@@ -41,6 +44,7 @@ unsafe impl cxx::ExternType for Aggregate {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[repr(u8)]
 pub enum VecSemantics {
     NoSemantics = 0,
     Color,
@@ -50,6 +54,7 @@ pub enum VecSemantics {
     Timecode,
     Keycode,
     Rational,
+    Box,
 }
 
 unsafe impl cxx::ExternType for VecSemantics {
@@ -58,6 +63,7 @@ unsafe impl cxx::ExternType for VecSemantics {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[repr(C)]
 pub struct TypeDesc {
     pub basetype: u8,
     pub aggregate: u8,
