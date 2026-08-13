@@ -38,6 +38,8 @@
 
 use oiio_sys as sys;
 
+pub mod algo;
+
 mod attribute;
 mod error;
 mod image_buf;

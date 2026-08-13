@@ -54,6 +54,18 @@ pub struct ImageBuf {
 }
 
 impl ImageBuf {
+    /// An image with no specification and no pixels yet.
+    ///
+    /// This is what to pass as the destination of an
+    /// [`algo`](crate::algo) operation that should decide the result's shape
+    /// for itself — [`transpose`](crate::algo::transpose) exchanges the
+    /// dimensions, and [`copy`](crate::algo::copy) can change the pixel
+    /// format. Handing those an already-allocated destination makes them write
+    /// into it as it is, keeping its size and format.
+    pub fn empty() -> Result<Self> {
+        Self::from_inner(sys::imagebuf::imagebuf_default(), "create image buffer")
+    }
+
     /// Allocate an image described by `spec`, with every pixel set to zero.
     pub fn new(spec: &ImageSpec) -> Result<Self> {
         let native_spec = spec.to_sys()?;
@@ -102,7 +114,7 @@ impl ImageBuf {
         if !sys::imagebuf::imagebuf_init_spec(buffer.inner_mut(), filename, subimage, mip_level) {
             return Err(Error::OpenImage {
                 path: image_path.to_path_buf(),
-                message: buffer.error_message(),
+                message: buffer.take_error(),
             });
         }
         Ok(buffer)
@@ -257,7 +269,7 @@ impl ImageBuf {
         Ok(Self { inner })
     }
 
-    fn error_message(&self) -> String {
+    pub(crate) fn take_error(&self) -> String {
         sys::imagebuf::imagebuf_geterror(self.inner(), true)
     }
 
@@ -265,17 +277,17 @@ impl ImageBuf {
         if succeeded {
             Ok(())
         } else {
-            Err(Error::operation(operation, self.error_message()))
+            Err(Error::operation(operation, self.take_error()))
         }
     }
 
-    fn inner(&self) -> &sys::imagebuf::ImageBuf {
+    pub(crate) fn inner(&self) -> &sys::imagebuf::ImageBuf {
         self.inner
             .as_ref()
             .expect("ImageBuf invariant violated: null native pointer")
     }
 
-    fn inner_mut(&mut self) -> std::pin::Pin<&mut sys::imagebuf::ImageBuf> {
+    pub(crate) fn inner_mut(&mut self) -> std::pin::Pin<&mut sys::imagebuf::ImageBuf> {
         self.inner
             .as_mut()
             .expect("ImageBuf invariant violated: null native pointer")

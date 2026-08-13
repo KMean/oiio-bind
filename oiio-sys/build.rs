@@ -9,6 +9,7 @@ const NAMES: &[&str] = &[
     "deepdata",
     "filesystem",
     "imagebuf",
+    "imagebufalgo",
     "imagecache",
     "imageio",
     "typedesc",

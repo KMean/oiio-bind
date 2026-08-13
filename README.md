@@ -120,6 +120,31 @@ OpenImageIO type descriptor, alignment, and buffer byte size consistent.
 `PixelFormat` separately describes what a file stores, including formats such as
 `uint32` that the contiguous buffer API does not itself read or write.
 
+`ImageBuf` holds an image in memory and `oiio::algo` operates on it, mirroring
+OpenImageIO's `ImageBufAlgo`:
+
+```rust,no_run
+use oiio::{algo, ImageBuf, ImageSpec, PixelFormat};
+
+let spec = ImageSpec::new(1920, 1080, 3, PixelFormat::F32)?;
+let mut background = ImageBuf::new(&spec)?;
+algo::fill(&mut background, &[0.2, 0.4, 0.6], None)?;
+
+let mut brighter = ImageBuf::new(&spec)?;
+algo::mul_constant(&mut brighter, &background, &[2.0, 2.0, 2.0], None)?;
+
+// How far apart are two images?
+let difference = algo::compare(&background, &brighter, 0.0, 0.0, None);
+println!("largest difference: {}", difference.max_error);
+# Ok::<(), oiio::Error>(())
+```
+
+The destination is `&mut` and the sources are `&`, so Rust rejects aliasing
+these operations are not written for. Pass `ImageBuf::empty()` when the
+operation should decide the result's shape — `transpose` swaps the dimensions
+and `copy` can change the pixel format, neither of which happens if you hand
+them a buffer you already sized.
+
 Metadata is read as `AttributeValue`. Integer, float, and string attributes are
 modelled directly and can be written back; any other OpenImageIO type is
 preserved for inspection with its type name and OpenImageIO's own rendering of

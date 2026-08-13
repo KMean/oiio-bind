@@ -106,7 +106,11 @@ ownership model is proven.
 - [x] `ImageBuf`: allocate from a specification or attach to a file, read on
   demand, bounded pixel transfer in both directions with conversion, write to
   a file, and deep copy. This is what `ImageBufAlgo` will operate on.
-- [ ] `ImageBufAlgo`, starting with the operations that need no new types.
+- [x] `ImageBufAlgo`, first slice: `zero`, `fill`, `add`/`sub`/`mul`/`div`
+  against another image or a constant per channel, `abs`, `absdiff`, `copy`
+  with conversion, `crop`, `flip`, `flop`, `transpose`, and `compare`.
+- [ ] `ImageBufAlgo` operations that need more types: `resize` and friends
+  (filter names and widths), channel shuffling, colour conversion, `render_text`.
 
 The project intentionally does not try to generate bindings for every OIIO C++
 template or expose raw C++ pointer semantics through the safe crate.
