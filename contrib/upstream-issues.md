@@ -223,3 +223,84 @@ which also makes the surplus-channel block below it reachable, as it is in
 Found while binding `max` for Rust. Until it is fixed, the binding refuses
 unequal channel counts and destinations narrower than the inputs, since it
 cannot otherwise keep its safety promise.
+
+## Issue 5 — `isConstantColor` writes past its reference buffer
+
+**Title:** `ImageBufAlgo::isConstantColor` heap overflow when `roi.chbegin > 0`
+
+`imagebufalgo_compare.cpp`, in `isConstantColor_`:
+
+```c++
+std::vector<T> constval(roi.nchannels());
+ImageBuf::ConstIterator<T, T> s(src, roi);
+for (int c = roi.chbegin; c < roi.chend; ++c)
+    constval[c] = s[c];
+```
+
+The vector holds `roi.chend - roi.chbegin` entries but is indexed by absolute
+channel number. With `chbegin = 1, chend = 3` it has two entries and
+`constval[2]` is written past the end. The public wrapper clamps `chend` to the
+image's channel count but never touches `chbegin`, so nothing upstream prevents
+it.
+
+The second-pixel early-out a few lines below reads the same out-of-range
+element.
+
+Either size the vector `roi.chend` entries, or index it `constval[c -
+roi.chbegin]`.
+
+`nonzero_region` reaches this too: it trims by calling `isConstantColor` on
+strips, and `roi_intersection` preserves the caller's `chbegin`.
+
+## Issue 6 — `histogram` does not clamp its channel range
+
+**Title:** `ImageBufAlgo::histogram` reads out of bounds with `ignore_empty`
+and a default-constructed ROI
+
+`ImageBufAlgo::histogram` validates the channel, the bin count and the range,
+but a defined `roi` is passed to `histogram_impl` verbatim — only an *undefined*
+one is replaced by `get_roi(src.spec())`. The kernel then does:
+
+```c++
+if (ignore_empty) {
+    bool allblack = true;
+    for (int c = roi.chbegin; c < roi.chend; ++c)
+        allblack &= (a[c] == 0.0f);
+```
+
+`ROI`'s four-argument constructor defaults `chend` to 10000, so the natural
+`ROI(x0, x1, y0, y1)` makes this read 10000 channels out of every pixel.
+`ConstDataArrayProxy::operator[]` does no bounds check.
+
+Every other statistic in this file clamps `roi.chend` to `src.nchannels()`;
+`histogram` appears to be the one that was missed.
+
+## Issue 7 — `computePixelHashSHA1` indexes its block results by the wrong origin
+
+**Title:** `ImageBufAlgo::computePixelHashSHA1` writes past `results` when
+`blocksize > 0` and the ROI does not start at the image's first row
+
+```c++
+int nblocks = (roi.height() + blocksize - 1) / blocksize;
+std::vector<std::string> results(nblocks);
+parallel_for_chunked(roi.ybegin, roi.yend, blocksize,
+                     [&](int64_t ybegin, int64_t yend) {
+    int64_t b   = (ybegin - src.ybegin()) / blocksize;  // block number
+    ...
+    results[b]  = simplePixelHashSHA1(src, "", broi);
+}, nthreads);
+```
+
+`results` is sized from the ROI's height, but the block index is computed from
+the *image's* first row. The chunked loop walks `[roi.ybegin, roi.yend)`, so the
+two agree only when `roi.ybegin == src.ybegin()`.
+
+With `src.ybegin() == 0`, `roi.ybegin == 10`, `roi.yend == 30` and
+`blocksize == 4`: `nblocks == 5`, while `b` takes the values 2, 3, 4, 5, 6.
+`results[5]` and `results[6]` are past the end, and each writes a `std::string`.
+
+The index should be `(ybegin - roi.ybegin) / blocksize`.
+
+Found while binding these for Rust. The binding does not expose `blocksize` at
+all, partly for this and partly because the two paths give different digests
+for identical pixels.

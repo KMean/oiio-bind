@@ -124,6 +124,243 @@ binary_operation!(
     "divide"
 );
 
+/// What [`pixel_stats`] measured, one entry per channel of the source.
+///
+/// Every vector has the source's channel count, not the region's, so a region
+/// that names fewer channels still reports every channel; those it did not
+/// visit have a [`finite_count`](Self::finite_count) of zero.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PixelStats {
+    /// The smallest finite value seen.
+    pub min: Vec<f32>,
+    /// The largest finite value seen.
+    pub max: Vec<f32>,
+    /// The mean of the finite values.
+    pub average: Vec<f32>,
+    /// The population standard deviation of the finite values.
+    pub standard_deviation: Vec<f32>,
+    /// How many values were `NaN`.
+    pub nan_count: Vec<u64>,
+    /// How many were infinite.
+    pub infinite_count: Vec<u64>,
+    /// How many were neither, and so contributed to the figures above.
+    pub finite_count: Vec<u64>,
+}
+
+/// Measure each channel: range, mean, spread, and how many values were not
+/// finite.
+///
+/// `NaN` and infinity are counted rather than folded into the average, so a
+/// render with a handful of bad pixels still reports a usable range. A channel
+/// with no finite values at all reports zeroes; its
+/// [`finite_count`](PixelStats::finite_count) is what distinguishes that from
+/// a channel that really is all zero.
+///
+/// Deep images are refused: their samples are not one value per pixel, so a
+/// per-pixel mean would not mean anything.
+pub fn pixel_stats(src: &ImageBuf, roi: Option<Roi>) -> Result<PixelStats> {
+    let roi = region(roi);
+    let stats = sys::imagebufalgo::imagebufalgo_pixel_stats(src.inner(), &roi, ALL_THREADS);
+    if !stats.ok {
+        return Err(Error::operation("pixel statistics", stats.error));
+    }
+    Ok(PixelStats {
+        min: stats.min,
+        max: stats.max,
+        average: stats.average,
+        standard_deviation: stats.standard_deviation,
+        nan_count: stats.nan_count,
+        infinite_count: stats.infinite_count,
+        finite_count: stats.finite_count,
+    })
+}
+
+/// Count how many pixels of one channel fall in each of `bins` equal buckets
+/// spanning `range`.
+///
+/// Values outside `range` are counted in the nearest bucket rather than
+/// discarded, so the totals always add up to the number of pixels examined.
+///
+/// `ignore_empty` skips pixels that are zero in every channel of the region,
+/// which is how to exclude the transparent surround of a render.
+pub fn histogram(
+    src: &ImageBuf,
+    channel: u32,
+    bins: u32,
+    range: std::ops::Range<f32>,
+    ignore_empty: bool,
+    roi: Option<Roi>,
+) -> Result<Vec<u64>> {
+    let channel = i32::try_from(channel)
+        .map_err(|_| Error::InvalidImageSpec("channel exceeds i32::MAX".to_owned()))?;
+    let bins = i32::try_from(bins)
+        .map_err(|_| Error::InvalidImageSpec("bin count exceeds i32::MAX".to_owned()))?;
+    let roi = region(roi);
+    let mut message = String::new();
+    let counts = sys::imagebufalgo::imagebufalgo_histogram(
+        src.inner(),
+        channel,
+        bins,
+        range.start,
+        range.end,
+        ignore_empty,
+        &roi,
+        ALL_THREADS,
+        &mut message,
+    );
+    if counts.is_empty() {
+        return Err(Error::operation("histogram", message));
+    }
+    Ok(counts.into_iter().collect())
+}
+
+/// The colour every pixel shares, if they all share one.
+///
+/// `None` means the image varies. The colour is one value per channel of the
+/// source, with channels outside the region zeroed.
+///
+/// A `threshold` of zero compares the stored values exactly, in the image's own
+/// format, so two `half` values that differ only after conversion to `f32` still
+/// count as equal.
+///
+/// The region must begin at channel zero. OpenImageIO sizes its reference
+/// buffer to the region's channel count but fills it by absolute channel
+/// number, so a region starting higher writes past the end of that buffer.
+pub fn constant_color(
+    src: &ImageBuf,
+    threshold: f32,
+    roi: Option<Roi>,
+) -> Result<Option<Vec<f32>>> {
+    let channels = src.spec()?.channel_count() as usize;
+    let mut color = vec![0.0_f32; channels];
+    let roi = region(roi);
+    let mut message = String::new();
+    let constant = sys::imagebufalgo::imagebufalgo_is_constant_color(
+        src.inner(),
+        threshold,
+        &mut color,
+        &roi,
+        ALL_THREADS,
+        &mut message,
+    );
+    if constant {
+        return Ok(Some(color));
+    }
+    if message.is_empty() {
+        // Not constant, which is an answer rather than a failure.
+        Ok(None)
+    } else {
+        Err(Error::operation("constant colour", message))
+    }
+}
+
+/// Whether one channel holds `value` everywhere in the region.
+///
+/// The channel must exist: OpenImageIO answers a bad channel index with the
+/// same `false` it uses for "not constant", so this reports an error instead.
+pub fn is_constant_channel(
+    src: &ImageBuf,
+    channel: u32,
+    value: f32,
+    threshold: f32,
+    roi: Option<Roi>,
+) -> Result<bool> {
+    let channel = i32::try_from(channel)
+        .map_err(|_| Error::InvalidImageSpec("channel exceeds i32::MAX".to_owned()))?;
+    let roi = region(roi);
+    let mut message = String::new();
+    let constant = sys::imagebufalgo::imagebufalgo_is_constant_channel(
+        src.inner(),
+        channel,
+        value,
+        threshold,
+        &roi,
+        ALL_THREADS,
+        &mut message,
+    );
+    if !constant && !message.is_empty() {
+        return Err(Error::operation("constant channel", message));
+    }
+    Ok(constant)
+}
+
+/// Whether every channel of each pixel holds that pixel's first channel.
+///
+/// This is a per-pixel test, so a greyscale gradient is monochrome. Alpha
+/// counts, which is rarely what you want: narrow the region to the colour
+/// channels, or an opaque grey image reports false because alpha is 1 where
+/// the colours are not.
+pub fn is_monochrome(src: &ImageBuf, threshold: f32, roi: Option<Roi>) -> Result<bool> {
+    let roi = region(roi);
+    let mut message = String::new();
+    let monochrome = sys::imagebufalgo::imagebufalgo_is_monochrome(
+        src.inner(),
+        threshold,
+        &roi,
+        ALL_THREADS,
+        &mut message,
+    );
+    if !monochrome && !message.is_empty() {
+        return Err(Error::operation("monochrome test", message));
+    }
+    Ok(monochrome)
+}
+
+/// The smallest region outside which every pixel is black.
+///
+/// `None` means there is nothing but black. This is how to trim the empty
+/// surround from a render before writing it.
+///
+/// A pixel counts as black only when every channel of the region is exactly
+/// zero, alpha included, so an image with alpha 1 over a black background does
+/// not shrink at all. The search trims one row or column at a time, so it costs
+/// a pass per edge rather than a single pass over the image.
+///
+/// The region must begin at channel zero, for the reason
+/// [`constant_color`] gives: this is built on it.
+pub fn nonzero_region(src: &ImageBuf, roi: Option<Roi>) -> Result<Option<Roi>> {
+    let roi = region(roi);
+    let mut message = String::new();
+    let found = sys::imagebufalgo::imagebufalgo_nonzero_region(
+        src.inner(),
+        &roi,
+        ALL_THREADS,
+        &mut message,
+    );
+    if !message.is_empty() {
+        return Err(Error::operation("nonzero region", message));
+    }
+    Roi::from_sys_optional(found)
+}
+
+/// A SHA-1 digest of the region's pixels, as hexadecimal.
+///
+/// This hashes the bytes as the image stores them, not the values they mean, so
+/// the same picture held as `half` and as `f32` gives different digests. It is
+/// for asking "did this file's pixels change", not "do these two images look
+/// the same"; [`compare`] answers that.
+///
+/// `extra_info` is mixed into the digest, so a caller can bind it to something
+/// beyond the pixels.
+///
+/// A region narrower than the image gives an answer that depends on how the
+/// buffer was loaded, so prefer a full-width region or none at all.
+pub fn pixel_hash_sha1(src: &ImageBuf, extra_info: &str, roi: Option<Roi>) -> Result<String> {
+    let roi = region(roi);
+    let mut message = String::new();
+    let digest = sys::imagebufalgo::imagebufalgo_pixel_hash_sha1(
+        src.inner(),
+        extra_info,
+        &roi,
+        ALL_THREADS,
+        &mut message,
+    );
+    if digest.is_empty() {
+        return Err(Error::operation("pixel hash", message));
+    }
+    Ok(digest)
+}
+
 /// Rotate a quarter turn clockwise.
 ///
 /// The region selects part of the **source**, not of the destination — the

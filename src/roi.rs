@@ -135,6 +135,20 @@ impl Roi {
         )
     }
 
+    /// A region OpenImageIO may have left undefined, or emptied by trimming.
+    ///
+    /// It spells "nothing" two ways depending on the path taken: an undefined
+    /// region for a deep image with no samples, and a defined one of zero
+    /// height for a flat image that is entirely black. Both become `None`.
+    pub(crate) fn from_sys_optional(roi: sys::imageio::ROI) -> Result<Option<Self>> {
+        // An undefined ROI is the one whose x range starts at i32::MIN, which
+        // is how OpenImageIO's default constructor spells it.
+        if roi.xbegin == i32::MIN || roi.xend <= roi.xbegin || roi.yend <= roi.ybegin {
+            return Ok(None);
+        }
+        Self::from_sys(&roi).map(Some)
+    }
+
     pub(crate) fn from_spec(spec: &ImageSpec) -> Result<Self> {
         let x_end = checked_end("x", spec.x(), spec.width())?;
         let y_end = checked_end("y", spec.y(), spec.height())?;

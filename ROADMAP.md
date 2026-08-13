@@ -147,8 +147,12 @@ The `ImageBufAlgo` surface is being completed in slices, each one commit:
   remain reachable. Note that the output format has the last word on the data
   format and takes it silently: TIFF, which is what a `.tx` is, promotes
   `half` to `float`, and OpenEXR demotes integer formats to `half`.
-- [ ] Statistics and introspection: `computePixelStats`, `histogram`,
-  `isConstantColor`, `isMonochrome`, `nonzero_region`, `computePixelHashSHA1`.
+- [x] Statistics and introspection: `pixel_stats`, `histogram`,
+  `constant_color`, `is_constant_channel`, `is_monochrome`, `nonzero_region`
+  and `pixel_hash_sha1`. None of OpenImageIO's versions guards against a deep
+  image, whose iterators have no pixel pointer, and three of them read or write
+  out of bounds for regions the rest of `ImageBufAlgo` accepts; see issues 5, 6
+  and 7 in `contrib/upstream-issues.md`. The bindings guard all of it.
 - [x] Remaining pixel maths: `mad`, `pow`, `clamp`, `min`, `max`,
   `contrast_remap`, `saturate`, `invert`, `paste`, `cut`. `Operand` mirrors
   OpenImageIO's `Image_or_Const` for the three operations that accept either.

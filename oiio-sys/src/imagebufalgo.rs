@@ -21,6 +21,22 @@ mod ffi {
         failed: bool,
     }
 
+    /// Everything `ImageBufAlgo::computePixelStats` measured, one entry per
+    /// channel, flattened for the bridge. `ok` is false when nothing was
+    /// measured, and `error` says why.
+    #[derive(Debug, Clone, Default)]
+    struct PixelStatistics {
+        min: Vec<f32>,
+        max: Vec<f32>,
+        average: Vec<f32>,
+        standard_deviation: Vec<f32>,
+        nan_count: Vec<u64>,
+        infinite_count: Vec<u64>,
+        finite_count: Vec<u64>,
+        ok: bool,
+        error: String,
+    }
+
     unsafe extern "C++" {
         include!("oiio-sys/src/ffi_imagebufalgo.h");
 
@@ -240,6 +256,66 @@ mod ffi {
             shuffle_channel_names: bool,
             nthreads: i32,
         ) -> bool;
+
+        pub fn imagebufalgo_pixel_stats(
+            src: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> PixelStatistics;
+
+        pub fn imagebufalgo_histogram(
+            src: &ImageBuf,
+            channel: i32,
+            bins: i32,
+            min: f32,
+            max: f32,
+            ignore_empty: bool,
+            roi: &ROI,
+            nthreads: i32,
+            error: &mut String,
+        ) -> Vec<u64>;
+
+        pub fn imagebufalgo_is_constant_color(
+            src: &ImageBuf,
+            threshold: f32,
+            color: &mut [f32],
+            roi: &ROI,
+            nthreads: i32,
+            error: &mut String,
+        ) -> bool;
+
+        pub fn imagebufalgo_is_constant_channel(
+            src: &ImageBuf,
+            channel: i32,
+            value: f32,
+            threshold: f32,
+            roi: &ROI,
+            nthreads: i32,
+            error: &mut String,
+        ) -> bool;
+
+        pub fn imagebufalgo_is_monochrome(
+            src: &ImageBuf,
+            threshold: f32,
+            roi: &ROI,
+            nthreads: i32,
+            error: &mut String,
+        ) -> bool;
+
+        pub fn imagebufalgo_nonzero_region(
+            src: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+            error: &mut String,
+        ) -> ROI;
+
+        pub fn imagebufalgo_pixel_hash_sha1(
+            src: &ImageBuf,
+            extrainfo: &str,
+            roi: &ROI,
+            nthreads: i32,
+            error: &mut String,
+        ) -> String;
 
         pub fn imagebufalgo_rotate90(
             dst: Pin<&mut ImageBuf>,

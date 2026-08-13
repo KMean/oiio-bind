@@ -6,7 +6,7 @@
 //! caller needs to match on becomes unnameable.
 
 use oiio::algo::{
-    self, ChannelSource, CompareSummary, ContrastRemap, FitMode, Operand, WarpOptions,
+    self, ChannelSource, CompareSummary, ContrastRemap, FitMode, Operand, PixelStats, WarpOptions,
 };
 use oiio::{
     f16, make_texture, make_texture_from_buffer, AttributeValue, ColorConfig, DeepChannel,
@@ -139,6 +139,18 @@ fn a_dependent_can_use_the_whole_surface() -> Result<()> {
         Some(spec.data_window()?.with_x(0..8)?),
     )?;
     assert_eq!(trimmed.spec()?.origin(), [0, 0, 0]);
+
+    // The measurements.
+    let stats: PixelStats = algo::pixel_stats(&image, None)?;
+    assert_eq!(stats.min.len(), 4);
+    let counts: Vec<u64> = algo::histogram(&image, 0, 8, 0.0..1.0, false, None)?;
+    assert_eq!(counts.iter().sum::<u64>(), 64 * 32);
+    assert!(algo::constant_color(&image, 0.0, None)?.is_some());
+    assert!(algo::is_constant_channel(&image, 3, 1.0, 0.0, None)?);
+    assert!(!algo::is_monochrome(&image, 0.0, None)?);
+    let occupied: Option<Roi> = algo::nonzero_region(&image, None)?;
+    assert!(occupied.is_some());
+    assert_eq!(algo::pixel_hash_sha1(&image, "", None)?.len(), 40);
 
     let _builder: ImageCacheBuilder = ImageCache::builder();
     let cache = ImageCache::new()?;

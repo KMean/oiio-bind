@@ -13,6 +13,67 @@ using ROI       = OIIO::ROI;
 using TypeDesc  = OIIO::TypeDesc;
 
 struct CompareSummary;
+struct PixelStatistics;
+
+// The measurements. None of these fills a destination buffer, so there is no
+// dst to carry an error; each reports through an out parameter instead.
+//
+// Several also need guarding. OpenImageIO's statistics do not all clamp their
+// region the way the rest of ImageBufAlgo does, and none of them checks for a
+// deep image, whose iterators have no pixel pointer at all. The guards are
+// noted at each one.
+
+// The success test inside OpenImageIO is `!src.has_error()`, which is the
+// buffer's sticky flag rather than anything this call did, so a stale error
+// left on `src` by an earlier operation would be read as this one failing.
+// Clearing it first is what makes the result mean what it says.
+PixelStatistics
+imagebufalgo_pixel_stats(const ImageBuf& src, const ROI& roi, int nthreads);
+
+// histogram is the one statistic that never clamps the channel range to the
+// image's channel count. A default-constructed ROI carries chend = 10000, and
+// with ignore_empty the inner loop reads every channel up to it.
+rust::Vec<uint64_t>
+imagebufalgo_histogram(const ImageBuf& src, int channel, int bins, float min,
+                       float max, bool ignore_empty, const ROI& roi,
+                       int nthreads, rust::String& error);
+
+// `color` is filled only when the answer is true: OpenImageIO returns early
+// on the second differing pixel, before the writeback, so on false the
+// caller's buffer would otherwise keep whatever it held.
+//
+// A region beginning at a channel other than zero is refused: the sizes of
+// the reference vector and the loop that fills it disagree, and it writes off
+// the end of the heap allocation.
+bool
+imagebufalgo_is_constant_color(const ImageBuf& src, float threshold,
+                               rust::Slice<float> color, const ROI& roi,
+                               int nthreads, rust::String& error);
+
+bool
+imagebufalgo_is_constant_channel(const ImageBuf& src, int channel, float value,
+                                 float threshold, const ROI& roi, int nthreads,
+                                 rust::String& error);
+
+bool
+imagebufalgo_is_monochrome(const ImageBuf& src, float threshold, const ROI& roi,
+                           int nthreads, rust::String& error);
+
+// Reaches the same out-of-bounds write as is_constant_color, which it is built
+// on, so it carries the same guard.
+ROI
+imagebufalgo_nonzero_region(const ImageBuf& src, const ROI& roi, int nthreads,
+                            rust::String& error);
+
+// The block size is deliberately not exposed. Splitting the work changes the
+// digest for the same pixels, which OpenImageIO documents, and a block size
+// with a region that does not start at the image's first row indexes past the
+// end of the results vector.
+rust::String
+imagebufalgo_pixel_hash_sha1(const ImageBuf& src, const rust::Str extrainfo,
+                             const ROI& roi, int nthreads,
+                             rust::String& error);
+
 
 // Every call below writes into `dst` and reports failure through `dst`'s own
 // error channel. An undefined `roi` means the whole image, which is what

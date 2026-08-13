@@ -23,6 +23,12 @@ crates.io yet, so there are no version numbers to hang them on.
   another image or a constant, `abs`, `absdiff`, `copy`, `crop`, `flip`,
   `flop`, `transpose`, `compare`, `resize`, `resample`, `fit`, `over`,
   `premult`, `unpremult`, `channel_sum`, `channels` and `color_convert`.
+- `oiio::algo` measurements: `pixel_stats` for range, mean, spread and how
+  many values were not finite; `histogram`; `constant_color`,
+  `is_constant_channel` and `is_monochrome`; `nonzero_region` to shrink-wrap
+  the content; and `pixel_hash_sha1`. `constant_color` returns the colour
+  itself rather than a bool and an out parameter, since OpenImageIO leaves
+  that buffer untouched when the answer is no.
 - `oiio::algo` rotation and warping: `rotate_90`, `rotate_180`, `rotate_270`,
   `reorient`, `rotate` by an arbitrary angle, `warp` by a 3x3 matrix, and
   `st_warp` by a map of source coordinates. `rotate` takes radians and turns
@@ -62,6 +68,17 @@ crates.io yet, so there are no version numbers to hang them on.
 
 ### Fixed
 
+- The measurements cannot be made to read or write out of bounds, nor to
+  dereference a deep image's absent pixel pointer. OpenImageIO's
+  `isConstantColor` sizes its reference buffer to the region's channel count
+  but indexes it by absolute channel number; its `histogram` is alone among
+  the statistics in never clamping the channel range, so the 10000 a
+  default-constructed region carries is read from every pixel; and its
+  `computePixelHashSHA1` sizes its block results from the region but indexes
+  them from the image. None of the seven checks for a deep image. The
+  bindings refuse or clamp each case. Drafted for upstream as issues 5, 6 and
+  7; `pixel_hash_sha1` also does not expose the block size, which is the only
+  way to reach the third.
 - `algo::max` cannot be made to read or write out of bounds. OpenImageIO's
   image-against-image `max` widens its channel range where `min` narrows it,
   after the range has already been clamped to what the buffers hold, so it

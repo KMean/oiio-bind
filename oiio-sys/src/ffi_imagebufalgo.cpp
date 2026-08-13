@@ -50,7 +50,240 @@ collect_texture_failure(const std::ostringstream& printed, rust::String& error)
     error = rust::String(message);
 }
 
+// None of the statistics guards against a deep image, and a deep ImageBuf's
+// iterator has no pixel pointer, so the first read dereferences null. Refuse
+// them here.
+bool
+reject_deep(const ImageBuf& src, const char* operation, rust::String& error)
+{
+    if (!src.deep())
+        return false;
+    error = rust::String(std::string(operation)
+                         + ": deep images have no contiguous pixels to measure");
+    return true;
+}
+
+// A defined region is used verbatim by these calls, and a default-constructed
+// ROI carries chend = 10000. Bring it back to what the image actually holds.
+ROI
+bounded_channels(const ImageBuf& src, const ROI& roi)
+{
+    ROI bounded = roi;
+    if (!bounded.defined())
+        return src.roi();
+    bounded.chbegin = std::max(bounded.chbegin, 0);
+    bounded.chend   = std::min(bounded.chend, src.nchannels());
+    return bounded;
+}
+
 }  // namespace
+
+PixelStatistics
+imagebufalgo_pixel_stats(const ImageBuf& src, const ROI& roi, int nthreads)
+{
+    PixelStatistics result;
+    result.ok = false;
+
+    if (src.deep()) {
+        result.error = rust::String(
+            "pixel statistics: deep images are measured per sample, which this "
+            "call does not report");
+        return result;
+    }
+
+    // OpenImageIO decides success by asking whether `src` carries an error at
+    // all, so anything left over from an earlier call would be attributed to
+    // this one. Clear it before measuring.
+    src.geterror(true);
+
+    const OIIO::ImageBufAlgo::PixelStats stats
+        = OIIO::ImageBufAlgo::computePixelStats(src, bounded_channels(src, roi),
+                                                nthreads);
+    if (stats.min.empty()) {
+        std::string message = src.geterror(true);
+        if (message.empty())
+            message = "OpenImageIO reported no statistics and no reason";
+        result.error = rust::String(message);
+        return result;
+    }
+
+    const auto copy_floats = [](const std::vector<float>& from,
+                                rust::Vec<float>& to) {
+        to.reserve(from.size());
+        for (float value : from)
+            to.push_back(value);
+    };
+    const auto copy_counts = [](const std::vector<OIIO::imagesize_t>& from,
+                                rust::Vec<uint64_t>& to) {
+        to.reserve(from.size());
+        for (OIIO::imagesize_t value : from)
+            to.push_back(uint64_t(value));
+    };
+
+    copy_floats(stats.min, result.min);
+    copy_floats(stats.max, result.max);
+    copy_floats(stats.avg, result.average);
+    copy_floats(stats.stddev, result.standard_deviation);
+    copy_counts(stats.nancount, result.nan_count);
+    copy_counts(stats.infcount, result.infinite_count);
+    copy_counts(stats.finitecount, result.finite_count);
+    result.ok = true;
+    return result;
+}
+
+rust::Vec<uint64_t>
+imagebufalgo_histogram(const ImageBuf& src, int channel, int bins, float min,
+                       float max, bool ignore_empty, const ROI& roi,
+                       int nthreads, rust::String& error)
+{
+    rust::Vec<uint64_t> result;
+    if (reject_deep(src, "histogram", error))
+        return result;
+
+    src.geterror(true);
+    const std::vector<OIIO::imagesize_t> counts
+        = OIIO::ImageBufAlgo::histogram(src, channel, bins, min, max,
+                                        ignore_empty,
+                                        bounded_channels(src, roi), nthreads);
+    if (counts.empty()) {
+        std::string message = src.geterror(true);
+        if (message.empty())
+            message = "OpenImageIO produced no histogram and no reason";
+        error = rust::String(message);
+        return result;
+    }
+
+    result.reserve(counts.size());
+    for (OIIO::imagesize_t count : counts)
+        result.push_back(uint64_t(count));
+    return result;
+}
+
+bool
+imagebufalgo_is_constant_color(const ImageBuf& src, float threshold,
+                               rust::Slice<float> color, const ROI& roi,
+                               int nthreads, rust::String& error)
+{
+    if (reject_deep(src, "is_constant_color", error))
+        return false;
+
+    const ROI bounded = bounded_channels(src, roi);
+    if (bounded.chbegin != 0) {
+        // imagebufalgo_compare.cpp sizes the reference vector to the region's
+        // channel count but indexes it with absolute channel numbers, so a
+        // region starting above channel zero writes past its end.
+        error = rust::String(
+            "is_constant_color: the region must begin at channel zero; "
+            "OpenImageIO writes past its own buffer otherwise");
+        return false;
+    }
+
+    src.geterror(true);
+    const bool constant
+        = OIIO::ImageBufAlgo::isConstantColor(src, threshold,
+                                              OIIO::span<float>(color.data(),
+                                                                std::ptrdiff_t(
+                                                                    color.size())),
+                                              bounded, nthreads);
+    if (!constant) {
+        const std::string message = src.geterror(true);
+        if (!message.empty())
+            error = rust::String(message);
+    }
+    return constant;
+}
+
+bool
+imagebufalgo_is_constant_channel(const ImageBuf& src, int channel, float value,
+                                 float threshold, const ROI& roi, int nthreads,
+                                 rust::String& error)
+{
+    if (reject_deep(src, "is_constant_channel", error))
+        return false;
+    if (channel < 0 || channel >= src.nchannels()) {
+        // OpenImageIO returns false here and records nothing, which is
+        // indistinguishable from "the channel is not constant".
+        error = rust::String("is_constant_channel: channel "
+                             + std::to_string(channel) + " is outside the "
+                             + std::to_string(src.nchannels())
+                             + " the image has");
+        return false;
+    }
+
+    src.geterror(true);
+    const bool constant
+        = OIIO::ImageBufAlgo::isConstantChannel(src, channel, value, threshold,
+                                                bounded_channels(src, roi),
+                                                nthreads);
+    if (!constant) {
+        const std::string message = src.geterror(true);
+        if (!message.empty())
+            error = rust::String(message);
+    }
+    return constant;
+}
+
+bool
+imagebufalgo_is_monochrome(const ImageBuf& src, float threshold, const ROI& roi,
+                           int nthreads, rust::String& error)
+{
+    if (reject_deep(src, "is_monochrome", error))
+        return false;
+
+    src.geterror(true);
+    const bool monochrome
+        = OIIO::ImageBufAlgo::isMonochrome(src, threshold,
+                                           bounded_channels(src, roi),
+                                           nthreads);
+    if (!monochrome) {
+        const std::string message = src.geterror(true);
+        if (!message.empty())
+            error = rust::String(message);
+    }
+    return monochrome;
+}
+
+ROI
+imagebufalgo_nonzero_region(const ImageBuf& src, const ROI& roi, int nthreads,
+                            rust::String& error)
+{
+    const ROI bounded = bounded_channels(src, roi);
+    if (bounded.chbegin != 0) {
+        // nonzero_region trims by calling isConstantColor, so it inherits that
+        // function's out-of-bounds write for a region above channel zero.
+        error = rust::String(
+            "nonzero_region: the region must begin at channel zero; "
+            "OpenImageIO writes past its own buffer otherwise");
+        return ROI();
+    }
+    src.geterror(true);
+    return OIIO::ImageBufAlgo::nonzero_region(src, bounded, nthreads);
+}
+
+rust::String
+imagebufalgo_pixel_hash_sha1(const ImageBuf& src, const rust::Str extrainfo,
+                             const ROI& roi, int nthreads, rust::String& error)
+{
+    if (reject_deep(src, "pixel_hash_sha1", error))
+        return rust::String();
+
+    src.geterror(true);
+    // Block size fixed at 0: any other value changes the digest for identical
+    // pixels, and combined with a region that does not start at the image's
+    // first row it indexes past the end of the block-results vector.
+    const std::string digest
+        = OIIO::ImageBufAlgo::computePixelHashSHA1(src,
+                                                   to_string_view(extrainfo),
+                                                   bounded_channels(src, roi),
+                                                   0, nthreads);
+    if (digest.empty()) {
+        std::string message = src.geterror(true);
+        if (message.empty())
+            message = "OpenImageIO produced no digest and no reason";
+        error = rust::String(message);
+    }
+    return rust::String(digest);
+}
 
 bool
 imagebufalgo_zero(ImageBuf& dst, const ROI& roi, int nthreads)
