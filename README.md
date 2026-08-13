@@ -220,7 +220,30 @@ cargo test --workspace --release --locked
 
 GitHub Actions runs the optimized suite against OpenImageIO 3.1.14 on Linux,
 macOS, and Windows. The Windows job deliberately uses the vcpkg discovery path;
-the Unix jobs use `pkg-config`.
+the Unix jobs use `pkg-config`. The debug suite runs on Linux, since debug
+assertions and overflow checks only exist in that profile.
+
+### Testing against real images
+
+Those tests all read images this crate wrote, which proves it agrees with
+itself. Two further suites read files it did not write, and are opt-in because
+the corpora are large and not vendored:
+
+```bash
+git clone https://github.com/AcademySoftwareFoundation/OpenImageIO-images
+git clone https://github.com/AcademySoftwareFoundation/openexr-images
+OIIO_BIND_TEST_IMAGES=/path/to/OpenImageIO-images \
+OIIO_BIND_TEST_EXR_IMAGES=/path/to/openexr-images/exr-images \
+  cargo test --test corpus_test -- --nocapture
+```
+
+Without those variables the suite reports that it was skipped and passes.
+With them it reads every image in both corpora — overscan EXRs with negative
+data window origins, tiled mip pyramids, multi-part files, real camera
+metadata — and checks that the cache and the direct reader agree. It also
+reads OpenEXR's `Damaged` directory, a fuzzing corpus of reader crash cases,
+and requires that each file produces an error or an image rather than taking
+the process with it.
 
 
 ## Links
