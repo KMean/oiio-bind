@@ -216,6 +216,42 @@ Cargo must still place the required DLLs beside the executable or make their
 directory available through `PATH`.
 
 
+## What "safe" means here
+
+The crate's purpose is that ordinary use cannot cause undefined behaviour,
+so it is worth being precise about how that is achieved and where it stops.
+
+**Checked before entering C++.** Every pixel transfer validates the region and
+the buffer against the image's own dimensions, and computes strides from that
+validation rather than trusting the caller. A buffer of the wrong length, a
+region outside the data window, a tile block off the tile grid, or dimensions
+that multiply past `usize` are all errors returned before any pointer is
+handed over. The `Pixel` trait is sealed, so a Rust type cannot be paired with
+an unrelated OpenImageIO one.
+
+**Lifetimes, not conventions.** A cached tile is released when its `TileGuard`
+drops. An `ImageHandle` borrows its cache and cannot outlive it. A tile's
+pixels borrow the guard. An in-memory reader owns the bytes it reads, and its
+fields are ordered so the reader closes before the proxy, and the proxy before
+the buffer it borrows.
+
+**Threading follows OpenImageIO's documentation, not guesswork.** `ImageCache`
+and `ImageHandle` are `Send + Sync`; `Perthread` is deliberately neither,
+because OpenImageIO states that one "should NEVER be shared between running
+threads". Those are the only `unsafe impl`s in the crate, and each carries its
+reasoning in a comment.
+
+**What this does not claim.** OpenImageIO is a large C++ library and this
+crate does not audit it: a malformed file that crashes a reader will crash the
+process. That risk is measured rather than assumed — the opt-in corpus suite
+reads OpenEXR's `Damaged` directory, 68 files from a fuzzing corpus of reader
+crash cases, and requires each to produce an error or an image. The `oiio-sys`
+crate is a thin, mostly `unsafe` layer and is not intended for direct use.
+
+Three memory-safety bugs have been found and fixed in this fork so far; see
+[CHANGELOG.md](CHANGELOG.md).
+
+
 ### Development
 
 Build `oiio` and `oiio-sys` using `cargo`. The workspace `Cargo.lock` is
