@@ -23,6 +23,14 @@ crates.io yet, so there are no version numbers to hang them on.
   another image or a constant, `abs`, `absdiff`, `copy`, `crop`, `flip`,
   `flop`, `transpose`, `compare`, `resize`, `resample`, `fit`, `over`,
   `premult`, `unpremult`, `channel_sum`, `channels` and `color_convert`.
+- `oiio::algo` pixel maths: `mad`, `pow`, `clamp`, `min`, `max`,
+  `contrast_remap`, `saturate`, `invert`, `paste` and `cut`. `Operand` is
+  OpenImageIO's `Image_or_Const`, so `mad`, `min` and `max` take either an
+  image or one constant per channel. Note that `paste`'s region selects part
+  of the source rather than of the destination, and that an empty slice of
+  per-channel constants means zero for most of these and "no bound" for
+  `clamp`; both are OpenImageIO's rules, and both are documented per
+  operation.
 - `DeepImage`: read deep files, where each pixel holds a list of samples, and
   build one from Rust to write. A channel keeps the type its specification
   gave it, so an unsigned channel survives a round trip through
@@ -48,6 +56,14 @@ crates.io yet, so there are no version numbers to hang them on.
 
 ### Fixed
 
+- `algo::max` cannot be made to read or write out of bounds. OpenImageIO's
+  image-against-image `max` widens its channel range where `min` narrows it,
+  after the range has already been clamped to what the buffers hold, so it
+  indexes past the shorter input and past a destination narrower than either.
+  Its own assertion — in code the widening makes unreachable — says the range
+  was meant to narrow. The binding refuses those shapes rather than passing
+  them on. Drafted for upstream as issue 4 in `contrib/upstream-issues.md`;
+  present in 3.1 and still in 3.2.
 - Three borrowed strings pointed into freed memory. `ImageBuf::name`,
   `ImageBuf::file_format_name` and `DeepData::channelname` each built a
   `rust::Str` from an OpenImageIO `string_view`, which selects the

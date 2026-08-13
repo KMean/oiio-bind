@@ -143,6 +143,95 @@ imagebufalgo_channels(ImageBuf& dst, const ImageBuf& src, int nchannels,
                       const rust::Vec<rust::String>& newchannelnames,
                       bool shuffle_channel_names, int nthreads);
 
+// OpenImageIO's mad, min and max take Image_or_Const, a parameter-passing
+// class with a private tagged union that cxx cannot construct. Each
+// combination gets its own entry point, as add/sub/mul/div already do.
+bool
+imagebufalgo_mad_iii(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
+                     const ImageBuf& c, const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_mad_iic(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
+                     rust::Slice<const float> c, const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_mad_ici(ImageBuf& dst, const ImageBuf& a,
+                     rust::Slice<const float> b, const ImageBuf& c,
+                     const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_mad_icc(ImageBuf& dst, const ImageBuf& a,
+                     rust::Slice<const float> b, rust::Slice<const float> c,
+                     const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_invert(ImageBuf& dst, const ImageBuf& a, const ROI& roi,
+                    int nthreads);
+
+// An empty `b` means an exponent of zero for every channel, so the result is
+// one everywhere. That is OpenImageIO's padding rule, not an oversight, and
+// the safe wrapper passes an empty slice through rather than substituting a
+// default.
+bool
+imagebufalgo_pow(ImageBuf& dst, const ImageBuf& a, rust::Slice<const float> b,
+                 const ROI& roi, int nthreads);
+
+// Here an empty span means "do not clamp on this side", which is a different
+// rule from pow's. Both are OpenImageIO's.
+bool
+imagebufalgo_clamp(ImageBuf& dst, const ImageBuf& src,
+                   rust::Slice<const float> min,
+                   rust::Slice<const float> max, bool clampalpha01,
+                   const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_min_images(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
+                        const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_min_constant(ImageBuf& dst, const ImageBuf& a,
+                          rust::Slice<const float> values, const ROI& roi,
+                          int nthreads);
+
+// See the implementation: the image/image form of max is not memory-safe in
+// OpenImageIO 3.1 or 3.2, and this shim refuses the cases that would read or
+// write out of bounds rather than passing them through.
+bool
+imagebufalgo_max_images(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
+                        const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_max_constant(ImageBuf& dst, const ImageBuf& a,
+                          rust::Slice<const float> values, const ROI& roi,
+                          int nthreads);
+
+// Six per-channel spans, each with its own default when empty: black 0,
+// white 1, min 0, max 1, scontrast 1, sthresh 0.5.
+bool
+imagebufalgo_contrast_remap(ImageBuf& dst, const ImageBuf& src,
+                            rust::Slice<const float> black,
+                            rust::Slice<const float> white,
+                            rust::Slice<const float> min,
+                            rust::Slice<const float> max,
+                            rust::Slice<const float> scontrast,
+                            rust::Slice<const float> sthresh, const ROI& roi,
+                            int nthreads);
+
+bool
+imagebufalgo_saturate(ImageBuf& dst, const ImageBuf& src, float scale,
+                      int firstchannel, const ROI& roi, int nthreads);
+
+// `srcroi` selects part of the SOURCE, unlike every other roi here, and the
+// offsets are relative to src's origin rather than to srcroi.
+bool
+imagebufalgo_paste(ImageBuf& dst, int xbegin, int ybegin, int zbegin,
+                   int chbegin, const ImageBuf& src, const ROI& srcroi,
+                   int nthreads);
+
+bool
+imagebufalgo_cut(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                 int nthreads);
+
 // Turning an image into a tiled, MIP-mapped texture file. Unlike every call
 // above, this one writes a file rather than filling a destination buffer, so
 // there is no ImageBuf in which OpenImageIO could record an error: it puts the

@@ -169,3 +169,57 @@ correct use:
 ```
 
 `OIIO_VERSION_LESS` and any sibling macros want the same treatment.
+
+## Issue 4 — `ImageBufAlgo::max` widens the channel range where `min` narrows it
+
+**Title:** `ImageBufAlgo::max(dst, A, B)` reads and writes out of bounds when
+channel counts differ
+
+`imagebufalgo_pixelmath.cpp`, in the image-against-image branch of `max`:
+
+```c++
+roi.chend = std::max(roi.chend, std::max(A.nchannels(), B.nchannels()));
+```
+
+`min`, twenty lines of otherwise identical code earlier in the same file, has:
+
+```c++
+roi.chend = std::min(roi.chend, std::min(A.nchannels(), B.nchannels()));
+```
+
+The block immediately below the dispatch is the same in both, and in `max` it
+is unreachable: its guard is `roi.chend < origroi.chend`, which cannot hold
+after a `std::max` against `origroi`'s own bound. That block's
+`OIIO_ASSERT(roi.chend <= dst.nchannels())` records the invariant the widening
+breaks.
+
+Two consequences, both after `IBAprep` has already clamped `roi` to what the
+buffers hold:
+
+1. With `A.nchannels() != B.nchannels()`, the kernel evaluates `a[c]` or `b[c]`
+   for `c` beyond the shorter input. `ImageBuf::ConstIterator::operator[]`
+   constructs a proxy over the pixel's base pointer and indexes it with no
+   bounds check, so this reads adjacent pixel memory.
+2. With `dst` pre-allocated narrower than the inputs — `max(dst=3ch, A=4ch,
+   B=4ch)` — `IBAprep` intersects `roi.chend` down to 3 and the widening puts
+   it back to 4, so the kernel *writes* `r[3]` past the end of each destination
+   pixel.
+
+No ROI the caller supplies can prevent either, because the widening ignores the
+incoming value whenever it is smaller.
+
+Reproduced on 3.1.9 and on 3.2.0.2dev (`main`, August 2026); the line is
+unchanged between them.
+
+The fix is the one-word one, matching `min`:
+
+```c++
+roi.chend = std::min(roi.chend, std::min(A.nchannels(), B.nchannels()));
+```
+
+which also makes the surplus-channel block below it reachable, as it is in
+`min`.
+
+Found while binding `max` for Rust. Until it is fixed, the binding refuses
+unequal channel counts and destinations narrower than the inputs, since it
+cannot otherwise keep its safety promise.

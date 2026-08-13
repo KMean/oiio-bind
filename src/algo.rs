@@ -124,6 +124,338 @@ binary_operation!(
     "divide"
 );
 
+/// Either an image or one constant value per channel.
+///
+/// This is OpenImageIO's `Image_or_Const`, which several operations accept in
+/// place of a second image. Where a constant is given, too few values repeats
+/// the last one across the remaining channels, and an empty slice means zero —
+/// except in [`clamp`] and [`ContrastRemap`], which say what empty means for
+/// them.
+#[derive(Debug, Clone, Copy)]
+pub enum Operand<'a> {
+    /// Take this operand's values from an image.
+    Image(&'a ImageBuf),
+    /// Use these constants, one per channel.
+    Constant(&'a [f32]),
+}
+
+/// Multiply and add: `dst = a * b + c`, per pixel and per channel.
+///
+/// This is one operation rather than a multiply followed by an add, so it
+/// rounds once. `a` is always an image, which satisfies OpenImageIO's rule
+/// that at least one of the first two arguments must be one.
+///
+/// ```no_run
+/// use oiio::{algo, algo::Operand, ImageBuf, ImageSpec, PixelFormat};
+///
+/// # fn main() -> oiio::Result<()> {
+/// # let spec = ImageSpec::new(64, 64, 3, PixelFormat::F32)?;
+/// # let source = ImageBuf::new(&spec)?;
+/// let mut result = ImageBuf::new(&spec)?;
+/// // Scale by 2 and lift by 0.1, in one pass.
+/// algo::mad(
+///     &mut result,
+///     &source,
+///     Operand::Constant(&[2.0]),
+///     Operand::Constant(&[0.1]),
+///     None,
+/// )?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn mad(
+    dst: &mut ImageBuf,
+    a: &ImageBuf,
+    b: Operand<'_>,
+    c: Operand<'_>,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = match (b, c) {
+        (Operand::Image(b), Operand::Image(c)) => sys::imagebufalgo::imagebufalgo_mad_iii(
+            dst.inner_mut(),
+            a.inner(),
+            b.inner(),
+            c.inner(),
+            &roi,
+            ALL_THREADS,
+        ),
+        (Operand::Image(b), Operand::Constant(c)) => sys::imagebufalgo::imagebufalgo_mad_iic(
+            dst.inner_mut(),
+            a.inner(),
+            b.inner(),
+            c,
+            &roi,
+            ALL_THREADS,
+        ),
+        (Operand::Constant(b), Operand::Image(c)) => sys::imagebufalgo::imagebufalgo_mad_ici(
+            dst.inner_mut(),
+            a.inner(),
+            b,
+            c.inner(),
+            &roi,
+            ALL_THREADS,
+        ),
+        (Operand::Constant(b), Operand::Constant(c)) => sys::imagebufalgo::imagebufalgo_mad_icc(
+            dst.inner_mut(),
+            a.inner(),
+            b,
+            c,
+            &roi,
+            ALL_THREADS,
+        ),
+    };
+    finish(dst, "multiply and add", succeeded)
+}
+
+/// Compute `1 - a`.
+///
+/// Every channel in the region is inverted, alpha included, so restrict the
+/// region to the colour channels unless that is what you want. For
+/// premultiplied images, [`unpremult`] then `invert` then [`premult`] is the
+/// usual sequence.
+pub fn invert(dst: &mut ImageBuf, a: &ImageBuf, roi: Option<Roi>) -> Result<()> {
+    let roi = region(roi);
+    let succeeded =
+        sys::imagebufalgo::imagebufalgo_invert(dst.inner_mut(), a.inner(), &roi, ALL_THREADS);
+    finish(dst, "invert", succeeded)
+}
+
+/// Raise each channel to a per-channel power.
+///
+/// An empty `exponents` means an exponent of zero for every channel, and so a
+/// result of one everywhere; that is OpenImageIO's padding rule rather than an
+/// oversight. A negative value raised to a fractional power is `NaN`, not
+/// zero.
+pub fn pow(dst: &mut ImageBuf, a: &ImageBuf, exponents: &[f32], roi: Option<Roi>) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_pow(
+        dst.inner_mut(),
+        a.inner(),
+        exponents,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "power", succeeded)
+}
+
+/// Clamp each channel into a per-channel range.
+///
+/// An empty `min` or `max` means "do not clamp on that side" — unlike most of
+/// the per-channel slices here, where empty means zero. Too few values repeats
+/// the last. No check is made that `min <= max`: an inverted range silently
+/// yields `max`.
+///
+/// `clamp_alpha_to_unit` additionally holds the source's alpha channel in
+/// `0..=1`, and does nothing if the source does not designate one.
+pub fn clamp(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    min: &[f32],
+    max: &[f32],
+    clamp_alpha_to_unit: bool,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_clamp(
+        dst.inner_mut(),
+        src.inner(),
+        min,
+        max,
+        clamp_alpha_to_unit,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "clamp", succeeded)
+}
+
+/// Take the smaller of two operands, per pixel and per channel.
+///
+/// Channels present in only one of two images are copied through unchanged.
+pub fn min(dst: &mut ImageBuf, a: &ImageBuf, b: Operand<'_>, roi: Option<Roi>) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = match b {
+        Operand::Image(b) => sys::imagebufalgo::imagebufalgo_min_images(
+            dst.inner_mut(),
+            a.inner(),
+            b.inner(),
+            &roi,
+            ALL_THREADS,
+        ),
+        Operand::Constant(values) => sys::imagebufalgo::imagebufalgo_min_constant(
+            dst.inner_mut(),
+            a.inner(),
+            values,
+            &roi,
+            ALL_THREADS,
+        ),
+    };
+    finish(dst, "minimum", succeeded)
+}
+
+/// Take the larger of two operands, per pixel and per channel.
+///
+/// Two images must have the same number of channels, and the destination must
+/// have at least as many. [`min`] has no such restriction; the difference is
+/// not by design. OpenImageIO's image-against-image `max` widens its channel
+/// range where `min` narrows it, which makes it read past the shorter input
+/// and write past a narrower destination — its own assertion, in code the
+/// widening makes unreachable, says the range was meant to narrow. Rather than
+/// pass that on, this refuses the shapes that would run off the end. The
+/// bug is in OpenImageIO 3.1 and still in 3.2, so the restriction stands until
+/// it is fixed there.
+pub fn max(dst: &mut ImageBuf, a: &ImageBuf, b: Operand<'_>, roi: Option<Roi>) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = match b {
+        Operand::Image(b) => sys::imagebufalgo::imagebufalgo_max_images(
+            dst.inner_mut(),
+            a.inner(),
+            b.inner(),
+            &roi,
+            ALL_THREADS,
+        ),
+        Operand::Constant(values) => sys::imagebufalgo::imagebufalgo_max_constant(
+            dst.inner_mut(),
+            a.inner(),
+            values,
+            &roi,
+            ALL_THREADS,
+        ),
+    };
+    finish(dst, "maximum", succeeded)
+}
+
+/// How [`contrast_remap`] should reshape the tone curve.
+///
+/// Every field is one value per channel. An empty slice takes that field's
+/// default, which is the value named below rather than zero; too few values
+/// repeats the last one.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ContrastRemap<'a> {
+    /// The input level that becomes [`min`](Self::min). Default 0.
+    pub black: &'a [f32],
+    /// The input level that becomes [`max`](Self::max). Default 1.
+    pub white: &'a [f32],
+    /// The output level [`black`](Self::black) maps to. Default 0.
+    pub min: &'a [f32],
+    /// The output level [`white`](Self::white) maps to. Default 1.
+    pub max: &'a [f32],
+    /// Steepness of an S-curve applied between the two remappings. Default 1,
+    /// which is no curve at all; larger values increase contrast.
+    pub sigmoid_contrast: &'a [f32],
+    /// Where that S-curve pivots. Default 0.5.
+    pub sigmoid_threshold: &'a [f32],
+}
+
+/// Remap levels, optionally through an S-curve.
+///
+/// The result is not clamped, so follow it with [`clamp`] if the output has to
+/// stay in range.
+///
+/// Setting a channel's `black` equal to its `white` is a division by zero. When
+/// *every* channel has them equal, OpenImageIO takes that as a deliberate
+/// binary threshold and produces `min` below the level and `max` at or above
+/// it; when only some channels do, those channels produce infinities instead.
+pub fn contrast_remap(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    remap: &ContrastRemap<'_>,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_contrast_remap(
+        dst.inner_mut(),
+        src.inner(),
+        remap.black,
+        remap.white,
+        remap.min,
+        remap.max,
+        remap.sigmoid_contrast,
+        remap.sigmoid_threshold,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "contrast remap", succeeded)
+}
+
+/// Move three consecutive channels toward or away from their luminance.
+///
+/// `scale` is 0 for fully desaturated, 1 for unchanged, and more than 1 to
+/// oversaturate. Channels outside `first_channel..first_channel + 3` are
+/// copied unaltered. The luminance weights are fixed at linear sRGB's, whatever
+/// the image's actual colour space.
+///
+/// The source must have three channels at `first_channel`, and neither its
+/// alpha nor its depth channel may be among them.
+pub fn saturate(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    scale: f32,
+    first_channel: u32,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let first_channel = i32::try_from(first_channel)
+        .map_err(|_| Error::InvalidImageSpec("first channel exceeds i32::MAX".to_owned()))?;
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_saturate(
+        dst.inner_mut(),
+        src.inner(),
+        scale,
+        first_channel,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "saturate", succeeded)
+}
+
+/// Copy part of one image into another at a given position.
+///
+/// `src_roi` selects part of the **source**, not of the destination — this is
+/// the one region argument here that does. The destination position is an
+/// offset applied to the source's own coordinates, so a source whose data
+/// window begins at x=100 pasted at `x = 0` lands at x=100, not at the origin.
+///
+/// Pixels and channels that fall outside the destination are dropped silently,
+/// so a paste can be partial without reporting anything.
+pub fn paste(
+    dst: &mut ImageBuf,
+    position: [i32; 3],
+    first_channel: i32,
+    src: &ImageBuf,
+    src_roi: Option<Roi>,
+) -> Result<()> {
+    let src_roi = region(src_roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_paste(
+        dst.inner_mut(),
+        position[0],
+        position[1],
+        position[2],
+        first_channel,
+        src.inner(),
+        &src_roi,
+        ALL_THREADS,
+    );
+    finish(dst, "paste", succeeded)
+}
+
+/// Extract a region and move it to the origin.
+///
+/// This is [`crop`] followed by a reposition: the result's display window
+/// covers exactly the extracted rectangle, starting at 0,0. Unlike `crop`, and
+/// unlike the rest of this module, the destination is always discarded first,
+/// so it cannot be pre-allocated to choose an output format — the result takes
+/// the source's.
+///
+/// A channel range narrows which channels survive but does not renumber them:
+/// the result keeps the source's channel count with the others blacked out.
+/// Use [`channels`] to actually drop channels. Deep images are supported.
+pub fn cut(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
+    let roi = region(roi);
+    let succeeded =
+        sys::imagebufalgo::imagebufalgo_cut(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    finish(dst, "cut", succeeded)
+}
+
 /// Take the absolute value of every channel.
 pub fn abs(dst: &mut ImageBuf, a: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region(roi);

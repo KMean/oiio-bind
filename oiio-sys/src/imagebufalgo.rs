@@ -241,6 +241,139 @@ mod ffi {
             nthreads: i32,
         ) -> bool;
 
+        pub fn imagebufalgo_mad_iii(
+            dst: Pin<&mut ImageBuf>,
+            a: &ImageBuf,
+            b: &ImageBuf,
+            c: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_mad_iic(
+            dst: Pin<&mut ImageBuf>,
+            a: &ImageBuf,
+            b: &ImageBuf,
+            c: &[f32],
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_mad_ici(
+            dst: Pin<&mut ImageBuf>,
+            a: &ImageBuf,
+            b: &[f32],
+            c: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_mad_icc(
+            dst: Pin<&mut ImageBuf>,
+            a: &ImageBuf,
+            b: &[f32],
+            c: &[f32],
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_invert(
+            dst: Pin<&mut ImageBuf>,
+            a: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_pow(
+            dst: Pin<&mut ImageBuf>,
+            a: &ImageBuf,
+            b: &[f32],
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_clamp(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            min: &[f32],
+            max: &[f32],
+            clampalpha01: bool,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_min_images(
+            dst: Pin<&mut ImageBuf>,
+            a: &ImageBuf,
+            b: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_min_constant(
+            dst: Pin<&mut ImageBuf>,
+            a: &ImageBuf,
+            values: &[f32],
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_max_images(
+            dst: Pin<&mut ImageBuf>,
+            a: &ImageBuf,
+            b: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_max_constant(
+            dst: Pin<&mut ImageBuf>,
+            a: &ImageBuf,
+            values: &[f32],
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_contrast_remap(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            black: &[f32],
+            white: &[f32],
+            min: &[f32],
+            max: &[f32],
+            scontrast: &[f32],
+            sthresh: &[f32],
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_saturate(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            scale: f32,
+            firstchannel: i32,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_paste(
+            dst: Pin<&mut ImageBuf>,
+            xbegin: i32,
+            ybegin: i32,
+            zbegin: i32,
+            chbegin: i32,
+            src: &ImageBuf,
+            srcroi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_cut(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
         pub fn imagebufalgo_make_texture_from_buffer(
             mode: i32,
             input: &ImageBuf,

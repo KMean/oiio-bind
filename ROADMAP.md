@@ -149,8 +149,12 @@ The `ImageBufAlgo` surface is being completed in slices, each one commit:
   `half` to `float`, and OpenEXR demotes integer formats to `half`.
 - [ ] Statistics and introspection: `computePixelStats`, `histogram`,
   `isConstantColor`, `isMonochrome`, `nonzero_region`, `computePixelHashSHA1`.
-- [ ] Remaining pixel maths: `mad`, `pow`, `clamp`, `min`, `max`,
-  `contrast_remap`, `saturate`, `invert`, `paste`, `cut`.
+- [x] Remaining pixel maths: `mad`, `pow`, `clamp`, `min`, `max`,
+  `contrast_remap`, `saturate`, `invert`, `paste`, `cut`. `Operand` mirrors
+  OpenImageIO's `Image_or_Const` for the three operations that accept either.
+  `max` refuses two argument shapes that `min` accepts, because OpenImageIO's
+  image-against-image `max` reads and writes out of bounds for them; see
+  issue 4 in `contrib/upstream-issues.md`.
 - [ ] Rotation and warping: `rotate`, the right-angle rotations, `reorient`,
   `warp`, `st_warp`.
 - [ ] Filtering: `convolve`, `make_kernel`, `unsharp_mask`, `median_filter`,

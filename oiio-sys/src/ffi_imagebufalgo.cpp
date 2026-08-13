@@ -1,6 +1,7 @@
 #include "ffi_imagebufalgo.h"
 #include "oiio-sys/src/imagebufalgo.rs.h"
 
+#include <algorithm>
 #include <sstream>
 #include <string>
 
@@ -290,6 +291,169 @@ imagebufalgo_compare(const ImageBuf& a, const ImageBuf& b, float failthresh,
     summary.failures                  = uint64_t(results.nfail);
     summary.failed                    = results.error;
     return summary;
+}
+
+bool
+imagebufalgo_mad_iii(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
+                     const ImageBuf& c, const ROI& roi, int nthreads)
+{
+    return OIIO::ImageBufAlgo::mad(dst, a, b, c, roi, nthreads);
+}
+
+bool
+imagebufalgo_mad_iic(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
+                     rust::Slice<const float> c, const ROI& roi, int nthreads)
+{
+    return OIIO::ImageBufAlgo::mad(dst, a, b, to_cspan(c), roi, nthreads);
+}
+
+bool
+imagebufalgo_mad_ici(ImageBuf& dst, const ImageBuf& a,
+                     rust::Slice<const float> b, const ImageBuf& c,
+                     const ROI& roi, int nthreads)
+{
+    return OIIO::ImageBufAlgo::mad(dst, a, to_cspan(b), c, roi, nthreads);
+}
+
+bool
+imagebufalgo_mad_icc(ImageBuf& dst, const ImageBuf& a,
+                     rust::Slice<const float> b, rust::Slice<const float> c,
+                     const ROI& roi, int nthreads)
+{
+    return OIIO::ImageBufAlgo::mad(dst, a, to_cspan(b), to_cspan(c), roi,
+                                   nthreads);
+}
+
+bool
+imagebufalgo_invert(ImageBuf& dst, const ImageBuf& a, const ROI& roi,
+                    int nthreads)
+{
+    return OIIO::ImageBufAlgo::invert(dst, a, roi, nthreads);
+}
+
+bool
+imagebufalgo_pow(ImageBuf& dst, const ImageBuf& a, rust::Slice<const float> b,
+                 const ROI& roi, int nthreads)
+{
+    return OIIO::ImageBufAlgo::pow(dst, a, to_cspan(b), roi, nthreads);
+}
+
+bool
+imagebufalgo_clamp(ImageBuf& dst, const ImageBuf& src,
+                   rust::Slice<const float> min, rust::Slice<const float> max,
+                   bool clampalpha01, const ROI& roi, int nthreads)
+{
+    return OIIO::ImageBufAlgo::clamp(dst, src, to_cspan(min), to_cspan(max),
+                                     clampalpha01, roi, nthreads);
+}
+
+bool
+imagebufalgo_min_images(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
+                        const ROI& roi, int nthreads)
+{
+    return OIIO::ImageBufAlgo::min(dst, a, b, roi, nthreads);
+}
+
+bool
+imagebufalgo_min_constant(ImageBuf& dst, const ImageBuf& a,
+                          rust::Slice<const float> values, const ROI& roi,
+                          int nthreads)
+{
+    return OIIO::ImageBufAlgo::min(dst, a, to_cspan(values), roi, nthreads);
+}
+
+bool
+imagebufalgo_max_images(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
+                        const ROI& roi, int nthreads)
+{
+    // OpenImageIO's image/image max is not memory-safe when the channel counts
+    // disagree. imagebufalgo_pixelmath.cpp:169 reads
+    //
+    //     roi.chend = std::max(roi.chend, std::max(A.nchannels(), B.nchannels()));
+    //
+    // where min at line 72 uses std::min twice. The widening is unconditional,
+    // so no ROI a caller supplies can prevent it, and it happens after IBAprep
+    // has clamped the range to what the buffers actually hold. The kernel then
+    // reads a[c] and b[c] past the shorter input, and writes r[c] past dst if
+    // dst has fewer channels than the inputs; ImageBuf's iterators do no
+    // bounds checking. max's own OIIO_ASSERT(roi.chend <= dst.nchannels()),
+    // in the now-unreachable block below the dispatch, records the intent that
+    // was lost. Present in 3.1.9 and still in 3.2.0.2dev.
+    //
+    // So refuse exactly the shapes that would run off the end, and clamp the
+    // channel range so the widening is a no-op. min needs none of this.
+    if (a.nchannels() != b.nchannels()) {
+        dst.errorfmt(
+            "max: the two images must have the same number of channels, got "
+            "{} and {} (OpenImageIO's max reads out of bounds otherwise)",
+            a.nchannels(), b.nchannels());
+        return false;
+    }
+    if (dst.initialized() && dst.nchannels() < a.nchannels()) {
+        dst.errorfmt(
+            "max: the destination has {} channels but the sources have {} "
+            "(OpenImageIO's max writes out of bounds otherwise)",
+            dst.nchannels(), a.nchannels());
+        return false;
+    }
+
+    ROI bounded = roi;
+    if (!bounded.defined())
+        bounded = OIIO::roi_union(a.roi(), b.roi());
+    bounded.chbegin = std::max(bounded.chbegin, 0);
+    bounded.chend   = std::min(bounded.chend, a.nchannels());
+    return OIIO::ImageBufAlgo::max(dst, a, b, bounded, nthreads);
+}
+
+bool
+imagebufalgo_max_constant(ImageBuf& dst, const ImageBuf& a,
+                          rust::Slice<const float> values, const ROI& roi,
+                          int nthreads)
+{
+    // The image/constant path is the correct mirror of min's and needs no
+    // guard: it goes through IBAprep_CLAMP_MUTUAL_NCHANNELS.
+    return OIIO::ImageBufAlgo::max(dst, a, to_cspan(values), roi, nthreads);
+}
+
+bool
+imagebufalgo_contrast_remap(ImageBuf& dst, const ImageBuf& src,
+                            rust::Slice<const float> black,
+                            rust::Slice<const float> white,
+                            rust::Slice<const float> min,
+                            rust::Slice<const float> max,
+                            rust::Slice<const float> scontrast,
+                            rust::Slice<const float> sthresh, const ROI& roi,
+                            int nthreads)
+{
+    return OIIO::ImageBufAlgo::contrast_remap(dst, src, to_cspan(black),
+                                              to_cspan(white), to_cspan(min),
+                                              to_cspan(max),
+                                              to_cspan(scontrast),
+                                              to_cspan(sthresh), roi, nthreads);
+}
+
+bool
+imagebufalgo_saturate(ImageBuf& dst, const ImageBuf& src, float scale,
+                      int firstchannel, const ROI& roi, int nthreads)
+{
+    return OIIO::ImageBufAlgo::saturate(dst, src, scale, firstchannel, roi,
+                                        nthreads);
+}
+
+bool
+imagebufalgo_paste(ImageBuf& dst, int xbegin, int ybegin, int zbegin,
+                   int chbegin, const ImageBuf& src, const ROI& srcroi,
+                   int nthreads)
+{
+    return OIIO::ImageBufAlgo::paste(dst, xbegin, ybegin, zbegin, chbegin, src,
+                                     srcroi, nthreads);
+}
+
+bool
+imagebufalgo_cut(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                 int nthreads)
+{
+    return OIIO::ImageBufAlgo::cut(dst, src, roi, nthreads);
 }
 
 bool

@@ -5,7 +5,7 @@
 //! private type leaks into a public signature, or if an error variant a
 //! caller needs to match on becomes unnameable.
 
-use oiio::algo::{self, ChannelSource, CompareSummary, FitMode};
+use oiio::algo::{self, ChannelSource, CompareSummary, ContrastRemap, FitMode, Operand};
 use oiio::{
     f16, make_texture, make_texture_from_buffer, AttributeValue, ColorConfig, DeepChannel,
     DeepImage, Derivatives, Error, ImageBuf, ImageCache, ImageCacheBuilder, ImageHandle,
@@ -80,6 +80,31 @@ fn a_dependent_can_use_the_whole_surface() -> Result<()> {
         Some(AttributeValue::String(name)) => assert_eq!(name, "oiio-bind"),
         other => panic!("expected a string attribute, got {other:?}"),
     }
+
+    // The pixel maths, including both shapes of Operand.
+    let mut math = ImageBuf::new(&spec)?;
+    algo::mad(
+        &mut math,
+        &image,
+        Operand::Constant(&[2.0]),
+        Operand::Image(&image),
+        None,
+    )?;
+    algo::invert(&mut math, &image, None)?;
+    algo::pow(&mut math, &image, &[2.0], None)?;
+    algo::clamp(&mut math, &image, &[0.0], &[1.0], true, None)?;
+    algo::min(&mut math, &image, Operand::Image(&image), None)?;
+    algo::max(&mut math, &image, Operand::Constant(&[0.5]), None)?;
+    algo::contrast_remap(&mut math, &image, &ContrastRemap::default(), None)?;
+    algo::saturate(&mut math, &image, 0.5, 0, None)?;
+    algo::paste(&mut math, [0, 0, 0], 0, &image, None)?;
+    let mut trimmed = ImageBuf::empty()?;
+    algo::cut(
+        &mut trimmed,
+        &image,
+        Some(spec.data_window()?.with_x(0..8)?),
+    )?;
+    assert_eq!(trimmed.spec()?.origin(), [0, 0, 0]);
 
     let _builder: ImageCacheBuilder = ImageCache::builder();
     let cache = ImageCache::new()?;
