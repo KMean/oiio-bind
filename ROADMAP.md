@@ -109,8 +109,11 @@ ownership model is proven.
 - [x] `ImageBufAlgo`, first slice: `zero`, `fill`, `add`/`sub`/`mul`/`div`
   against another image or a constant per channel, `abs`, `absdiff`, `copy`
   with conversion, `crop`, `flip`, `flop`, `transpose`, and `compare`.
-- [ ] `ImageBufAlgo` operations that need more types: `resize` and friends
-  (filter names and widths), channel shuffling, colour conversion, `render_text`.
+- [x] `ImageBufAlgo` geometry and compositing: `resize`, `resample`, `fit`,
+  `over`, `premult`/`unpremult`, `channel_sum`, and `channels` for reordering,
+  dropping, duplicating or inventing channels.
+- [ ] Colour management (`colorconvert` and friends), `render_text`, and the
+  remaining `ImageBufAlgo` surface.
 
 The project intentionally does not try to generate bindings for every OIIO C++
 template or expose raw C++ pointer semantics through the safe crate.

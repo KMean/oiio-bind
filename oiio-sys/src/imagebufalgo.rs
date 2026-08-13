@@ -1,5 +1,8 @@
 pub use ffi::*;
 
+// These signatures mirror OpenImageIO's, argument for argument, so the
+// operation-oriented wrappers live in `oiio` rather than being invented here.
+#[allow(clippy::too_many_arguments)]
 #[cxx::bridge(namespace = oiio)]
 mod ffi {
     /// Everything `ImageBufAlgo::compare` measured, flattened for the bridge.
@@ -157,5 +160,74 @@ mod ffi {
             roi: &ROI,
             nthreads: i32,
         ) -> CompareSummary;
+
+        pub fn imagebufalgo_resize(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            filtername: &str,
+            filterwidth: f32,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_fit(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            filtername: &str,
+            filterwidth: f32,
+            fillmode: &str,
+            exact: bool,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_resample(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            interpolate: bool,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_over(
+            dst: Pin<&mut ImageBuf>,
+            a: &ImageBuf,
+            b: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_premult(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_unpremult(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_channel_sum(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            weights: &[f32],
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_channels(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            nchannels: i32,
+            channelorder: &[i32],
+            channelvalues: &[f32],
+            newchannelnames: &Vec<String>,
+            shuffle_channel_names: bool,
+            nthreads: i32,
+        ) -> bool;
     }
 }

@@ -136,6 +136,95 @@ imagebufalgo_transpose(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
     return OIIO::ImageBufAlgo::transpose(dst, src, roi, nthreads);
 }
 
+bool
+imagebufalgo_resize(ImageBuf& dst, const ImageBuf& src,
+                    const rust::Str filtername, float filterwidth,
+                    const ROI& roi, int nthreads)
+{
+    OIIO::ParamValueList options;
+    if (filtername.size() != 0)
+        options["filtername"] = std::string(filtername.data(),
+                                            filtername.size());
+    if (filterwidth > 0.0f)
+        options["filterwidth"] = filterwidth;
+    return OIIO::ImageBufAlgo::resize(dst, src, options, roi, nthreads);
+}
+
+bool
+imagebufalgo_fit(ImageBuf& dst, const ImageBuf& src, const rust::Str filtername,
+                 float filterwidth, const rust::Str fillmode, bool exact,
+                 const ROI& roi, int nthreads)
+{
+    OIIO::ParamValueList options;
+    if (filtername.size() != 0)
+        options["filtername"] = std::string(filtername.data(),
+                                            filtername.size());
+    if (filterwidth > 0.0f)
+        options["filterwidth"] = filterwidth;
+    if (fillmode.size() != 0)
+        options["fillmode"] = std::string(fillmode.data(), fillmode.size());
+    options["exact"] = int(exact);
+    return OIIO::ImageBufAlgo::fit(dst, src, options, roi, nthreads);
+}
+
+bool
+imagebufalgo_resample(ImageBuf& dst, const ImageBuf& src, bool interpolate,
+                      const ROI& roi, int nthreads)
+{
+    return OIIO::ImageBufAlgo::resample(dst, src, interpolate, roi, nthreads);
+}
+
+bool
+imagebufalgo_over(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
+                  const ROI& roi, int nthreads)
+{
+    return OIIO::ImageBufAlgo::over(dst, a, b, roi, nthreads);
+}
+
+bool
+imagebufalgo_premult(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                     int nthreads)
+{
+    return OIIO::ImageBufAlgo::premult(dst, src, roi, nthreads);
+}
+
+bool
+imagebufalgo_unpremult(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                       int nthreads)
+{
+    return OIIO::ImageBufAlgo::unpremult(dst, src, roi, nthreads);
+}
+
+bool
+imagebufalgo_channel_sum(ImageBuf& dst, const ImageBuf& src,
+                         rust::Slice<const float> weights, const ROI& roi,
+                         int nthreads)
+{
+    return OIIO::ImageBufAlgo::channel_sum(dst, src, to_cspan(weights), roi,
+                                           nthreads);
+}
+
+bool
+imagebufalgo_channels(ImageBuf& dst, const ImageBuf& src, int nchannels,
+                      rust::Slice<const int> channelorder,
+                      rust::Slice<const float> channelvalues,
+                      const rust::Vec<rust::String>& newchannelnames,
+                      bool shuffle_channel_names, int nthreads)
+{
+    std::vector<std::string> names;
+    names.reserve(newchannelnames.size());
+    for (const rust::String& name : newchannelnames)
+        names.emplace_back(name.data(), name.size());
+
+    return OIIO::ImageBufAlgo::channels(
+        dst, src, nchannels,
+        OIIO::cspan<int>(channelorder.data(),
+                         std::ptrdiff_t(channelorder.size())),
+        to_cspan(channelvalues),
+        OIIO::cspan<std::string>(names.data(), std::ptrdiff_t(names.size())),
+        shuffle_channel_names, nthreads);
+}
+
 CompareSummary
 imagebufalgo_compare(const ImageBuf& a, const ImageBuf& b, float failthresh,
                      float warnthresh, const ROI& roi, int nthreads)

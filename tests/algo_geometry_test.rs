@@ -1,0 +1,226 @@
+//! Resizing, compositing, and channel layout.
+
+mod common;
+
+use oiio::algo::{self, ChannelSource, FitMode};
+use oiio::{Error, ImageBuf, ImageSpec, PixelFormat};
+
+fn spec(width: u32, height: u32, channels: u32) -> ImageSpec {
+    ImageSpec::new(width, height, channels, PixelFormat::F32).unwrap()
+}
+
+fn filled(width: u32, height: u32, values: &[f32]) -> ImageBuf {
+    let mut image = ImageBuf::new(&spec(width, height, values.len() as u32)).unwrap();
+    algo::fill(&mut image, values, None).unwrap();
+    image
+}
+
+fn pixels_of(image: &ImageBuf) -> Vec<f32> {
+    let roi = image.spec().unwrap().data_window().unwrap();
+    let mut values = vec![0.0_f32; roi.element_count().unwrap()];
+    image.get_pixels_into(roi, &mut values).unwrap();
+    values
+}
+
+#[test]
+fn resize_uses_the_destinations_dimensions() {
+    let source = filled(16, 16, &[0.5, 0.25, 0.75]);
+
+    // The destination decides the output size.
+    let mut smaller = ImageBuf::new(&spec(8, 8, 3)).unwrap();
+    algo::resize(&mut smaller, &source, None, None, None).unwrap();
+    assert_eq!(smaller.spec().unwrap().dimensions(), [8, 8, 1]);
+
+    // A flat source stays flat whatever the filter does.
+    for value in pixels_of(&smaller).chunks(3) {
+        assert!((value[0] - 0.5).abs() < 1e-5, "got {value:?}");
+        assert!((value[1] - 0.25).abs() < 1e-5);
+        assert!((value[2] - 0.75).abs() < 1e-5);
+    }
+}
+
+#[test]
+fn resize_accepts_a_named_filter() {
+    let source = filled(16, 16, &[1.0, 1.0, 1.0]);
+
+    for filter in ["box", "triangle", "lanczos3", "blackman-harris"] {
+        let mut destination = ImageBuf::new(&spec(8, 8, 3)).unwrap();
+        algo::resize(&mut destination, &source, Some(filter), None, None)
+            .unwrap_or_else(|error| panic!("filter {filter} failed: {error}"));
+        assert_eq!(destination.spec().unwrap().dimensions(), [8, 8, 1]);
+    }
+}
+
+#[test]
+fn an_unknown_filter_is_reported() {
+    let source = filled(8, 8, &[1.0, 1.0, 1.0]);
+    let mut destination = ImageBuf::new(&spec(4, 4, 3)).unwrap();
+
+    let result = algo::resize(
+        &mut destination,
+        &source,
+        Some("definitely-not-a-filter"),
+        None,
+        None,
+    );
+    assert!(result.is_err(), "an unknown filter should not be accepted");
+}
+
+#[test]
+fn resample_changes_size_without_a_filter() {
+    let source = filled(16, 8, &[0.25, 0.5, 0.75]);
+    let mut destination = ImageBuf::new(&spec(8, 4, 3)).unwrap();
+
+    algo::resample(&mut destination, &source, true, None).unwrap();
+    assert_eq!(destination.spec().unwrap().dimensions(), [8, 4, 1]);
+}
+
+#[test]
+fn fit_preserves_the_aspect_ratio() {
+    // A wide source into a square destination: letterboxing keeps the shape.
+    let source = filled(16, 8, &[1.0, 1.0, 1.0]);
+    let mut destination = ImageBuf::new(&spec(8, 8, 3)).unwrap();
+
+    algo::fit(
+        &mut destination,
+        &source,
+        None,
+        None,
+        FitMode::Letterbox,
+        false,
+        None,
+    )
+    .unwrap();
+
+    // A 2:1 source fitted into an 8x8 frame yields 8x4 of pixel data. The
+    // letterboxing is expressed by the display window staying 8x8, with the
+    // data window sitting inside it, rather than by padding the pixels.
+    let fitted = destination.spec().unwrap();
+    assert_eq!(fitted.dimensions(), [8, 4, 1], "aspect ratio preserved");
+    assert_eq!(fitted.full_dimensions(), [8, 8, 1], "frame is still square");
+    assert_eq!(
+        fitted.origin()[1],
+        2,
+        "the data window is centred in the frame"
+    );
+}
+
+#[test]
+fn over_composites_using_alpha() {
+    // Foreground: half-opaque white, premultiplied. Background: opaque black.
+    let foreground = filled(4, 4, &[0.5, 0.5, 0.5, 0.5]);
+    let background = filled(4, 4, &[0.0, 0.0, 0.0, 1.0]);
+
+    let mut result = ImageBuf::empty().unwrap();
+    algo::over(&mut result, &foreground, &background, None).unwrap();
+
+    // over = fg + bg * (1 - fg.alpha) = 0.5 + 0 * 0.5 = 0.5 for colour,
+    // and alpha = 0.5 + 1 * 0.5 = 1.0.
+    for pixel in pixels_of(&result).chunks(4) {
+        assert!((pixel[0] - 0.5).abs() < 1e-5, "colour: {pixel:?}");
+        assert!((pixel[3] - 1.0).abs() < 1e-5, "alpha: {pixel:?}");
+    }
+}
+
+#[test]
+fn premultiply_round_trips() {
+    // Unassociated: full-intensity colour at half alpha.
+    let straight = filled(4, 4, &[1.0, 0.5, 0.25, 0.5]);
+
+    let mut premultiplied = ImageBuf::empty().unwrap();
+    algo::premult(&mut premultiplied, &straight, None).unwrap();
+    for pixel in pixels_of(&premultiplied).chunks(4) {
+        assert!((pixel[0] - 0.5).abs() < 1e-5, "{pixel:?}");
+        assert!((pixel[1] - 0.25).abs() < 1e-5);
+        assert!((pixel[3] - 0.5).abs() < 1e-5, "alpha is left alone");
+    }
+
+    let mut back = ImageBuf::empty().unwrap();
+    algo::unpremult(&mut back, &premultiplied, None).unwrap();
+    for pixel in pixels_of(&back).chunks(4) {
+        assert!((pixel[0] - 1.0).abs() < 1e-5, "{pixel:?}");
+        assert!((pixel[1] - 0.5).abs() < 1e-5);
+    }
+}
+
+#[test]
+fn channels_reorders_drops_and_adds() {
+    let rgb = filled(4, 4, &[0.1, 0.2, 0.3]);
+
+    // RGB to BGRA, inventing an opaque alpha the source does not have.
+    let mut bgra = ImageBuf::empty().unwrap();
+    algo::channels(
+        &mut bgra,
+        &rgb,
+        &[
+            ChannelSource::Channel(2),
+            ChannelSource::Channel(1),
+            ChannelSource::Channel(0),
+            ChannelSource::Constant(1.0),
+        ],
+        Some(&["B", "G", "R", "A"]),
+    )
+    .unwrap();
+
+    let spec = bgra.spec().unwrap();
+    assert_eq!(spec.channel_count(), 4);
+    assert_eq!(spec.channel_names(), ["B", "G", "R", "A"]);
+    for pixel in pixels_of(&bgra).chunks(4) {
+        assert!((pixel[0] - 0.3).abs() < 1e-5, "{pixel:?}");
+        assert!((pixel[1] - 0.2).abs() < 1e-5);
+        assert!((pixel[2] - 0.1).abs() < 1e-5);
+        assert!((pixel[3] - 1.0).abs() < 1e-5);
+    }
+}
+
+#[test]
+fn channels_can_extract_a_single_channel() {
+    let rgb = filled(4, 4, &[0.1, 0.2, 0.3]);
+
+    let mut green = ImageBuf::empty().unwrap();
+    algo::channels(&mut green, &rgb, &[ChannelSource::Channel(1)], Some(&["Y"])).unwrap();
+
+    assert_eq!(green.spec().unwrap().channel_count(), 1);
+    for value in pixels_of(&green) {
+        assert!((value - 0.2).abs() < 1e-5);
+    }
+}
+
+#[test]
+fn channels_rejects_a_mismatched_name_list() {
+    let rgb = filled(4, 4, &[0.1, 0.2, 0.3]);
+    let mut result = ImageBuf::empty().unwrap();
+
+    assert!(matches!(
+        algo::channels(&mut result, &rgb, &[], None),
+        Err(Error::InvalidImageSpec(_))
+    ));
+    assert!(matches!(
+        algo::channels(
+            &mut result,
+            &rgb,
+            &[ChannelSource::Channel(0), ChannelSource::Channel(1)],
+            Some(&["only-one"]),
+        ),
+        Err(Error::InvalidImageSpec(_))
+    ));
+}
+
+#[test]
+fn channel_sum_collapses_to_one_channel() {
+    let rgb = filled(4, 4, &[0.25, 0.5, 0.25]);
+
+    let mut luminance = ImageBuf::empty().unwrap();
+    algo::channel_sum(&mut luminance, &rgb, &[1.0, 1.0, 1.0], None).unwrap();
+    assert_eq!(luminance.spec().unwrap().channel_count(), 1);
+    for value in pixels_of(&luminance) {
+        assert!((value - 1.0).abs() < 1e-5, "got {value}");
+    }
+
+    // Weighted, as a luma calculation would be.
+    let mut weighted = ImageBuf::empty().unwrap();
+    algo::channel_sum(&mut weighted, &rgb, &[2.0, 0.0, 0.0], None).unwrap();
+    for value in pixels_of(&weighted) {
+        assert!((value - 0.5).abs() < 1e-5, "got {value}");
+    }
+}
