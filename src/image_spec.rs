@@ -137,6 +137,19 @@ impl ImageSpec {
         Ok(self)
     }
 
+    /// Mark this specification as describing a deep image.
+    ///
+    /// Deep pixels hold a list of samples rather than one value, so a deep
+    /// specification is written with
+    /// [`ImageOutput::write_deep_image`](crate::ImageOutput::write_deep_image)
+    /// and read with
+    /// [`ImageInput::read_deep_image`](crate::ImageInput::read_deep_image);
+    /// the contiguous pixel calls refuse it.
+    pub fn as_deep(mut self) -> Self {
+        self.deep = true;
+        self
+    }
+
     /// Attach a metadata attribute, replacing any attribute of the same name.
     pub fn with_attribute(
         mut self,

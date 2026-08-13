@@ -56,6 +56,114 @@ pub struct DeepImage {
 }
 
 impl DeepImage {
+    /// Build an empty deep image matching a specification.
+    ///
+    /// The specification must be marked deep, and describes the size and the
+    /// channels. Every pixel starts with no samples; give them some with
+    /// [`DeepImage::set_sample_count`], then fill them in with
+    /// [`DeepImage::set_value`].
+    ///
+    /// ```no_run
+    /// use oiio::{DeepImage, ImageOutput, ImageSpec, PixelFormat};
+    /// use std::path::Path;
+    ///
+    /// # fn main() -> oiio::Result<()> {
+    /// let spec = ImageSpec::new(64, 64, 5, PixelFormat::F32)?
+    ///     .with_channel_names(["R", "G", "B", "A", "Z"])?
+    ///     .as_deep();
+    /// let mut deep = DeepImage::new(&spec)?;
+    ///
+    /// // One sample at the origin, at depth 10.
+    /// deep.set_sample_count(0, 0, 1)?;
+    /// deep.set_value(0, 0, 4, 0, 10.0)?;
+    ///
+    /// let mut output = ImageOutput::create(Path::new("deep.exr"), &spec)?;
+    /// output.write_deep_image(&deep)?;
+    /// output.close()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn new(spec: &ImageSpec) -> Result<Self> {
+        if !spec.is_deep() {
+            return Err(Error::InvalidImageSpec(
+                "a deep image needs a specification marked deep; see ImageSpec::as_deep".to_owned(),
+            ));
+        }
+
+        let native_spec = spec.to_sys()?;
+        let Some(native_spec) = native_spec.as_ref() else {
+            return Err(Error::InvalidImageSpec(
+                "OpenImageIO could not allocate an image specification".to_owned(),
+            ));
+        };
+
+        let mut inner = sys::deepdata::deepdata_default();
+        let Some(pinned) = inner.as_mut() else {
+            return Err(Error::operation(
+                "create deep image",
+                "OpenImageIO could not allocate deep data".to_owned(),
+            ));
+        };
+        sys::deepdata::deepdata_init_from_spec(pinned, native_spec);
+
+        Self::from_parts(inner, spec)
+    }
+
+    /// Give a pixel a number of samples, discarding any it already had.
+    ///
+    /// Samples start zeroed; set their values with [`DeepImage::set_value`].
+    pub fn set_sample_count(&mut self, x: i32, y: i32, count: usize) -> Result<()> {
+        let pixel = self.pixel_index(x, y)?;
+        let count = i32::try_from(count)
+            .map_err(|_| Error::InvalidRoi("sample count exceeds i32::MAX".to_owned()))?;
+        sys::deepdata::deepdata_set_samples(self.inner_mut(), pixel, count);
+        Ok(())
+    }
+
+    /// Set one sample's value.
+    pub fn set_value(
+        &mut self,
+        x: i32,
+        y: i32,
+        channel: usize,
+        sample: usize,
+        value: f32,
+    ) -> Result<()> {
+        let (pixel, channel, sample) = self.address(x, y, channel, sample)?;
+        sys::deepdata::deepdata_set_deep_value(self.inner_mut(), pixel, channel, sample, value);
+        Ok(())
+    }
+
+    /// Set one sample's value in a channel stored as an unsigned integer.
+    pub fn set_value_uint(
+        &mut self,
+        x: i32,
+        y: i32,
+        channel: usize,
+        sample: usize,
+        value: u32,
+    ) -> Result<()> {
+        let (pixel, channel, sample) = self.address(x, y, channel, sample)?;
+        sys::deepdata::deepdata_set_deep_value_uint(
+            self.inner_mut(),
+            pixel,
+            channel,
+            sample,
+            value,
+        );
+        Ok(())
+    }
+
+    pub(crate) fn native(&self) -> &sys::deepdata::DeepData {
+        self.inner()
+    }
+
+    fn inner_mut(&mut self) -> std::pin::Pin<&mut sys::deepdata::DeepData> {
+        self.inner
+            .as_mut()
+            .expect("DeepImage invariant violated: null native pointer")
+    }
+
     pub(crate) fn from_parts(
         inner: cxx::UniquePtr<sys::deepdata::DeepData>,
         spec: &ImageSpec,

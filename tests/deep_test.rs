@@ -6,7 +6,7 @@
 mod common;
 
 use common::{f32_ramp, write_image, ScratchDir};
-use oiio::{Error, ImageInput, ImageSpec, PixelFormat};
+use oiio::{DeepImage, Error, ImageInput, ImageSpec, PixelFormat};
 use std::path::PathBuf;
 
 fn exr_corpus() -> Option<PathBuf> {
@@ -179,6 +179,124 @@ fn deep_accessors_are_bounds_checked() {
     if let Some((x, y)) = empty {
         assert!(matches!(deep.value(x, y, 0, 0), Err(Error::InvalidRoi(_))));
     }
+}
+
+/// Build a deep image sample by sample, write it, read it back, and check
+/// every sample survived.
+#[test]
+fn round_trips_a_deep_image_written_from_scratch() {
+    let scratch = ScratchDir::new("deepwrite");
+    let path = scratch.file("written.exr");
+
+    const WIDTH: u32 = 8;
+    const HEIGHT: u32 = 4;
+    let spec = ImageSpec::new(WIDTH, HEIGHT, 5, PixelFormat::F32)
+        .unwrap()
+        .with_channel_names(["R", "G", "B", "A", "Z"])
+        .unwrap()
+        .as_deep();
+    assert!(spec.is_deep());
+
+    // A pixel at (x, y) gets (x % 3) samples, so the image is sparse in the
+    // way a real deep render is, with empty pixels among populated ones.
+    let sample_count = |x: i32| (x % 3) as usize;
+    let expected = |x: i32, y: i32, channel: usize, sample: usize| -> f32 {
+        (x as f32) + (y as f32) * 0.5 + (channel as f32) * 0.25 + (sample as f32) * 0.125
+    };
+
+    let mut deep = DeepImage::new(&spec).unwrap();
+    for y in 0..HEIGHT as i32 {
+        for x in 0..WIDTH as i32 {
+            let count = sample_count(x);
+            deep.set_sample_count(x, y, count).unwrap();
+            for sample in 0..count {
+                for channel in 0..5 {
+                    deep.set_value(x, y, channel, sample, expected(x, y, channel, sample))
+                        .unwrap();
+                }
+            }
+        }
+    }
+
+    let mut output = oiio::ImageOutput::create(&path, &spec).unwrap();
+    output.write_deep_image(&deep).unwrap();
+    output.close().unwrap();
+    assert!(path.exists());
+
+    // Read it back through a fresh reader.
+    let mut input = ImageInput::from_path(&path).unwrap();
+    let read_spec = input.image_spec().unwrap();
+    assert!(read_spec.is_deep(), "the file should be deep");
+    assert_eq!(read_spec.dimensions(), [WIDTH, HEIGHT, 1]);
+    assert_eq!(read_spec.channel_names(), ["R", "G", "B", "A", "Z"]);
+
+    let read_back = input.read_deep_image().unwrap();
+    let mut checked = 0usize;
+    for y in 0..HEIGHT as i32 {
+        for x in 0..WIDTH as i32 {
+            let count = read_back.sample_count(x, y).unwrap();
+            assert_eq!(count, sample_count(x), "sample count at ({x}, {y})");
+            for sample in 0..count {
+                for channel in 0..5 {
+                    let value = read_back.value(x, y, channel, sample).unwrap();
+                    let wanted = expected(x, y, channel, sample);
+                    assert!(
+                        (value - wanted).abs() < 1e-5,
+                        "({x}, {y}) channel {channel} sample {sample}: {value} != {wanted}"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+    }
+    input.close().unwrap();
+
+    println!("{checked} deep sample values round-tripped");
+    assert!(checked > 0, "the fixture wrote no samples");
+}
+
+#[test]
+fn deep_writing_is_refused_when_the_writer_disagrees() {
+    let scratch = ScratchDir::new("deepmismatch");
+
+    let deep_spec = ImageSpec::new(8, 4, 5, PixelFormat::F32)
+        .unwrap()
+        .with_channel_names(["R", "G", "B", "A", "Z"])
+        .unwrap()
+        .as_deep();
+    let deep = DeepImage::new(&deep_spec).unwrap();
+
+    // A writer opened for flat pixels cannot take a deep image.
+    let flat_path = scratch.file("flat.exr");
+    let flat_spec = ImageSpec::new(8, 4, 5, PixelFormat::F32).unwrap();
+    let mut flat = oiio::ImageOutput::create(&flat_path, &flat_spec).unwrap();
+    let error = flat.write_deep_image(&deep).unwrap_err();
+    assert!(
+        error.to_string().contains("flat pixels"),
+        "unexpected error: {error}"
+    );
+
+    // Nor can a deep writer take an image of another size.
+    let other_path = scratch.file("other.exr");
+    let other_spec = ImageSpec::new(16, 4, 5, PixelFormat::F32)
+        .unwrap()
+        .with_channel_names(["R", "G", "B", "A", "Z"])
+        .unwrap()
+        .as_deep();
+    let mut other = oiio::ImageOutput::create(&other_path, &other_spec).unwrap();
+    assert!(matches!(
+        other.write_deep_image(&deep),
+        Err(Error::InvalidImageSpec(_))
+    ));
+}
+
+#[test]
+fn a_deep_image_needs_a_deep_specification() {
+    let flat = ImageSpec::new(4, 4, 3, PixelFormat::F32).unwrap();
+    assert!(matches!(
+        DeepImage::new(&flat),
+        Err(Error::InvalidImageSpec(_))
+    ));
 }
 
 #[test]

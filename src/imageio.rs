@@ -709,6 +709,36 @@ impl ImageOutput {
         self.check("write tiles", succeeded)
     }
 
+    /// Write a deep image.
+    ///
+    /// The writer must have been opened with a specification marked deep, and
+    /// the image must match the size and channels it declared.
+    pub fn write_deep_image(&mut self, deep: &DeepImage) -> Result<()> {
+        if !self.spec.is_deep() {
+            return Err(Error::operation(
+                "write deep image",
+                "this writer was opened for flat pixels; see ImageSpec::as_deep".to_owned(),
+            ));
+        }
+        let dimensions = self.spec.dimensions();
+        if deep.dimensions() != dimensions {
+            return Err(Error::InvalidImageSpec(format!(
+                "the deep image is {:?} but the writer expects {dimensions:?}",
+                deep.dimensions()
+            )));
+        }
+        if deep.channel_count() != self.spec.channel_count() as usize {
+            return Err(Error::InvalidImageSpec(format!(
+                "the deep image has {} channels but the writer expects {}",
+                deep.channel_count(),
+                self.spec.channel_count()
+            )));
+        }
+
+        let succeeded = sys::imageio::imageoutput_write_deep_image(self.inner_mut(), deep.native());
+        self.check("write deep image", succeeded)
+    }
+
     /// Begin a new subimage in the same file.
     ///
     /// Only supported by formats that report the `"multiimage"` feature.
