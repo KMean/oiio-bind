@@ -23,6 +23,19 @@ crates.io yet, so there are no version numbers to hang them on.
   another image or a constant, `abs`, `absdiff`, `copy`, `crop`, `flip`,
   `flop`, `transpose`, `compare`, `resize`, `resample`, `fit`, `over`,
   `premult`, `unpremult`, `channel_sum`, `channels` and `color_convert`.
+- `oiio::algo` filtering: `make_kernel` and `convolve`, `laplacian`,
+  `unsharp_mask`, `median_filter`, `dilate` and `erode`, `fft` and `ifft`, and
+  `polar_to_complex`/`complex_to_polar`. Several refuse arguments OpenImageIO
+  accepts and then answers wrongly: an unknown kernel name (which yields a box
+  kernel and a complaint on a buffer nobody inspects), an empty kernel (which
+  divides by a zero sum and fills the image with `NaN` while reporting
+  success), a filter window of one (which translates the image by a pixel
+  rather than leaving it alone), and an `unsharp_mask` destination whose pixel
+  type differs from the source's (which OpenImageIO reads the source through,
+  without converting). `dilate` and `erode` keep to the source's data window,
+  since outside it they leave a float extreme rather than an error; and `ifft`
+  insists the source's pixels are in memory, since OpenImageIO casts the pixel
+  address to a complex pointer behind an assertion a release build removes.
 - `oiio::algo` colour transforms beyond a space change:
   `color_matrix_transform` by a 4x4 matrix, and `ocio_look`, `ocio_display`,
   `ocio_file_transform` and `ocio_named_transform` through OpenColorIO.

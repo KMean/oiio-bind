@@ -377,6 +377,97 @@ mod ffi {
             error: &mut String,
         ) -> String;
 
+        pub fn imagebufalgo_make_kernel(
+            dst: Pin<&mut ImageBuf>,
+            name: &str,
+            width: f32,
+            height: f32,
+            depth: f32,
+            normalize: bool,
+        ) -> bool;
+
+        pub fn imagebufalgo_convolve(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            kernel: &ImageBuf,
+            normalize: bool,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_laplacian(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_unsharp_mask(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            kernel: &str,
+            width: f32,
+            contrast: f32,
+            threshold: f32,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_median_filter(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            width: i32,
+            height: i32,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_dilate(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            width: i32,
+            height: i32,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_erode(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            width: i32,
+            height: i32,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_fft(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_ifft(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_polar_to_complex(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_complex_to_polar(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
         pub fn imagebufalgo_rotate90(
             dst: Pin<&mut ImageBuf>,
             src: &ImageBuf,

@@ -684,6 +684,164 @@ imagebufalgo_compare(const ImageBuf& a, const ImageBuf& b, float failthresh,
 }
 
 bool
+imagebufalgo_make_kernel(ImageBuf& dst, const rust::Str name, float width,
+                         float height, float depth, bool normalize)
+{
+    dst = OIIO::ImageBufAlgo::make_kernel(to_string_view(name), width, height,
+                                          depth, normalize);
+    // An unrecognised filter name still yields a box kernel, with the
+    // complaint left on the buffer. Convolving with a silent substitute would
+    // be worse than reporting it.
+    return !dst.has_error();
+}
+
+bool
+imagebufalgo_convolve(ImageBuf& dst, const ImageBuf& src,
+                      const ImageBuf& kernel, bool normalize, const ROI& roi,
+                      int nthreads)
+{
+    if (!kernel.initialized() || kernel.roi().npixels() == 0
+        || kernel.nchannels() < 1) {
+        // Otherwise the kernel sum stays zero, normalising divides by it, and
+        // every pixel comes back NaN with the call reporting success.
+        dst.errorfmt("convolve: the kernel is empty");
+        return false;
+    }
+    return OIIO::ImageBufAlgo::convolve(dst, src, kernel, normalize, roi,
+                                        nthreads);
+}
+
+bool
+imagebufalgo_laplacian(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                       int nthreads)
+{
+    return OIIO::ImageBufAlgo::laplacian(dst, src, roi, nthreads);
+}
+
+bool
+imagebufalgo_unsharp_mask(ImageBuf& dst, const ImageBuf& src,
+                          const rust::Str kernel, float width, float contrast,
+                          float threshold, const ROI& roi, int nthreads)
+{
+    if (dst.initialized() && dst.spec().format != src.spec().format) {
+        // The final pass dispatches on the destination's type and then reads
+        // the source through an iterator of that same type. ImageBuf iterators
+        // reinterpret the buffer rather than converting, so a mismatch misreads
+        // the source, and reads past its end when the destination is wider.
+        dst.errorfmt("unsharp_mask: the destination is {} and the source is "
+                     "{}; OpenImageIO reads the source as the destination's "
+                     "type, so they must match, or pass an empty destination",
+                     dst.spec().format, src.spec().format);
+        return false;
+    }
+    return OIIO::ImageBufAlgo::unsharp_mask(dst, src, to_string_view(kernel),
+                                            width, contrast, threshold, roi,
+                                            nthreads);
+}
+
+namespace {
+
+// A width of one gives w_2 = max(1, 0) = 1, so the window is [x-1, x): one
+// pixel, one to the left. The image comes back translated rather than
+// unchanged, which no caller asking for a 1-pixel filter wants.
+bool
+check_window(ImageBuf& dst, const char* operation, int width, int height)
+{
+    if (width < 2) {
+        dst.errorfmt("{}: the window must be at least 2 wide, got {}; "
+                     "OpenImageIO translates the image by one pixel for 1",
+                     operation, width);
+        return false;
+    }
+    if (height > 0 && height < 2) {
+        dst.errorfmt("{}: the window must be at least 2 high, got {}; "
+                     "pass 0 or -1 to match the width",
+                     operation, height);
+        return false;
+    }
+    return true;
+}
+
+// dilate and erode leave -FLT_MAX or +FLT_MAX in any destination pixel that
+// had no source pixel under it, and report success. Keeping the region inside
+// the source's data window means that case cannot arise.
+ROI
+within_source(const ImageBuf& src, const ROI& roi)
+{
+    if (!roi.defined())
+        return src.roi();
+    return OIIO::roi_intersection(roi, src.roi());
+}
+
+}  // namespace
+
+bool
+imagebufalgo_median_filter(ImageBuf& dst, const ImageBuf& src, int width,
+                           int height, const ROI& roi, int nthreads)
+{
+    if (!check_window(dst, "median_filter", width, height))
+        return false;
+    return OIIO::ImageBufAlgo::median_filter(dst, src, width, height, roi,
+                                             nthreads);
+}
+
+bool
+imagebufalgo_dilate(ImageBuf& dst, const ImageBuf& src, int width, int height,
+                    const ROI& roi, int nthreads)
+{
+    if (!check_window(dst, "dilate", width, height))
+        return false;
+    return OIIO::ImageBufAlgo::dilate(dst, src, width, height,
+                                      within_source(src, roi), nthreads);
+}
+
+bool
+imagebufalgo_erode(ImageBuf& dst, const ImageBuf& src, int width, int height,
+                   const ROI& roi, int nthreads)
+{
+    if (!check_window(dst, "erode", width, height))
+        return false;
+    return OIIO::ImageBufAlgo::erode(dst, src, width, height,
+                                     within_source(src, roi), nthreads);
+}
+
+bool
+imagebufalgo_fft(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                 int nthreads)
+{
+    return OIIO::ImageBufAlgo::fft(dst, src, roi, nthreads);
+}
+
+bool
+imagebufalgo_ifft(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                  int nthreads)
+{
+    if (!src.localpixels()) {
+        // hfft_ casts src.pixeladdr(...) to a complex pointer behind an
+        // assertion that a release build compiles out. A cache-backed buffer
+        // answers that address with null.
+        dst.errorfmt("ifft: the source's pixels are not in memory; read the "
+                     "image before transforming it");
+        return false;
+    }
+    return OIIO::ImageBufAlgo::ifft(dst, src, roi, nthreads);
+}
+
+bool
+imagebufalgo_polar_to_complex(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                              int nthreads)
+{
+    return OIIO::ImageBufAlgo::polar_to_complex(dst, src, roi, nthreads);
+}
+
+bool
+imagebufalgo_complex_to_polar(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                              int nthreads)
+{
+    return OIIO::ImageBufAlgo::complex_to_polar(dst, src, roi, nthreads);
+}
+
+bool
 imagebufalgo_rotate90(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
                       int nthreads)
 {

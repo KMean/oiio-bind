@@ -244,6 +244,75 @@ imagebufalgo_channels(ImageBuf& dst, const ImageBuf& src, int nchannels,
                       const rust::Vec<rust::String>& newchannelnames,
                       bool shuffle_channel_names, int nthreads);
 
+// Filtering. Several of these need guarding; the reasons are at each one and
+// in the implementation.
+
+// make_kernel returns a buffer rather than filling one, and on an unknown
+// filter name it returns a usable box kernel with the complaint recorded on
+// that buffer. Convolving with a silent fallback is worse than failing, so the
+// shim checks.
+bool
+imagebufalgo_make_kernel(ImageBuf& dst, const rust::Str name, float width,
+                         float height, float depth, bool normalize);
+
+// An uninitialized kernel is not refused upstream: the accumulation runs zero
+// times, normalising divides by that zero, and every pixel comes back NaN with
+// the call reporting success.
+bool
+imagebufalgo_convolve(ImageBuf& dst, const ImageBuf& src,
+                      const ImageBuf& kernel, bool normalize, const ROI& roi,
+                      int nthreads);
+
+bool
+imagebufalgo_laplacian(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                       int nthreads);
+
+// unsharp_mask dispatches on the destination's pixel type alone and then reads
+// the source through it. A destination whose type differs from the source's
+// therefore reinterprets the source's bytes, and reads past the end when the
+// destination's type is wider.
+bool
+imagebufalgo_unsharp_mask(ImageBuf& dst, const ImageBuf& src,
+                          const rust::Str kernel, float width, float contrast,
+                          float threshold, const ROI& roi, int nthreads);
+
+// A width of one is an off-by-one rather than a no-op: the window becomes the
+// single pixel one to the left and above, so the image comes back translated.
+// dilate and erode additionally write -FLT_MAX or +FLT_MAX into any
+// destination pixel that has no source pixel under it, so the region is
+// clamped to the source's data window.
+bool
+imagebufalgo_median_filter(ImageBuf& dst, const ImageBuf& src, int width,
+                           int height, const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_dilate(ImageBuf& dst, const ImageBuf& src, int width, int height,
+                    const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_erode(ImageBuf& dst, const ImageBuf& src, int width, int height,
+                   const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_fft(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                 int nthreads);
+
+// ifft casts the source's pixel address to a complex pointer and guards it
+// only with an assertion, which a release build reduces to a message on
+// stderr. A buffer that is backed by the image cache rather than by local
+// pixels returns null from that address, so this insists on local pixels.
+bool
+imagebufalgo_ifft(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                  int nthreads);
+
+bool
+imagebufalgo_polar_to_complex(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                              int nthreads);
+
+bool
+imagebufalgo_complex_to_polar(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                              int nthreads);
+
 // The right-angle rotations. Their `roi` selects part of the SOURCE, unlike
 // most of the calls above.
 bool

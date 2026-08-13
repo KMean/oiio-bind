@@ -165,8 +165,15 @@ The `ImageBufAlgo` surface is being completed in slices, each one commit:
   edges, so `warp` is the way to choose a wrap mode. `reorient` returns false
   without recording anything when the `Orientation` attribute is not one of the
   eight EXIF values, so the binding supplies that message itself.
-- [ ] Filtering: `convolve`, `make_kernel`, `unsharp_mask`, `median_filter`,
-  `laplacian`, `dilate`, `erode`, and the Fourier pair.
+- [x] Filtering: `make_kernel`, `convolve`, `laplacian`, `unsharp_mask`,
+  `median_filter`, `dilate`, `erode`, `fft`/`ifft` and the polar pair. Five
+  guards were needed: an unknown filter name gives a box kernel and a complaint
+  nobody reads; an empty kernel divides by its own zero sum and returns `NaN`
+  as success; `unsharp_mask` reads the source through the *destination's* pixel
+  type; a window of one translates the image instead of leaving it alone;
+  `dilate` and `erode` write a float extreme into pixels with no source under
+  them; and `ifft` dereferences a null pixel address behind an assertion a
+  release build removes.
 - [ ] Deep compositing: `flatten`, `deepen`, `deep_merge`, `deep_holdout`.
 - [x] Colour transforms beyond a space change: `color_matrix_transform`,
   `ocio_look`, `ocio_display`, `ocio_file_transform` and

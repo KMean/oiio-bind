@@ -124,6 +124,257 @@ binary_operation!(
     "divide"
 );
 
+/// Build a convolution kernel by name.
+///
+/// The name is a reconstruction filter: `"gaussian"`, `"box"`, `"triangle"`,
+/// `"catmull-rom"`, `"blackman-harris"`, `"sinc"`, `"lanczos3"`, `"mitchell"`,
+/// `"b-spline"`, `"disk"`, `"binomial"`, `"laplacian"` and a few more. An
+/// unknown name is an error rather than a silent fall back to a box, which is
+/// what OpenImageIO does on its own.
+///
+/// The result is centred on the origin, which is what [`convolve`] expects. A
+/// kernel read from a file has its origin at a corner instead, and convolving
+/// with one shifts the image by half its size.
+///
+/// `normalize` scales the kernel to sum to one. Leave it off for a kernel that
+/// is meant to sum to zero, such as `"laplacian"`.
+pub fn make_kernel(name: &str, width: f32, height: f32, normalize: bool) -> Result<ImageBuf> {
+    let mut kernel = ImageBuf::empty()?;
+    let succeeded = sys::imagebufalgo::imagebufalgo_make_kernel(
+        kernel.inner_mut(),
+        name,
+        width,
+        height,
+        1.0,
+        normalize,
+    );
+    if succeeded {
+        Ok(kernel)
+    } else {
+        Err(Error::operation("make kernel", kernel.take_error()))
+    }
+}
+
+/// Convolve with a kernel image.
+///
+/// The kernel's own origin is the filter's centre, so use [`make_kernel`],
+/// which centres it. An empty kernel is refused: OpenImageIO would divide by
+/// its zero sum and fill the result with `NaN` while reporting success.
+pub fn convolve(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    kernel: &ImageBuf,
+    normalize: bool,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_convolve(
+        dst.inner_mut(),
+        src.inner(),
+        kernel.inner(),
+        normalize,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "convolve", succeeded)
+}
+
+/// Apply the 3x3 Laplacian, an edge detector.
+///
+/// The result is a signed second derivative and is not normalised, so it holds
+/// negative values. Give it a floating-point destination; an integer one clamps
+/// everything below zero away.
+pub fn laplacian(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
+    let roi = region(roi);
+    let succeeded =
+        sys::imagebufalgo::imagebufalgo_laplacian(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    finish(dst, "laplacian", succeeded)
+}
+
+/// Sharpen by subtracting a blurred copy.
+///
+/// `kernel` is the blur to subtract — `"gaussian"` by default, or the special
+/// name `"median"` for a median blur, which sharpens without haloing an edge.
+/// `contrast` scales the difference added back, and `threshold` leaves
+/// differences smaller than itself alone, so grain is not amplified.
+///
+/// The destination must either be empty or hold the same pixel type as the
+/// source. OpenImageIO reads the source through an iterator of the
+/// *destination's* type without converting, so a mismatch would misread the
+/// source and, for a wider destination type, read past its end.
+pub fn unsharp_mask(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    kernel: &str,
+    width: f32,
+    contrast: f32,
+    threshold: f32,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_unsharp_mask(
+        dst.inner_mut(),
+        src.inner(),
+        kernel,
+        width,
+        contrast,
+        threshold,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "unsharp mask", succeeded)
+}
+
+/// Replace each pixel with the median of its neighbourhood.
+///
+/// This removes salt-and-pepper noise without softening edges, which a blur
+/// would. `height` of `None` matches the width.
+///
+/// The window must be at least two across. OpenImageIO accepts one and returns
+/// the image translated by a pixel rather than unchanged, so that is refused
+/// here.
+pub fn median_filter(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    width: u32,
+    height: Option<u32>,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let (width, height) = window("median filter", width, height)?;
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_median_filter(
+        dst.inner_mut(),
+        src.inner(),
+        width,
+        height,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "median filter", succeeded)
+}
+
+/// Grow the bright areas: each pixel becomes the maximum of its neighbourhood.
+///
+/// `height` of `None` matches the width, and the window must be at least two
+/// across, as [`median_filter`] explains.
+pub fn dilate(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    width: u32,
+    height: Option<u32>,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let (width, height) = window("dilate", width, height)?;
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_dilate(
+        dst.inner_mut(),
+        src.inner(),
+        width,
+        height,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "dilate", succeeded)
+}
+
+/// Shrink the bright areas: each pixel becomes the minimum of its
+/// neighbourhood.
+///
+/// `height` of `None` matches the width, and the window must be at least two
+/// across, as [`median_filter`] explains.
+pub fn erode(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    width: u32,
+    height: Option<u32>,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let (width, height) = window("erode", width, height)?;
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_erode(
+        dst.inner_mut(),
+        src.inner(),
+        width,
+        height,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "erode", succeeded)
+}
+
+fn window(operation: &str, width: u32, height: Option<u32>) -> Result<(i32, i32)> {
+    let to_i32 = |value: u32| {
+        i32::try_from(value)
+            .map_err(|_| Error::InvalidImageSpec(format!("{operation} window exceeds i32::MAX")))
+    };
+    Ok((
+        to_i32(width)?,
+        height.map(to_i32).transpose()?.unwrap_or(-1),
+    ))
+}
+
+/// Transform one channel into the frequency domain.
+///
+/// The result is always a two-channel float image at the origin — real part
+/// first, imaginary part second — whatever the destination held before.
+///
+/// Only one channel is transformed: the region's first, or channel zero. The
+/// region also defaults to the union of the data and display windows rather
+/// than to the data window alone, so an image whose pixels are smaller than its
+/// display window is transformed with the difference zero-padded.
+pub fn fft(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
+    let roi = region(roi);
+    let succeeded =
+        sys::imagebufalgo::imagebufalgo_fft(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    finish(dst, "fft", succeeded)
+}
+
+/// Transform back out of the frequency domain.
+///
+/// The source must be the two-channel complex image [`fft`] produces, and its
+/// pixels must be in memory: a buffer still attached to a file has no pixel
+/// address, and OpenImageIO would dereference the null it gets back. Call
+/// [`ImageBuf::read`](crate::ImageBuf::read) first if in doubt.
+pub fn ifft(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
+    let roi = region(roi);
+    let succeeded =
+        sys::imagebufalgo::imagebufalgo_ifft(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    finish(dst, "ifft", succeeded)
+}
+
+/// Convert a two-channel magnitude-and-phase image into real and imaginary
+/// parts.
+///
+/// Both images need exactly two channels. Phase is in radians.
+///
+/// (OpenImageIO's header describes this the other way round. The name is right
+/// and the prose is wrong; this converts *from* polar.)
+pub fn polar_to_complex(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_polar_to_complex(
+        dst.inner_mut(),
+        src.inner(),
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "polar to complex", succeeded)
+}
+
+/// Convert a two-channel real-and-imaginary image into magnitude and phase.
+///
+/// Both images need exactly two channels. The phase comes back in `0..2π`,
+/// not `-π..π`.
+pub fn complex_to_polar(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_complex_to_polar(
+        dst.inner_mut(),
+        src.inner(),
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "complex to polar", succeeded)
+}
+
 /// Settings the OpenColorIO operations share.
 ///
 /// [`Default`] matches OpenImageIO's own defaults, which means `unpremult` is

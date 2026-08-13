@@ -141,6 +141,25 @@ fn a_dependent_can_use_the_whole_surface() -> Result<()> {
     )?;
     assert_eq!(trimmed.spec()?.origin(), [0, 0, 0]);
 
+    // Filtering.
+    let kernel = algo::make_kernel("gaussian", 3.0, 3.0, true)?;
+    let mut filtered = ImageBuf::empty()?;
+    algo::convolve(&mut filtered, &image, &kernel, true, None)?;
+    algo::laplacian(&mut filtered, &image, None)?;
+    algo::unsharp_mask(&mut filtered, &image, "gaussian", 3.0, 1.0, 0.0, None)?;
+    algo::median_filter(&mut filtered, &image, 3, None, None)?;
+    algo::dilate(&mut filtered, &image, 3, Some(3), None)?;
+    algo::erode(&mut filtered, &image, 3, None, None)?;
+
+    let mut frequency = ImageBuf::empty()?;
+    algo::fft(&mut frequency, &image, None)?;
+    let mut spatial = ImageBuf::empty()?;
+    algo::ifft(&mut spatial, &frequency, None)?;
+    let mut polar = ImageBuf::empty()?;
+    algo::complex_to_polar(&mut polar, &frequency, None)?;
+    let mut complex = ImageBuf::empty()?;
+    algo::polar_to_complex(&mut complex, &polar, None)?;
+
     // Colour beyond a space change.
     let mut graded = ImageBuf::empty()?;
     algo::color_matrix_transform(
