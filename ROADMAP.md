@@ -64,8 +64,14 @@ line is established and tested deliberately.
   those as pointers rather than characters.
 - [x] Reading deep images. The contiguous pixel API still refuses them, since
   a fixed number of values per pixel cannot describe a list of samples;
-  `ImageInput::read_deep_image` returns a `DeepImage` instead. Writing deep
-  images is not implemented.
+  `ImageInput::read_deep_image` returns a `DeepImage` instead.
+- [x] Writing deep images. A `DeepImage` is constructible from Rust: declare
+  the sample count for a pixel, then set each sample's value. Channels keep
+  the type the specification gave them, so an unsigned channel round-trips
+  through `set_value_uint` rather than through a float that cannot hold it.
+  `ImageOutput::write_deep_image` refuses a writer that was opened for flat
+  pixels, and refuses a deep image whose dimensions or channel count disagree
+  with the specification.
 
 ## Notes on the OpenImageIO 3.1 span API
 
@@ -110,6 +116,12 @@ minimum supported version raised to whichever release fixed them.
 should be added in independent, reviewable increments after the core buffer and
 ownership model is proven.
 
+Custom image I/O plugins are the one item here that is not merely unfinished.
+Writing a format plugin means OpenImageIO calling back into Rust, and the
+commented-out `declare_imageio_format` in `oiio-sys/src/imageio.rs` is where
+that would start. Upstream marked their own version of it blocked, and nothing
+in this fork has changed that.
+
 - [x] `ImageBuf`: allocate from a specification or attach to a file, read on
   demand, bounded pixel transfer in both directions with conversion, write to
   a file, and deep copy. This is what `ImageBufAlgo` will operate on.
@@ -119,8 +131,30 @@ ownership model is proven.
 - [x] `ImageBufAlgo` geometry and compositing: `resize`, `resample`, `fit`,
   `over`, `premult`/`unpremult`, `channel_sum`, and `channels` for reordering,
   dropping, duplicating or inventing channels.
-- [ ] Colour management (`colorconvert` and friends), `render_text`, and the
-  remaining `ImageBufAlgo` surface.
+- [x] Colour management: `algo::color_convert` between named spaces, and
+  `ColorConfig` to ask the active OpenColorIO configuration which spaces and
+  roles it actually defines, so a caller can name one that exists rather than
+  discovering at conversion time that it does not.
+- [x] `TextureSystem`: filtered texture lookups with wrap, mip and
+  interpolation modes, and explicit derivatives, so a caller gets the
+  filtering a renderer would otherwise write itself.
+
+The `ImageBufAlgo` surface is being completed in slices, each one commit:
+
+- [ ] `make_texture`, to write the `.tx` mip pyramids `TextureSystem` reads.
+- [ ] Statistics and introspection: `computePixelStats`, `histogram`,
+  `isConstantColor`, `isMonochrome`, `nonzero_region`, `computePixelHashSHA1`.
+- [ ] Remaining pixel maths: `mad`, `pow`, `clamp`, `min`, `max`,
+  `contrast_remap`, `saturate`, `invert`, `paste`, `cut`.
+- [ ] Rotation and warping: `rotate`, the right-angle rotations, `reorient`,
+  `warp`, `st_warp`.
+- [ ] Filtering: `convolve`, `make_kernel`, `unsharp_mask`, `median_filter`,
+  `laplacian`, `dilate`, `erode`, and the Fourier pair.
+- [ ] Deep compositing: `flatten`, `deepen`, `deep_merge`, `deep_holdout`.
+- [ ] Colour transforms beyond a space change: `colormatrixtransform`,
+  `ociolook`, `ociodisplay`, `ociofiletransform`.
+- [ ] Drawing and generators: `render_text`, `render_line`, `render_box`,
+  `render_point`, `noise`, `checker`.
 
 The project intentionally does not try to generate bindings for every OIIO C++
 template or expose raw C++ pointer semantics through the safe crate.

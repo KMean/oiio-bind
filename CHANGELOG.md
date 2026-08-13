@@ -23,7 +23,13 @@ crates.io yet, so there are no version numbers to hang them on.
   another image or a constant, `abs`, `absdiff`, `copy`, `crop`, `flip`,
   `flop`, `transpose`, `compare`, `resize`, `resample`, `fit`, `over`,
   `premult`, `unpremult`, `channel_sum`, `channels` and `color_convert`.
-- `DeepImage`: read deep files, where each pixel holds a list of samples.
+- `DeepImage`: read deep files, where each pixel holds a list of samples, and
+  build one from Rust to write. A channel keeps the type its specification
+  gave it, so an unsigned channel survives a round trip through
+  `set_value_uint` rather than through a float that cannot hold it.
+- `TextureSystem`: filtered texture lookups, with wrap, mip and interpolation
+  modes and explicit derivatives — the mip selection and filtering a renderer
+  would otherwise write itself.
 - `ColorConfig`: report which colour spaces and roles the active
   OpenColorIO configuration defines.
 - `PixelFormat`, describing what a file stores, including formats the
