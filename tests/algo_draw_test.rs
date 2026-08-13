@@ -293,10 +293,25 @@ fn text_is_drawn_or_the_reason_is_reported() {
                 "if render_text succeeded it should have marked the image"
             );
 
-            // And the measurement should agree that there was something to draw.
+            // And the measurement should agree that there was something to
+            // draw. OpenImageIO measures only x and y here and leaves z and
+            // the channels as empty 0..0 ranges, so the region it hands back
+            // is not one a caller could use; the binding completes it.
             let measured = algo::text_size("Ag", 24, "").unwrap();
-            println!("measured {}x{}", measured.width(), measured.height());
+            println!(
+                "measured {}x{}, z {:?}, channels {:?}",
+                measured.width(),
+                measured.height(),
+                measured.z(),
+                measured.channels()
+            );
             assert!(measured.width() > 0 && measured.height() > 0);
+            assert_eq!(measured.z(), 0..1, "text is two-dimensional");
+            assert_eq!(
+                measured.channels(),
+                0..1,
+                "and measured once, not per channel"
+            );
         }
         Err(error) => {
             println!("no font available, reported as: {error}");

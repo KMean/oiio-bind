@@ -814,8 +814,19 @@ imagebufalgo_text_size(const rust::Str text, int fontsize,
 {
     if (!text_renders_something(text) || fontsize < 1)
         return ROI();
-    return OIIO::ImageBufAlgo::text_size(to_string_view(text), fontsize,
-                                         to_string_view(fontname));
+    ROI measured = OIIO::ImageBufAlgo::text_size(to_string_view(text), fontsize,
+                                                 to_string_view(fontname));
+    if (!measured.defined())
+        return measured;
+    // text_size measures x and y and leaves the rest of the region at its
+    // default, so z and the channels come back as empty 0..0 ranges. Text is
+    // two-dimensional and single-channel; render_text applies exactly this
+    // fixup to the same measurement before using it.
+    measured.zbegin  = 0;
+    measured.zend    = 1;
+    measured.chbegin = 0;
+    measured.chend   = 1;
+    return measured;
 }
 
 bool

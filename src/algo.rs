@@ -470,6 +470,10 @@ pub fn render_text(
 /// OpenImageIO reports failure here by returning nothing at all — no message,
 /// on the buffer or anywhere else — so a missing font and unrenderable text
 /// come back as the same error.
+///
+/// It also measures only x and y, leaving the region's depth and channel
+/// ranges empty; `render_text` completes them for its own use and this does the
+/// same, so the region that comes back is one you can actually pass on.
 pub fn text_size(text: &str, size: u32, font: &str) -> Result<Roi> {
     let (size, _) = text_metrics(size, 0)?;
     let measured = sys::imagebufalgo::imagebufalgo_text_size(text, size, font);
