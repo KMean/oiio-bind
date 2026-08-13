@@ -2,6 +2,10 @@
 name = "oiio"
 version = "0.1.0"
 edition = "2021"
+# The oldest toolchain CI actually builds and tests with. Older ones may well
+# work; they are simply not verified, and cargo reporting that plainly beats a
+# compile error somewhere in the middle of a dependency.
+rust-version = "1.95"
 description = "High-level OpenImageIO bindings over oiio-sys"
 documentation = "https://docs.rs/oiio"
 authors = [
