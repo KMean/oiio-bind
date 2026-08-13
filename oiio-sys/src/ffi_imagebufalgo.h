@@ -244,6 +244,30 @@ imagebufalgo_channels(ImageBuf& dst, const ImageBuf& src, int nchannels,
                       const rust::Vec<rust::String>& newchannelnames,
                       bool shuffle_channel_names, int nthreads);
 
+// The deep compositing operations. Every one of them reports through `dst`,
+// and three of the four return a bool that is not a real success signal: only
+// the early guards can make it false. The safe wrappers surface dst's message
+// whenever there is one.
+//
+// flatten reads its per-pixel accumulator past the end of a stack allocation
+// when the destination has more channels than the source, so that is refused.
+bool
+imagebufalgo_flatten(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                     int nthreads);
+
+bool
+imagebufalgo_deepen(ImageBuf& dst, const ImageBuf& src, float zvalue,
+                    const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_deep_merge(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
+                        bool occlusion_cull, const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_deep_holdout(ImageBuf& dst, const ImageBuf& src,
+                          const ImageBuf& holdout, const ROI& roi,
+                          int nthreads);
+
 // Filtering. Several of these need guarding; the reasons are at each one and
 // in the implementation.
 

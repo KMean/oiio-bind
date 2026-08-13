@@ -174,7 +174,14 @@ The `ImageBufAlgo` surface is being completed in slices, each one commit:
   `dilate` and `erode` write a float extreme into pixels with no source under
   them; and `ifft` dereferences a null pixel address behind an assertion a
   release build removes.
-- [ ] Deep compositing: `flatten`, `deepen`, `deep_merge`, `deep_holdout`.
+- [x] Deep compositing: `flatten`, `deepen`, `deep_merge` and `deep_holdout`,
+  and the `ImageBuf` sample access they need — `is_deep`,
+  `deep_sample_count`, `deep_value` and their setters, with channel and sample
+  indices checked here because OpenImageIO answers an out-of-range one with a
+  null pointer and then reads zero or drops the write. `flatten` refuses a
+  destination wider than its source, whose accumulator it would read past the
+  end of, and `deepen` requires an empty destination, since into any other one
+  it silently drops what does not fit.
 - [x] Colour transforms beyond a space change: `color_matrix_transform`,
   `ocio_look`, `ocio_display`, `ocio_file_transform` and
   `ocio_named_transform`. All of them, and `color_convert`, share one

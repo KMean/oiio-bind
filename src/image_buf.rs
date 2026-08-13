@@ -256,6 +256,147 @@ impl ImageBuf {
         self.check("make image buffer writable", succeeded)
     }
 
+    /// Whether this buffer holds a deep image, where each pixel is a list of
+    /// samples rather than one value per channel.
+    ///
+    /// A buffer becomes deep by being built from a deep
+    /// [`ImageSpec`](ImageSpec::as_deep), or by being read from a deep file.
+    pub fn is_deep(&self) -> bool {
+        sys::imagebuf::imagebuf_deep(self.inner())
+    }
+
+    /// How many samples one pixel holds.
+    ///
+    /// Zero for a pixel nothing was written to, and for any pixel of a flat
+    /// image.
+    pub fn deep_sample_count(&self, x: i32, y: i32) -> u32 {
+        sys::imagebuf::imagebuf_deep_samples(self.inner(), x, y, 0).max(0) as u32
+    }
+
+    /// Set how many samples one pixel holds.
+    ///
+    /// Growing a pixel leaves the new samples zeroed; shrinking discards the
+    /// ones past the new end.
+    pub fn set_deep_sample_count(&mut self, x: i32, y: i32, count: u32) -> Result<()> {
+        self.require_deep("set deep sample count")?;
+        let count = i32::try_from(count).map_err(|_| {
+            Error::InvalidImageSpec("deep sample count exceeds i32::MAX".to_owned())
+        })?;
+        sys::imagebuf::imagebuf_set_deep_samples(self.inner_mut(), x, y, 0, count);
+        Ok(())
+    }
+
+    /// One sample's value, as a float.
+    pub fn deep_value(&self, x: i32, y: i32, channel: u32, sample: u32) -> Result<f32> {
+        let (channel, sample) = self.deep_index("read deep value", x, y, channel, sample)?;
+        Ok(sys::imagebuf::imagebuf_deep_value(
+            self.inner(),
+            x,
+            y,
+            0,
+            channel,
+            sample,
+        ))
+    }
+
+    /// One sample's value, as an unsigned integer.
+    ///
+    /// Use this for a channel whose type is unsigned; reading it as a float
+    /// would round values a float cannot hold exactly.
+    pub fn deep_value_uint(&self, x: i32, y: i32, channel: u32, sample: u32) -> Result<u32> {
+        let (channel, sample) = self.deep_index("read deep value", x, y, channel, sample)?;
+        Ok(sys::imagebuf::imagebuf_deep_value_uint(
+            self.inner(),
+            x,
+            y,
+            0,
+            channel,
+            sample,
+        ))
+    }
+
+    /// Set one sample's value from a float.
+    pub fn set_deep_value(
+        &mut self,
+        x: i32,
+        y: i32,
+        channel: u32,
+        sample: u32,
+        value: f32,
+    ) -> Result<()> {
+        let (channel, sample) = self.deep_index("write deep value", x, y, channel, sample)?;
+        sys::imagebuf::imagebuf_set_deep_value(self.inner_mut(), x, y, 0, channel, sample, value);
+        Ok(())
+    }
+
+    /// Set one sample's value from an unsigned integer.
+    pub fn set_deep_value_uint(
+        &mut self,
+        x: i32,
+        y: i32,
+        channel: u32,
+        sample: u32,
+        value: u32,
+    ) -> Result<()> {
+        let (channel, sample) = self.deep_index("write deep value", x, y, channel, sample)?;
+        sys::imagebuf::imagebuf_set_deep_value_uint(
+            self.inner_mut(),
+            x,
+            y,
+            0,
+            channel,
+            sample,
+            value,
+        );
+        Ok(())
+    }
+
+    fn require_deep(&self, operation: &'static str) -> Result<()> {
+        if self.is_deep() {
+            Ok(())
+        } else {
+            Err(Error::operation(
+                operation,
+                "this image is not deep; build it from ImageSpec::as_deep".to_owned(),
+            ))
+        }
+    }
+
+    /// Validate a channel and sample index before it reaches C++.
+    ///
+    /// OpenImageIO answers an out-of-range index with a null pointer and then
+    /// either reads zero or drops the write, both silently, so the check has to
+    /// happen here.
+    fn deep_index(
+        &self,
+        operation: &'static str,
+        x: i32,
+        y: i32,
+        channel: u32,
+        sample: u32,
+    ) -> Result<(i32, i32)> {
+        self.require_deep(operation)?;
+        let channels = self.channel_count().max(0) as u32;
+        if channel >= channels {
+            return Err(Error::operation(
+                operation,
+                format!("channel {channel} is outside the image's {channels}"),
+            ));
+        }
+        let samples = self.deep_sample_count(x, y);
+        if sample >= samples {
+            return Err(Error::operation(
+                operation,
+                format!("sample {sample} is outside the {samples} at {x},{y}"),
+            ));
+        }
+        let to_i32 = |value: u32| {
+            i32::try_from(value)
+                .map_err(|_| Error::InvalidImageSpec("deep index exceeds i32::MAX".to_owned()))
+        };
+        Ok((to_i32(channel)?, to_i32(sample)?))
+    }
+
     fn from_inner(
         inner: cxx::UniquePtr<sys::imagebuf::ImageBuf>,
         operation: &'static str,

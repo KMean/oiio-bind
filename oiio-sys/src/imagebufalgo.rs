@@ -377,6 +377,38 @@ mod ffi {
             error: &mut String,
         ) -> String;
 
+        pub fn imagebufalgo_flatten(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_deepen(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            zvalue: f32,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_deep_merge(
+            dst: Pin<&mut ImageBuf>,
+            a: &ImageBuf,
+            b: &ImageBuf,
+            occlusion_cull: bool,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_deep_holdout(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            holdout: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
         pub fn imagebufalgo_make_kernel(
             dst: Pin<&mut ImageBuf>,
             name: &str,

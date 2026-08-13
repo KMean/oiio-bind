@@ -23,6 +23,15 @@ crates.io yet, so there are no version numbers to hang them on.
   another image or a constant, `abs`, `absdiff`, `copy`, `crop`, `flip`,
   `flop`, `transpose`, `compare`, `resize`, `resample`, `fit`, `over`,
   `premult`, `unpremult`, `channel_sum`, `channels` and `color_convert`.
+- `oiio::algo` deep compositing: `flatten`, `deepen`, `deep_merge` and
+  `deep_holdout`, together with the `ImageBuf` sample access they need —
+  `is_deep`, `deep_sample_count`, `deep_value`, `deep_value_uint` and their
+  setters. Indices are checked in Rust, because OpenImageIO answers an
+  out-of-range channel or sample with a null pointer and then reads zero or
+  drops the write without a word. `flatten` refuses a destination with more
+  channels than its source, whose per-pixel accumulator it would read past;
+  `deepen` requires an empty destination, since it can only install its deep
+  specification into one.
 - `oiio::algo` filtering: `make_kernel` and `convolve`, `laplacian`,
   `unsharp_mask`, `median_filter`, `dilate` and `erode`, `fft` and `ifft`, and
   `polar_to_complex`/`complex_to_polar`. Several refuse arguments OpenImageIO

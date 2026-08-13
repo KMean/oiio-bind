@@ -684,6 +684,54 @@ imagebufalgo_compare(const ImageBuf& a, const ImageBuf& b, float failthresh,
 }
 
 bool
+imagebufalgo_flatten(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                     int nthreads)
+{
+    if (dst.initialized() && dst.nchannels() > src.nchannels()) {
+        // The kernel allocates its accumulator with src.nchannels() floats and
+        // then writes up to roi.chend, which IBAprep clamps only to the larger
+        // of the two buffers. A wider destination reads stack past the end of
+        // that allocation.
+        dst.errorfmt("flatten: the destination has {} channels and the source "
+                     "has {}; OpenImageIO reads past its own accumulator when "
+                     "the destination is wider",
+                     dst.nchannels(), src.nchannels());
+        return false;
+    }
+    return OIIO::ImageBufAlgo::flatten(dst, src, roi, nthreads);
+}
+
+bool
+imagebufalgo_deepen(ImageBuf& dst, const ImageBuf& src, float zvalue,
+                    const ROI& roi, int nthreads)
+{
+    if (dst.initialized()) {
+        // Only an uninitialized destination gets the deep, float specification
+        // deepen builds. Into a pre-allocated one, writes to channels it does
+        // not have are dropped without a word.
+        dst.errorfmt("deepen: the destination must be empty, so it can take "
+                     "the deep specification this builds");
+        return false;
+    }
+    return OIIO::ImageBufAlgo::deepen(dst, src, zvalue, roi, nthreads);
+}
+
+bool
+imagebufalgo_deep_merge(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
+                        bool occlusion_cull, const ROI& roi, int nthreads)
+{
+    return OIIO::ImageBufAlgo::deep_merge(dst, a, b, occlusion_cull, roi,
+                                          nthreads);
+}
+
+bool
+imagebufalgo_deep_holdout(ImageBuf& dst, const ImageBuf& src,
+                          const ImageBuf& holdout, const ROI& roi, int nthreads)
+{
+    return OIIO::ImageBufAlgo::deep_holdout(dst, src, holdout, roi, nthreads);
+}
+
+bool
 imagebufalgo_make_kernel(ImageBuf& dst, const rust::Str name, float width,
                          float height, float depth, bool normalize)
 {

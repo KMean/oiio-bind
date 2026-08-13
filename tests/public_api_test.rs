@@ -141,6 +141,27 @@ fn a_dependent_can_use_the_whole_surface() -> Result<()> {
     )?;
     assert_eq!(trimmed.spec()?.origin(), [0, 0, 0]);
 
+    // Deep, from a flat image and back.
+    let flat_rgba =
+        ImageSpec::new(8, 8, 4, PixelFormat::F32)?.with_channel_names(["R", "G", "B", "A"])?;
+    let mut opaque = ImageBuf::new(&flat_rgba)?;
+    algo::fill(&mut opaque, &[0.3, 0.4, 0.5, 1.0], None)?;
+
+    let mut deep = ImageBuf::empty()?;
+    algo::deepen(&mut deep, &opaque, 1.0, None)?;
+    assert!(deep.is_deep());
+    assert_eq!(deep.deep_sample_count(0, 0), 1);
+    assert!(deep.deep_value(0, 0, 0, 0)? > 0.0);
+    let _: u32 = deep.deep_value_uint(0, 0, 0, 0)?;
+
+    let mut merged = ImageBuf::empty()?;
+    algo::deep_merge(&mut merged, &deep, &deep, true, None)?;
+    let mut held = ImageBuf::empty()?;
+    algo::deep_holdout(&mut held, &deep, &deep, None)?;
+    let mut flattened = ImageBuf::empty()?;
+    algo::flatten(&mut flattened, &deep, None)?;
+    assert!(!flattened.is_deep());
+
     // Filtering.
     let kernel = algo::make_kernel("gaussian", 3.0, 3.0, true)?;
     let mut filtered = ImageBuf::empty()?;

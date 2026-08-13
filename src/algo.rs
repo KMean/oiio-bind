@@ -124,6 +124,114 @@ binary_operation!(
     "divide"
 );
 
+/// Composite each pixel's deep samples down into one flat pixel.
+///
+/// Samples are combined front to back, so the nearest opaque one hides what is
+/// behind it. This is how a deep render becomes an ordinary image.
+///
+/// The source needs an alpha channel — OpenImageIO finds it by name, accepting
+/// `A`, `Alpha`, the per-component `AR`/`AG`/`AB`, and any name ending in
+/// `.A` — and fails without one. A pixel with no samples comes back with its
+/// depth at 1e30 and its colours at zero.
+///
+/// The destination must not have more channels than the source, which is a
+/// restriction of OpenImageIO's rather than of the operation: its per-pixel
+/// accumulator is sized from the source and indexed up to the wider of the two.
+///
+/// A source that is already flat is copied wholesale, region and all, which is
+/// OpenImageIO's documented behaviour.
+///
+/// The compositing assumes each pixel's samples are sorted and do not overlap.
+/// OpenImageIO says so itself, in a comment on the code; a file that does not
+/// satisfy that gives a wrong answer rather than an error.
+pub fn flatten(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
+    let roi = region(roi);
+    let succeeded =
+        sys::imagebufalgo::imagebufalgo_flatten(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    finish(dst, "flatten", succeeded)
+}
+
+/// Turn a flat image into a deep one, with at most one sample per pixel.
+///
+/// A pixel gets a sample when any channel other than depth is non-zero. Its
+/// depth comes from the source's own `Z` channel if it has one — in which case
+/// `z_value` is ignored — and from `z_value` otherwise, with a `Z` channel
+/// appended to hold it.
+///
+/// The destination must be empty, so it can take the deep, floating-point
+/// specification this builds. OpenImageIO would otherwise keep a pre-allocated
+/// destination's shape and silently drop the writes that do not fit.
+pub fn deepen(dst: &mut ImageBuf, src: &ImageBuf, z_value: f32, roi: Option<Roi>) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_deepen(
+        dst.inner_mut(),
+        src.inner(),
+        z_value,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "deepen", succeeded)
+}
+
+/// Merge two deep images, interleaving their samples by depth.
+///
+/// Overlapping samples are split at each other's depths so the result stays
+/// sortable. `occlusion_cull` then drops samples hidden behind an opaque one,
+/// which is usually what you want and is OpenImageIO's default.
+///
+/// All three images must be deep and must have the same channels, in the same
+/// order and by the same names.
+///
+/// This is expensive: the pass that reserves room is quadratic in the number of
+/// samples per pixel and runs on one thread, so a dense volumetric image is
+/// slow in a way nothing in the signature suggests.
+pub fn deep_merge(
+    dst: &mut ImageBuf,
+    a: &ImageBuf,
+    b: &ImageBuf,
+    occlusion_cull: bool,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_deep_merge(
+        dst.inner_mut(),
+        a.inner(),
+        b.inner(),
+        occlusion_cull,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "deep merge", succeeded)
+}
+
+/// Keep only the samples of `src` in front of `holdout`'s opaque frontier.
+///
+/// This is the deep equivalent of masking one render against another: whatever
+/// `holdout` hides is removed from `src`.
+///
+/// Only `holdout`'s depths and alpha matter; its other channels are not read,
+/// and it need not share `src`'s channel layout. If `holdout` has no alpha,
+/// OpenImageIO quietly uses its nearest sample instead of a real opacity
+/// frontier, which is a different operation than the one asked for.
+///
+/// As with [`flatten`], the samples are assumed sorted by depth.
+pub fn deep_holdout(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    holdout: &ImageBuf,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_deep_holdout(
+        dst.inner_mut(),
+        src.inner(),
+        holdout.inner(),
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "deep holdout", succeeded)
+}
+
 /// Build a convolution kernel by name.
 ///
 /// The name is a reconstruction filter: `"gaussian"`, `"box"`, `"triangle"`,
