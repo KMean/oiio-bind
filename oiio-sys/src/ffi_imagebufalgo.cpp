@@ -1,6 +1,8 @@
 #include "ffi_imagebufalgo.h"
 #include "oiio-sys/src/imagebufalgo.rs.h"
 
+#include <OpenImageIO/paramlist.h>
+
 #include <algorithm>
 #include <sstream>
 #include <string>
@@ -291,6 +293,110 @@ imagebufalgo_compare(const ImageBuf& a, const ImageBuf& b, float failthresh,
     summary.failures                  = uint64_t(results.nfail);
     summary.failed                    = results.error;
     return summary;
+}
+
+bool
+imagebufalgo_rotate90(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                      int nthreads)
+{
+    return OIIO::ImageBufAlgo::rotate90(dst, src, roi, nthreads);
+}
+
+bool
+imagebufalgo_rotate180(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                       int nthreads)
+{
+    return OIIO::ImageBufAlgo::rotate180(dst, src, roi, nthreads);
+}
+
+bool
+imagebufalgo_rotate270(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                       int nthreads)
+{
+    return OIIO::ImageBufAlgo::rotate270(dst, src, roi, nthreads);
+}
+
+bool
+imagebufalgo_reorient(ImageBuf& dst, const ImageBuf& src, int nthreads)
+{
+    const bool succeeded = OIIO::ImageBufAlgo::reorient(dst, src, nthreads);
+    if (!succeeded && !dst.has_error()) {
+        // reorient's switch has no default arm, so an Orientation outside 1..8
+        // leaves dst untouched and records nothing. Say what happened rather
+        // than returning an empty error.
+        dst.errorfmt("reorient: the source's Orientation is {}, which is not "
+                     "one of the eight EXIF orientations",
+                     src.orientation());
+    }
+    return succeeded;
+}
+
+bool
+imagebufalgo_rotate(ImageBuf& dst, const ImageBuf& src, float angle,
+                    bool has_center, float center_x, float center_y,
+                    const rust::Str filtername, float filterwidth,
+                    bool recompute_roi, const ROI& roi, int nthreads)
+{
+    if (!has_center)
+        return OIIO::ImageBufAlgo::rotate(dst, src, angle,
+                                          to_string_view(filtername),
+                                          filterwidth, recompute_roi, roi,
+                                          nthreads);
+    return OIIO::ImageBufAlgo::rotate(dst, src, angle, center_x, center_y,
+                                      to_string_view(filtername), filterwidth,
+                                      recompute_roi, roi, nthreads);
+}
+
+bool
+imagebufalgo_warp(ImageBuf& dst, const ImageBuf& src,
+                  rust::Slice<const float> matrix, const rust::Str filtername,
+                  float filterwidth, const rust::Str wrap, bool edgeclamp,
+                  bool recompute_roi, const ROI& roi, int nthreads)
+{
+    if (matrix.size() != 9) {
+        dst.errorfmt("warp: the transform needs nine values, got {}",
+                     matrix.size());
+        return false;
+    }
+    float m[3][3];
+    for (std::size_t row = 0; row < 3; ++row)
+        for (std::size_t column = 0; column < 3; ++column)
+            m[row][column] = matrix[row * 3 + column];
+
+    // Only names OpenImageIO recognises are sent: IBA_check_optional's report
+    // of an unknown one is discarded upstream, so a typo would be silent.
+    OIIO::ParamValueList options;
+    if (filtername.size() != 0)
+        options["filtername"] = std::string(to_string_view(filtername));
+    if (filterwidth > 0.0f)
+        options["filterwidth"] = filterwidth;
+    if (wrap.size() != 0)
+        options["wrap"] = std::string(to_string_view(wrap));
+    options["edgeclamp"]     = int(edgeclamp);
+    options["recompute_roi"] = int(recompute_roi);
+
+    return OIIO::ImageBufAlgo::warp(dst, src, m, options, roi, nthreads);
+}
+
+bool
+imagebufalgo_st_warp(ImageBuf& dst, const ImageBuf& src, const ImageBuf& stbuf,
+                     const rust::Str filtername, float filterwidth, int chan_s,
+                     int chan_t, bool flip_s, bool flip_t, const ROI& roi,
+                     int nthreads)
+{
+    // OpenImageIO checks these against stbuf's channel count but never against
+    // zero, and a negative index reads out of bounds. The safe wrapper takes
+    // them as unsigned, so this is the belt to that braces.
+    if (chan_s < 0 || chan_t < 0) {
+        dst.errorfmt("st_warp: channel indices must not be negative, got "
+                     "{} and {}",
+                     chan_s, chan_t);
+        return false;
+    }
+    return OIIO::ImageBufAlgo::st_warp(dst, src, stbuf,
+                                       to_string_view(filtername), filterwidth,
+                                       chan_s, chan_t, flip_s, flip_t, roi,
+                                       nthreads);
 }
 
 bool

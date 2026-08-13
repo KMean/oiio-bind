@@ -5,7 +5,9 @@
 //! private type leaks into a public signature, or if an error variant a
 //! caller needs to match on becomes unnameable.
 
-use oiio::algo::{self, ChannelSource, CompareSummary, ContrastRemap, FitMode, Operand};
+use oiio::algo::{
+    self, ChannelSource, CompareSummary, ContrastRemap, FitMode, Operand, WarpOptions,
+};
 use oiio::{
     f16, make_texture, make_texture_from_buffer, AttributeValue, ColorConfig, DeepChannel,
     DeepImage, Derivatives, Error, ImageBuf, ImageCache, ImageCacheBuilder, ImageHandle,
@@ -98,6 +100,38 @@ fn a_dependent_can_use_the_whole_surface() -> Result<()> {
     algo::contrast_remap(&mut math, &image, &ContrastRemap::default(), None)?;
     algo::saturate(&mut math, &image, 0.5, 0, None)?;
     algo::paste(&mut math, [0, 0, 0], 0, &image, None)?;
+    // Rotation and warping.
+    let mut turned = ImageBuf::empty()?;
+    algo::rotate_90(&mut turned, &image, None)?;
+    assert_eq!(turned.spec()?.dimensions(), [32, 64, 1]);
+    algo::rotate_180(&mut turned, &image, None)?;
+    algo::rotate_270(&mut turned, &image, None)?;
+    algo::reorient(&mut turned, &image)?;
+    algo::rotate(
+        &mut turned,
+        &image,
+        0.0,
+        Some([0.0, 0.0]),
+        &WarpOptions {
+            recompute_region: true,
+            ..WarpOptions::default()
+        },
+        None,
+    )?;
+    algo::warp(
+        &mut turned,
+        &image,
+        &[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        &WarpOptions {
+            filter: Some("box"),
+            filter_width: Some(1.0),
+            wrap: Some("clamp"),
+            edge_clamp: true,
+            ..WarpOptions::default()
+        },
+        None,
+    )?;
+
     let mut trimmed = ImageBuf::empty()?;
     algo::cut(
         &mut trimmed,

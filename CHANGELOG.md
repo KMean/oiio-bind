@@ -23,6 +23,12 @@ crates.io yet, so there are no version numbers to hang them on.
   another image or a constant, `abs`, `absdiff`, `copy`, `crop`, `flip`,
   `flop`, `transpose`, `compare`, `resize`, `resample`, `fit`, `over`,
   `premult`, `unpremult`, `channel_sum`, `channels` and `color_convert`.
+- `oiio::algo` rotation and warping: `rotate_90`, `rotate_180`, `rotate_270`,
+  `reorient`, `rotate` by an arbitrary angle, `warp` by a 3x3 matrix, and
+  `st_warp` by a map of source coordinates. `rotate` takes radians and turns
+  clockwise; its edges are black and not adjustable, so `warp` is where a wrap
+  mode is chosen. `reorient` now reports the orientation it did not recognise
+  instead of failing silently, which is what OpenImageIO does on its own.
 - `oiio::algo` pixel maths: `mad`, `pow`, `clamp`, `min`, `max`,
   `contrast_remap`, `saturate`, `invert`, `paste` and `cut`. `Operand` is
   OpenImageIO's `Image_or_Const`, so `mad`, `min` and `max` take either an

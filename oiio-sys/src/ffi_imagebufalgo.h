@@ -143,6 +143,56 @@ imagebufalgo_channels(ImageBuf& dst, const ImageBuf& src, int nchannels,
                       const rust::Vec<rust::String>& newchannelnames,
                       bool shuffle_channel_names, int nthreads);
 
+// The right-angle rotations. Their `roi` selects part of the SOURCE, unlike
+// most of the calls above.
+bool
+imagebufalgo_rotate90(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                      int nthreads);
+
+bool
+imagebufalgo_rotate180(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                       int nthreads);
+
+bool
+imagebufalgo_rotate270(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                       int nthreads);
+
+// reorient takes no ROI at all, and returns false without recording anything
+// when the source's Orientation attribute is outside 1..8; the shim supplies
+// the message OpenImageIO omits.
+bool
+imagebufalgo_reorient(ImageBuf& dst, const ImageBuf& src, int nthreads);
+
+// `angle` is in radians and turns clockwise, because y points down. An empty
+// filter name means lanczos3, and a filter width of zero means that filter's
+// own default. The wrap mode is fixed at black inside OpenImageIO; warp is the
+// way to choose another.
+//
+// When `has_center` is false the overload that computes its own centre is
+// called, so the default stays OpenImageIO's rather than being recomputed here
+// from the display window and risking a different answer.
+bool
+imagebufalgo_rotate(ImageBuf& dst, const ImageBuf& src, float angle,
+                    bool has_center, float center_x, float center_y,
+                    const rust::Str filtername, float filterwidth,
+                    bool recompute_roi, const ROI& roi, int nthreads);
+
+// warp takes its options as OpenImageIO keyword arguments, which are assembled
+// here rather than exposed across the bridge. `matrix` is nine floats in row
+// order. An unrecognised option name would be ignored silently, so only the
+// names OpenImageIO reads are ever sent.
+bool
+imagebufalgo_warp(ImageBuf& dst, const ImageBuf& src,
+                  rust::Slice<const float> matrix, const rust::Str filtername,
+                  float filterwidth, const rust::Str wrap, bool edgeclamp,
+                  bool recompute_roi, const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_st_warp(ImageBuf& dst, const ImageBuf& src, const ImageBuf& stbuf,
+                     const rust::Str filtername, float filterwidth,
+                     int chan_s, int chan_t, bool flip_s, bool flip_t,
+                     const ROI& roi, int nthreads);
+
 // OpenImageIO's mad, min and max take Image_or_Const, a parameter-passing
 // class with a private tagged union that cxx cannot construct. Each
 // combination gets its own entry point, as add/sub/mul/div already do.

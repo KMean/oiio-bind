@@ -155,8 +155,12 @@ The `ImageBufAlgo` surface is being completed in slices, each one commit:
   `max` refuses two argument shapes that `min` accepts, because OpenImageIO's
   image-against-image `max` reads and writes out of bounds for them; see
   issue 4 in `contrib/upstream-issues.md`.
-- [ ] Rotation and warping: `rotate`, the right-angle rotations, `reorient`,
-  `warp`, `st_warp`.
+- [x] Rotation and warping: `rotate`, the right-angle rotations, `reorient`,
+  `warp`, `st_warp`. The right-angle rotations take a region of the *source*,
+  as `paste` does; `rotate` takes radians clockwise and is hard-wired to black
+  edges, so `warp` is the way to choose a wrap mode. `reorient` returns false
+  without recording anything when the `Orientation` attribute is not one of the
+  eight EXIF values, so the binding supplies that message itself.
 - [ ] Filtering: `convolve`, `make_kernel`, `unsharp_mask`, `median_filter`,
   `laplacian`, `dilate`, `erode`, and the Fourier pair.
 - [ ] Deep compositing: `flatten`, `deepen`, `deep_merge`, `deep_holdout`.

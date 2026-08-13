@@ -241,6 +241,74 @@ mod ffi {
             nthreads: i32,
         ) -> bool;
 
+        pub fn imagebufalgo_rotate90(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_rotate180(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_rotate270(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_reorient(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_rotate(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            angle: f32,
+            has_center: bool,
+            center_x: f32,
+            center_y: f32,
+            filtername: &str,
+            filterwidth: f32,
+            recompute_roi: bool,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_warp(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            matrix: &[f32],
+            filtername: &str,
+            filterwidth: f32,
+            wrap: &str,
+            edgeclamp: bool,
+            recompute_roi: bool,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_st_warp(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            stbuf: &ImageBuf,
+            filtername: &str,
+            filterwidth: f32,
+            chan_s: i32,
+            chan_t: i32,
+            flip_s: bool,
+            flip_t: bool,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
         pub fn imagebufalgo_mad_iii(
             dst: Pin<&mut ImageBuf>,
             a: &ImageBuf,

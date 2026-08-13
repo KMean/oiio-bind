@@ -124,6 +124,189 @@ binary_operation!(
     "divide"
 );
 
+/// Rotate a quarter turn clockwise.
+///
+/// The region selects part of the **source**, not of the destination — the
+/// three right-angle rotations and [`paste`] are the only operations here that
+/// work that way. Prefer an empty destination: OpenImageIO installs the rotated
+/// display window only when it allocates one itself, and reads a pre-allocated
+/// destination's display window while writing, so one that disagrees with the
+/// source's yields silently offset pixels.
+pub fn rotate_90(dst: &mut ImageBuf, src: &ImageBuf, src_roi: Option<Roi>) -> Result<()> {
+    let roi = region(src_roi);
+    let succeeded =
+        sys::imagebufalgo::imagebufalgo_rotate90(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    finish(dst, "rotate 90", succeeded)
+}
+
+/// Rotate a half turn. See [`rotate_90`] for how the region is read.
+pub fn rotate_180(dst: &mut ImageBuf, src: &ImageBuf, src_roi: Option<Roi>) -> Result<()> {
+    let roi = region(src_roi);
+    let succeeded =
+        sys::imagebufalgo::imagebufalgo_rotate180(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    finish(dst, "rotate 180", succeeded)
+}
+
+/// Rotate three quarters clockwise. See [`rotate_90`] for how the region is
+/// read.
+pub fn rotate_270(dst: &mut ImageBuf, src: &ImageBuf, src_roi: Option<Roi>) -> Result<()> {
+    let roi = region(src_roi);
+    let succeeded =
+        sys::imagebufalgo::imagebufalgo_rotate270(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    finish(dst, "rotate 270", succeeded)
+}
+
+/// Undo the source's `Orientation` attribute, so the image is stored the way
+/// it should be displayed.
+///
+/// This is the operation for a photograph a camera stored sideways with a tag
+/// saying so. It has no region: it always works on the whole image.
+///
+/// An `Orientation` outside the eight EXIF values is an error.
+pub fn reorient(dst: &mut ImageBuf, src: &ImageBuf) -> Result<()> {
+    let succeeded =
+        sys::imagebufalgo::imagebufalgo_reorient(dst.inner_mut(), src.inner(), ALL_THREADS);
+    finish(dst, "reorient", succeeded)
+}
+
+/// How [`warp`], [`rotate`] and [`st_warp`] should resample, and what to do at
+/// the edges.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WarpOptions<'a> {
+    /// The reconstruction filter's name. `None` means `lanczos3`.
+    pub filter: Option<&'a str>,
+    /// The filter's width. `None` means that filter's own.
+    pub filter_width: Option<f32>,
+    /// What lies outside the source: `"black"`, `"clamp"`, `"periodic"` or
+    /// `"mirror"`. `None` leaves OpenImageIO's default.
+    ///
+    /// [`rotate`] rejects anything but `None` here, because OpenImageIO fixes
+    /// it at black and would ignore the request.
+    pub wrap: Option<&'a str>,
+    /// Extend the source's edge pixels outward before filtering, so a filter
+    /// does not pull darkness in from beyond the data window.
+    ///
+    /// [`rotate`] rejects this for the same reason it rejects `wrap`.
+    pub edge_clamp: bool,
+    /// Grow the result to hold the whole transformed image. Without it the
+    /// result keeps the source's dimensions and the corners are lost.
+    pub recompute_region: bool,
+}
+
+/// Rotate by an arbitrary angle.
+///
+/// `angle` is in **radians**, and turns clockwise, because y points down.
+///
+/// `center` defaults to the middle of the display window, which is not the
+/// middle of the data window when the image is cropped or has overscan.
+///
+/// Pixels outside the source read as black. OpenImageIO offers no choice about
+/// that here, so rather than accept a wrap mode and drop it, this refuses
+/// [`WarpOptions::wrap`] and [`WarpOptions::edge_clamp`]; [`warp`] with a
+/// rotation matrix honours both.
+pub fn rotate(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    angle: f32,
+    center: Option<[f32; 2]>,
+    options: &WarpOptions<'_>,
+    roi: Option<Roi>,
+) -> Result<()> {
+    if options.wrap.is_some() || options.edge_clamp {
+        return Err(Error::InvalidImageSpec(
+            "rotate always leaves black outside the source; use warp with a              rotation matrix to choose a wrap mode or edge clamping"
+                .to_owned(),
+        ));
+    }
+    let roi = region(roi);
+    let [center_x, center_y] = center.unwrap_or([0.0, 0.0]);
+    let succeeded = sys::imagebufalgo::imagebufalgo_rotate(
+        dst.inner_mut(),
+        src.inner(),
+        angle,
+        center.is_some(),
+        center_x,
+        center_y,
+        options.filter.unwrap_or_default(),
+        options.filter_width.unwrap_or(0.0),
+        options.recompute_region,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "rotate", succeeded)
+}
+
+/// Apply a 3x3 transform to the image.
+///
+/// `matrix` is nine values in row order, mapping source coordinates to
+/// destination ones. This is the general form of [`rotate`], and unlike it,
+/// every edge behaviour is available.
+pub fn warp(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    matrix: &[f32; 9],
+    options: &WarpOptions<'_>,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_warp(
+        dst.inner_mut(),
+        src.inner(),
+        matrix,
+        options.filter.unwrap_or_default(),
+        options.filter_width.unwrap_or(0.0),
+        options.wrap.unwrap_or_default(),
+        options.edge_clamp,
+        options.recompute_region,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "warp", succeeded)
+}
+
+/// Warp by a map that says, per pixel, where to read from.
+///
+/// `coordinates` holds source positions rather than offsets: the first named
+/// channel gives the x coordinate and the second the y, both normalised to
+/// `0..1` across the source's display window. This is how a lens distortion or
+/// an optical flow is applied.
+///
+/// `channels` names those two channels of `coordinates`, and `flip` mirrors
+/// each of them, for maps authored with the opposite convention.
+///
+/// [`WarpOptions::wrap`], [`WarpOptions::edge_clamp`] and
+/// [`WarpOptions::recompute_region`] have no effect here; the map decides where
+/// every pixel comes from, so there is nothing left for them to say.
+pub fn st_warp(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    coordinates: &ImageBuf,
+    channels: [u32; 2],
+    flip: [bool; 2],
+    options: &WarpOptions<'_>,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let index = |name: &'static str, value: u32| {
+        i32::try_from(value)
+            .map_err(|_| Error::InvalidImageSpec(format!("{name} exceeds i32::MAX")))
+    };
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_st_warp(
+        dst.inner_mut(),
+        src.inner(),
+        coordinates.inner(),
+        options.filter.unwrap_or_default(),
+        options.filter_width.unwrap_or(0.0),
+        index("s channel", channels[0])?,
+        index("t channel", channels[1])?,
+        flip[0],
+        flip[1],
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "st_warp", succeeded)
+}
+
 /// Either an image or one constant value per channel.
 ///
 /// This is OpenImageIO's `Image_or_Const`, which several operations accept in
