@@ -58,21 +58,38 @@ line is established and tested deliberately.
 
 The bounded pixel calls validate the caller's buffer against the image
 specification and then pass explicit strides, rather than using OpenImageIO's
-`image_span` overloads. Two behaviours measured against OpenImageIO 3.1.12
-motivate that:
+`image_span` overloads. Two behaviours motivate that, both measured with
+`contrib/span_repro.cpp` — a standalone C++ program using only public
+OpenImageIO API, so neither depends on this crate — and both reproduced
+identically on **3.1.12.0** and on **3.2.0.2dev** (`main`, August 2026):
 
 - `ImageInput::read_image` taking an `image_span` returns false, without
   recording an error, whenever a tiled image's width or height is not an exact
   multiple of the tile size. No exactly sized destination buffer can satisfy
   it, so tiled images with partial edge tiles could not be read at all.
+  Reproduced at 40x32, 32x24 and 40x24 with 16px tiles; 32x32 and 16x16 read
+  fine, and the pointer overload reads every one of them correctly.
 - `ImageOutput::write_scanlines` taking an `image_span` rejects scanline ranges
-  expressed in image coordinates when the data window origin is non-zero.
+  expressed in image coordinates when the data window origin is non-zero,
+  reporting "Invalid scanline range 5-9" for rows 5..9 of a data window whose
+  origin is y=5. The pointer overload accepts the same range.
 
 The explicit-stride overloads handle both cases correctly, and the safety
 argument is unchanged: `bounded_pixel_layout` still proves that the buffer holds
 exactly one contiguous value per channel, pixel, row, and slice before any
-pointer reaches C++. Both behaviours have regression tests. Neither is reported
-upstream yet; if they are fixed, the span overloads can be restored.
+pointer reaches C++. Both behaviours have regression tests.
+
+To check whether a newer OpenImageIO has fixed them, build the reproduction
+against it and run it; it exits non-zero when the two overloads disagree:
+
+```
+cl /std:c++17 /EHsc /utf-8 /MD contrib/span_repro.cpp \
+   /I <oiio>/include /I <deps>/include \
+   /link /LIBPATH:<oiio>/lib OpenImageIO.lib OpenImageIO_Util.lib
+```
+
+If it reports no mismatches, the span overloads can be restored and the
+minimum supported version raised to whichever release fixed them.
 
 ## Later subsystems
 
