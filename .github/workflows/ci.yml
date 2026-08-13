@@ -130,10 +130,17 @@ jobs:
       OIIO_VCPKG_TRIPLET: x64-windows
       VCPKGRS_DYNAMIC: "1"
       VCPKG_DISABLE_METRICS: "1"
-      # Relocate vcpkg's binary cache into the workspace so it can be cached
-      # between runs. Without it every run rebuilds OpenImageIO and all of its
-      # dependencies from source, which is the whole cost of this job.
+      # Put vcpkg's built packages somewhere that can be cached between runs;
+      # without this every run rebuilds OpenImageIO and its dependencies from
+      # source, which is the whole cost of this job.
+      #
+      # The binary source is named explicitly rather than left to
+      # VCPKG_DEFAULT_BINARY_CACHE: run-vcpkg sets VCPKG_BINARY_SOURCES for its
+      # own caching, and once that is set the default cache location is
+      # ignored. Setting it here won that argument; relying on the default
+      # produced a 195-byte cache, which is an empty directory.
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-binary-cache
+      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/vcpkg-binary-cache,readwrite
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
