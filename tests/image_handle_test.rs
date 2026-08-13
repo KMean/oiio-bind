@@ -1,0 +1,264 @@
+//! Handles, per-thread state, and tile guards.
+
+mod common;
+
+use std::sync::Arc;
+
+use common::{f16_ramp, f32_ramp, write_image, ScratchDir};
+use oiio::{f16, Error, ImageCache, ImageSpec, PixelFormat};
+
+/// 32x32, 3 channels, float, 16x16 tiles.
+fn tiled_fixture(scratch: &ScratchDir, name: &str) -> (std::path::PathBuf, ImageSpec, Vec<f32>) {
+    let path = scratch.file(name);
+    let spec = ImageSpec::new(32, 32, 3, PixelFormat::F32)
+        .unwrap()
+        .with_tile_size([16, 16, 1])
+        .unwrap();
+    let pixels = f32_ramp(spec.element_count().unwrap());
+    write_image(&path, &spec, &pixels).unwrap();
+    (path, spec, pixels)
+}
+
+#[test]
+fn a_handle_reads_the_same_pixels_as_the_file_name() {
+    let scratch = ScratchDir::new("handle");
+    let (path, spec, whole) = tiled_fixture(&scratch, "tiled.exr");
+    let cache = ImageCache::new().unwrap();
+
+    let roi = spec.data_window().unwrap();
+    let mut by_name = vec![0.0_f32; roi.element_count().unwrap()];
+    cache.get_pixels_into(&path, roi, &mut by_name).unwrap();
+
+    let handle = cache.handle(&path).unwrap();
+    let mut by_handle = vec![0.0_f32; roi.element_count().unwrap()];
+    handle.get_pixels_into(roi, &mut by_handle).unwrap();
+
+    assert_eq!(by_name, whole);
+    assert_eq!(by_handle, by_name);
+    assert!(handle.is_good());
+    assert!(handle.filename().contains("tiled.exr"));
+}
+
+#[test]
+fn a_handle_reads_regions_and_channel_subsets() {
+    let scratch = ScratchDir::new("handleregion");
+    let (path, spec, _) = tiled_fixture(&scratch, "tiled.exr");
+    let cache = ImageCache::new().unwrap();
+    let handle = cache.handle(&path).unwrap();
+
+    let roi = spec
+        .data_window()
+        .unwrap()
+        .with_x(0..16)
+        .unwrap()
+        .with_y(0..16)
+        .unwrap()
+        .with_channels(1..3)
+        .unwrap();
+
+    let mut by_handle = vec![0.0_f32; roi.element_count().unwrap()];
+    handle.get_pixels_into(roi, &mut by_handle).unwrap();
+
+    let mut by_name = vec![0.0_f32; roi.element_count().unwrap()];
+    cache.get_pixels_into(&path, roi, &mut by_name).unwrap();
+
+    assert_eq!(by_handle.len(), 16 * 16 * 2);
+    assert_eq!(by_handle, by_name);
+}
+
+#[test]
+fn a_handle_rejects_a_buffer_that_does_not_match_the_region() {
+    let scratch = ScratchDir::new("handlebuffer");
+    let (path, spec, _) = tiled_fixture(&scratch, "tiled.exr");
+    let cache = ImageCache::new().unwrap();
+    let handle = cache.handle(&path).unwrap();
+
+    let roi = spec.data_window().unwrap();
+    let mut short = vec![0.0_f32; roi.element_count().unwrap() - 1];
+    assert!(matches!(
+        handle.get_pixels_into(roi, &mut short),
+        Err(Error::BufferLength { .. })
+    ));
+}
+
+#[test]
+fn resolving_a_missing_file_fails() {
+    let scratch = ScratchDir::new("handlemissing");
+    let cache = ImageCache::new().unwrap();
+    let missing = scratch.file("does-not-exist.exr");
+    assert!(matches!(
+        cache.handle(&missing),
+        Err(Error::OpenImage { .. })
+    ));
+}
+
+#[test]
+fn per_thread_state_accelerates_reads_without_changing_them() {
+    let scratch = ScratchDir::new("perthread");
+    let (path, spec, whole) = tiled_fixture(&scratch, "tiled.exr");
+    let cache = ImageCache::new().unwrap();
+    let handle = cache.handle(&path).unwrap();
+    let thread_state = cache.thread_state().unwrap();
+
+    let roi = spec.data_window().unwrap();
+    let mut pixels = vec![0.0_f32; roi.element_count().unwrap()];
+    handle
+        .get_pixels_into_with(&thread_state, 0, 0, roi, &mut pixels)
+        .unwrap();
+
+    assert_eq!(pixels, whole);
+}
+
+#[test]
+fn a_handle_can_be_shared_across_threads() {
+    let scratch = ScratchDir::new("handlethreads");
+    let (path, spec, whole) = tiled_fixture(&scratch, "tiled.exr");
+    let cache = Arc::new(ImageCache::new().unwrap());
+
+    // The handle borrows the cache, so build it inside the scope that shares
+    // it. Each thread makes its own per-thread state, which is what
+    // OpenImageIO requires.
+    let handle = cache.handle(&path).unwrap();
+    let handle = &handle;
+    let roi = spec.data_window().unwrap();
+    let expected = &whole;
+
+    std::thread::scope(|scope| {
+        for _ in 0..4 {
+            let cache = Arc::clone(&cache);
+            scope.spawn(move || {
+                let thread_state = cache.thread_state().unwrap();
+                let mut pixels = vec![0.0_f32; roi.element_count().unwrap()];
+                handle
+                    .get_pixels_into_with(&thread_state, 0, 0, roi, &mut pixels)
+                    .unwrap();
+                assert_eq!(&pixels, expected);
+            });
+        }
+    });
+}
+
+#[test]
+fn a_tile_exposes_its_own_region_and_pixels() {
+    let scratch = ScratchDir::new("tile");
+    let (path, _, whole) = tiled_fixture(&scratch, "tiled.exr");
+    let cache = ImageCache::new().unwrap();
+
+    // Any coordinate inside the tile resolves to that tile.
+    let tile = cache.tile(&path, 0, 0, [20, 4, 0], 0..3).unwrap();
+    let roi = tile.roi().unwrap();
+    assert_eq!(roi.x(), 16..32);
+    assert_eq!(roi.y(), 0..16);
+    assert_eq!(tile.format(), PixelFormat::F32);
+
+    let pixels = tile.pixels::<f32>().unwrap();
+    assert_eq!(pixels.len(), roi.element_count().unwrap());
+
+    // Spot-check against the whole image, using the tile's own origin.
+    let width = 32usize;
+    let channels = 3usize;
+    let first = (roi.y().start as usize * width + roi.x().start as usize) * channels;
+    assert_eq!(&pixels[0..channels], &whole[first..first + channels]);
+}
+
+#[test]
+fn a_tile_refuses_a_pixel_type_it_does_not_hold() {
+    let scratch = ScratchDir::new("tileformat");
+    let (path, _, _) = tiled_fixture(&scratch, "tiled.exr");
+    let cache = ImageCache::new().unwrap();
+
+    let tile = cache.tile(&path, 0, 0, [0, 0, 0], 0..3).unwrap();
+    assert_eq!(tile.format(), PixelFormat::F32);
+
+    // The tile holds float, so asking for half must fail rather than
+    // reinterpret the bytes.
+    let error = tile.pixels::<f16>().unwrap_err();
+    assert!(matches!(
+        error,
+        Error::TilePixelFormat {
+            requested: PixelFormat::F16,
+            actual: PixelFormat::F32
+        }
+    ));
+    assert!(tile.pixels::<u8>().is_err());
+    assert!(tile.pixels::<f32>().is_ok());
+}
+
+#[test]
+fn a_half_tile_reports_half() {
+    let scratch = ScratchDir::new("tilehalf");
+    let path = scratch.file("half.exr");
+    let spec = ImageSpec::new(16, 16, 3, PixelFormat::F16)
+        .unwrap()
+        .with_tile_size([16, 16, 1])
+        .unwrap();
+    let written = f16_ramp(spec.element_count().unwrap());
+    write_image(&path, &spec, &written).unwrap();
+
+    let cache = ImageCache::new().unwrap();
+    let tile = cache.tile(&path, 0, 0, [0, 0, 0], 0..3).unwrap();
+    assert_eq!(tile.format(), PixelFormat::F16);
+    assert_eq!(tile.pixels::<f16>().unwrap(), &written[..]);
+    assert!(tile.pixels::<f32>().is_err());
+}
+
+#[test]
+fn releasing_many_tiles_does_not_exhaust_the_cache() {
+    let scratch = ScratchDir::new("tilerelease");
+    let (path, _, _) = tiled_fixture(&scratch, "tiled.exr");
+    // A cache small enough that leaked tiles would be noticed.
+    let cache = ImageCache::builder().max_memory_mb(1.0).build().unwrap();
+
+    // Every guard is dropped at the end of each iteration.
+    for _ in 0..200 {
+        for y in [0, 16] {
+            for x in [0, 16] {
+                let tile = cache.tile(&path, 0, 0, [x, y, 0], 0..3).unwrap();
+                assert_eq!(tile.pixels::<f32>().unwrap().len(), 16 * 16 * 3);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_tile_outside_the_image_is_reported() {
+    let scratch = ScratchDir::new("tileoutside");
+    let (path, _, _) = tiled_fixture(&scratch, "tiled.exr");
+    let cache = ImageCache::new().unwrap();
+
+    // OpenImageIO would return a tile covering 992..1008 on both axes here.
+    assert!(matches!(
+        cache.tile(&path, 0, 0, [1_000, 1_000, 0], 0..3),
+        Err(Error::InvalidRegion { axis: "x", .. })
+    ));
+    assert!(matches!(
+        cache.tile(&path, 0, 0, [0, 40, 0], 0..3),
+        Err(Error::InvalidRegion { axis: "y", .. })
+    ));
+    assert!(matches!(
+        cache.tile(&path, 0, 0, [-1, 0, 0], 0..3),
+        Err(Error::InvalidRegion { axis: "x", .. })
+    ));
+    // Empty and over-wide channel ranges.
+    assert!(cache.tile(&path, 0, 0, [0, 0, 0], 2..2).is_err());
+    assert!(matches!(
+        cache.tile(&path, 0, 0, [0, 0, 0], 0..5),
+        Err(Error::InvalidRoi(_))
+    ));
+    // The last valid coordinate still works.
+    assert!(cache.tile(&path, 0, 0, [31, 31, 0], 0..3).is_ok());
+}
+
+/// Per-thread state must not be sendable between threads, and handles must be.
+/// These are compile-time facts, asserted here so a future change that breaks
+/// them fails the build.
+#[test]
+fn thread_safety_is_modelled_as_openimageio_documents_it() {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<ImageCache>();
+    assert_send_sync::<oiio::ImageHandle<'static>>();
+
+    // Perthread and TileGuard are deliberately not Send or Sync; there is no
+    // stable way to assert a negative bound, so this is documented by the
+    // types holding raw pointers plus a PhantomData marker.
+}

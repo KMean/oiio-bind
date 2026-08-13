@@ -115,6 +115,18 @@ impl Roi {
         })
     }
 
+    pub(crate) fn from_sys(roi: &sys::imageio::ROI) -> Result<Self> {
+        Self::new(
+            roi.xbegin..roi.xend,
+            roi.ybegin..roi.yend,
+            roi.zbegin..roi.zend,
+            u32::try_from(roi.chbegin)
+                .map_err(|_| Error::InvalidRoi("negative channel start".to_owned()))?
+                ..u32::try_from(roi.chend)
+                    .map_err(|_| Error::InvalidRoi("negative channel end".to_owned()))?,
+        )
+    }
+
     pub(crate) fn from_spec(spec: &ImageSpec) -> Result<Self> {
         let x_end = checked_end("x", spec.x(), spec.width())?;
         let y_end = checked_end("y", spec.y(), spec.height())?;

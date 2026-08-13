@@ -50,7 +50,7 @@ mod roi;
 pub use attribute::AttributeValue;
 pub use error::{Error, Result};
 pub use half::f16;
-pub use image_cache::{ImageCache, ImageCacheBuilder};
+pub use image_cache::{ImageCache, ImageCacheBuilder, ImageHandle, Perthread, TileGuard};
 pub use image_spec::ImageSpec;
 pub use imageio::{ImageInput, ImageOutput};
 pub use pixel::Pixel;

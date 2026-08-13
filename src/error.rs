@@ -42,6 +42,12 @@ pub enum Error {
 
     #[error("invalid ImageCache setting {name}: {value}")]
     InvalidCacheSetting { name: &'static str, value: String },
+
+    #[error("tile holds {actual} pixels, not {requested}; cached tiles are never converted")]
+    TilePixelFormat {
+        requested: crate::PixelFormat,
+        actual: crate::PixelFormat,
+    },
 }
 
 impl Error {

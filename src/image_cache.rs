@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use crate::{
-    imageio::validate_buffer_len, path_to_utf8, pixel, sys, Error, ImageSpec, Pixel, Result, Roi,
+    imageio::validate_buffer_len, path_to_utf8, pixel, sys, Error, ImageSpec, Pixel, PixelFormat,
+    Result, Roi,
 };
 
 /// A thread-safe OpenImageIO image cache.
@@ -118,6 +119,148 @@ impl ImageCache {
         }
     }
 
+    /// Resolve a file name to a handle for repeated reads.
+    ///
+    /// The handle borrows this cache. Reads through it skip the file-name
+    /// lookup, which is worth doing when one image is read many times.
+    pub fn handle(&self, image_path: &Path) -> Result<ImageHandle<'_>> {
+        let filename = path_to_utf8(image_path)?;
+        let inner = self.with_cache(|cache| {
+            // SAFETY: a null per-thread pointer asks the cache to use its own
+            // record, and a null options pointer requests the defaults.
+            unsafe {
+                sys::imagecache::imagecache_get_image_handle(
+                    cache,
+                    filename,
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                )
+            }
+        });
+        if inner.is_null() {
+            return Err(Error::OpenImage {
+                path: image_path.to_path_buf(),
+                message: "the image cache could not resolve the file".to_owned(),
+            });
+        }
+
+        let handle = ImageHandle { cache: self, inner };
+        if !handle.is_good() {
+            return Err(Error::OpenImage {
+                path: image_path.to_path_buf(),
+                message: "the image cache could not open or read the file".to_owned(),
+            });
+        }
+        Ok(handle)
+    }
+
+    /// Create per-thread state for this cache.
+    ///
+    /// The returned value is neither [`Send`] nor [`Sync`] and is destroyed
+    /// when dropped. Using it is optional; see [`Perthread`].
+    pub fn thread_state(&self) -> Result<Perthread<'_>> {
+        let inner = self.with_cache(|cache| {
+            // SAFETY: the record is owned by the caller from here on, and
+            // `Perthread`'s Drop destroys it exactly once.
+            unsafe { sys::imagecache::imagecache_create_thread_info(cache) }
+        });
+        if inner.is_null() {
+            return Err(Error::operation(
+                "create per-thread cache state",
+                "OpenImageIO returned no per-thread record".to_owned(),
+            ));
+        }
+        Ok(Perthread {
+            cache: self,
+            inner,
+            _not_thread_safe: std::marker::PhantomData,
+        })
+    }
+
+    /// Borrow one tile, held until the returned guard is dropped.
+    ///
+    /// `origin` is any pixel coordinate inside the wanted tile; OpenImageIO
+    /// resolves it to the tile that contains it. The tile holds the file's
+    /// native pixel format, and an edge tile may extend past the data window.
+    ///
+    /// The coordinate must lie inside the data window. OpenImageIO itself
+    /// returns a tile for coordinates far outside the image — for a 32x32
+    /// image, asking at (1000, 1000) yields a tile covering 992..1008 on both
+    /// axes — so this rejects the request rather than hand back a region the
+    /// image does not have.
+    pub fn tile(
+        &self,
+        image_path: &Path,
+        subimage: u32,
+        mip_level: u32,
+        origin: [i32; 3],
+        channels: std::ops::Range<u32>,
+    ) -> Result<TileGuard<'_>> {
+        let filename = path_to_utf8(image_path)?;
+        let subimage_index = level_index(subimage)?;
+        let mip_level_index = level_index(mip_level)?;
+        if channels.start >= channels.end {
+            return Err(Error::InvalidRoi(format!(
+                "channel range must be non-empty and increasing, got {}..{}",
+                channels.start, channels.end
+            )));
+        }
+        let channel_begin = level_index(channels.start)?;
+        let channel_end = level_index(channels.end)?;
+
+        let spec = self.image_spec_at(image_path, subimage, mip_level)?;
+        if channels.end > spec.channel_count() {
+            return Err(Error::InvalidRoi(format!(
+                "channel range {}..{} extends outside the image's {} channels",
+                channels.start,
+                channels.end,
+                spec.channel_count()
+            )));
+        }
+        let window_origin = spec.origin();
+        let dimensions = spec.dimensions();
+        for (axis, coordinate, start, size) in [
+            ("x", origin[0], window_origin[0], dimensions[0]),
+            ("y", origin[1], window_origin[1], dimensions[1]),
+            ("z", origin[2], window_origin[2], dimensions[2]),
+        ] {
+            let end = i64::from(start) + i64::from(size);
+            if i64::from(coordinate) < i64::from(start) || i64::from(coordinate) >= end {
+                return Err(Error::InvalidRegion {
+                    axis,
+                    message: format!(
+                        "tile coordinate {coordinate} lies outside the data window {start}..{end}"
+                    ),
+                });
+            }
+        }
+
+        let inner = self.with_cache(|cache| {
+            // SAFETY: every argument is a plain value; the returned tile is
+            // owned by the cache until released, which TileGuard does on drop.
+            unsafe {
+                sys::imagecache::imagecache_get_tile(
+                    cache,
+                    filename,
+                    subimage_index,
+                    mip_level_index,
+                    origin[0],
+                    origin[1],
+                    origin[2],
+                    channel_begin,
+                    channel_end,
+                )
+            }
+        });
+        if inner.is_null() {
+            return Err(Error::operation(
+                "borrow cached tile",
+                "OpenImageIO returned no tile for that coordinate".to_owned(),
+            ));
+        }
+        Ok(TileGuard { cache: self, inner })
+    }
+
     /// Invalidate one cached image. The next access will re-read it.
     pub fn invalidate(&self, image_path: &Path, force: bool) -> Result<()> {
         let filename = path_to_utf8(image_path)?;
@@ -164,6 +307,242 @@ impl ImageCache {
         // are documented as thread-safe. The pinned reference is confined to
         // this call, which is the special case allowed by CXX.
         operation(unsafe { cache.pin_mut_unchecked() })
+    }
+}
+
+/// Per-thread cache state, which speeds up repeated lookups.
+///
+/// OpenImageIO states that one of these "should NEVER be shared between
+/// running threads", so this type is deliberately neither [`Send`] nor
+/// [`Sync`]: it cannot leave the thread that created it. Passing it is always
+/// optional — the cache keeps its own per-thread record otherwise.
+pub struct Perthread<'cache> {
+    cache: &'cache ImageCache,
+    inner: *mut sys::imagecache::Perthread,
+    /// Belt and braces: the raw pointer already prevents `Send` and `Sync`.
+    _not_thread_safe: std::marker::PhantomData<*const ()>,
+}
+
+impl Drop for Perthread<'_> {
+    fn drop(&mut self) {
+        let inner = self.inner;
+        self.cache.with_cache(|cache| {
+            // SAFETY: this pointer came from create_thread_info on this same
+            // cache and is destroyed exactly once, here.
+            unsafe { sys::imagecache::imagecache_destroy_thread_info(cache, inner) };
+        });
+    }
+}
+
+impl std::fmt::Debug for Perthread<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("Perthread").finish_non_exhaustive()
+    }
+}
+
+/// A file name already resolved against an [`ImageCache`].
+///
+/// Reading through a handle skips the file-name lookup that every by-name call
+/// performs, which matters when a single image is read many times.
+///
+/// A handle borrows the cache, so it cannot outlive it.
+pub struct ImageHandle<'cache> {
+    cache: &'cache ImageCache,
+    inner: *mut sys::imagecache::ImageHandle,
+}
+
+// SAFETY: a handle is a resolved reference to file state the cache owns, and
+// every operation on it goes through the cache, whose operations OpenImageIO
+// documents as thread-safe. OpenImageIO's own API pairs a shared handle with
+// per-thread state — see `Perthread`, which is deliberately not shareable.
+unsafe impl Send for ImageHandle<'_> {}
+unsafe impl Sync for ImageHandle<'_> {}
+
+impl<'cache> ImageHandle<'cache> {
+    /// The file name this handle resolved to.
+    pub fn filename(&self) -> String {
+        let inner = self.inner;
+        self.cache.with_cache(|cache| {
+            // SAFETY: the handle is live for as long as the borrow of `cache`.
+            unsafe { sys::imagecache::imagecache_filename_from_handle(cache, inner) }
+        })
+    }
+
+    /// Whether the cache could open and read the file.
+    pub fn is_good(&self) -> bool {
+        let inner = self.inner;
+        self.cache.with_cache(|cache| {
+            // SAFETY: as in `filename`.
+            unsafe { sys::imagecache::imagecache_good(cache, inner) }
+        })
+    }
+
+    /// Read a pixel region from the base image.
+    pub fn get_pixels_into<T: Pixel>(&self, roi: Roi, pixels: &mut [T]) -> Result<()> {
+        self.get_pixels_into_at(0, 0, roi, pixels)
+    }
+
+    /// Read a pixel region from a subimage and mip level.
+    pub fn get_pixels_into_at<T: Pixel>(
+        &self,
+        subimage: u32,
+        mip_level: u32,
+        roi: Roi,
+        pixels: &mut [T],
+    ) -> Result<()> {
+        self.read(None, subimage, mip_level, roi, pixels)
+    }
+
+    /// Read a pixel region using caller-managed per-thread state.
+    pub fn get_pixels_into_with<T: Pixel>(
+        &self,
+        thread_state: &Perthread<'cache>,
+        subimage: u32,
+        mip_level: u32,
+        roi: Roi,
+        pixels: &mut [T],
+    ) -> Result<()> {
+        self.read(Some(thread_state), subimage, mip_level, roi, pixels)
+    }
+
+    fn read<T: Pixel>(
+        &self,
+        thread_state: Option<&Perthread<'cache>>,
+        subimage: u32,
+        mip_level: u32,
+        roi: Roi,
+        pixels: &mut [T],
+    ) -> Result<()> {
+        let subimage_index = level_index(subimage)?;
+        let mip_level_index = level_index(mip_level)?;
+        validate_buffer_len(roi.element_count()?, pixels.len())?;
+
+        let inner = self.inner;
+        let thread_info = thread_state.map_or(std::ptr::null_mut(), |state| state.inner);
+        let sys_roi = roi.to_sys();
+        let mut error = String::new();
+        let succeeded = self.cache.with_cache(|cache| {
+            // SAFETY: the handle and per-thread record both belong to this
+            // cache and outlive the call; Pixel is sealed to initialized
+            // scalar layouts whose byte extent the shim re-checks.
+            unsafe {
+                sys::imagecache::imagecache_get_pixels_handle_span_with_error(
+                    cache,
+                    inner,
+                    thread_info,
+                    subimage_index,
+                    mip_level_index,
+                    &sys_roi,
+                    pixel::type_desc::<T>(),
+                    pixel::as_bytes_mut(pixels),
+                    &mut error,
+                )
+            }
+        });
+        if succeeded {
+            Ok(())
+        } else {
+            Err(Error::operation("read cached pixels", error))
+        }
+    }
+}
+
+impl std::fmt::Debug for ImageHandle<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ImageHandle")
+            .field("filename", &self.filename())
+            .field("good", &self.is_good())
+            .finish()
+    }
+}
+
+/// A tile borrowed from an [`ImageCache`], released when dropped.
+///
+/// Holding a tile pins it in the cache. Dropping the guard is what releases
+/// it, so a leaked guard is a leaked tile.
+pub struct TileGuard<'cache> {
+    cache: &'cache ImageCache,
+    inner: *mut sys::imagecache::Tile,
+}
+
+impl Drop for TileGuard<'_> {
+    fn drop(&mut self) {
+        let inner = self.inner;
+        self.cache.with_cache(|cache| {
+            // SAFETY: this tile came from this cache and is released exactly
+            // once, here.
+            unsafe { sys::imagecache::imagecache_release_tile(cache, inner) };
+        });
+    }
+}
+
+impl TileGuard<'_> {
+    /// The region this tile covers, which may extend past the data window.
+    pub fn roi(&self) -> Result<Roi> {
+        let inner = self.inner;
+        // SAFETY: the tile is live until this guard is dropped.
+        let roi = self
+            .cache
+            .with_cache(|cache| unsafe { sys::imagecache::imagecache_tile_roi(cache, inner) });
+        Roi::from_sys(&roi)
+    }
+
+    /// The pixel format the tile holds, which is the file's native format.
+    pub fn format(&self) -> PixelFormat {
+        let inner = self.inner;
+        // SAFETY: as in `roi`.
+        let format = self
+            .cache
+            .with_cache(|cache| unsafe { sys::imagecache::imagecache_tile_format(cache, inner) });
+        PixelFormat::from_sys(&format)
+    }
+
+    /// Borrow the tile's pixels.
+    ///
+    /// The tile is stored in the file's native format, so `T` must match
+    /// [`TileGuard::format`]; no conversion happens here. The slice covers
+    /// [`TileGuard::roi`] and borrows the guard, so it cannot outlive the
+    /// tile.
+    pub fn pixels<T: Pixel>(&self) -> Result<&[T]> {
+        let roi = self.roi()?;
+        let expected = roi.element_count()?;
+
+        let inner = self.inner;
+        let mut format = pixel::type_desc::<T>();
+        let data = self.cache.with_cache(|cache| {
+            // SAFETY: the tile is live, and `format` is an out parameter that
+            // reports the format actually stored.
+            unsafe { sys::imagecache::imagecache_tile_pixels(cache, inner, &mut format) }
+        });
+
+        let actual = PixelFormat::from_sys(&format);
+        if actual != T::FORMAT {
+            return Err(Error::TilePixelFormat {
+                requested: T::FORMAT,
+                actual,
+            });
+        }
+        if data.is_null() {
+            return Err(Error::operation(
+                "borrow tile pixels",
+                "OpenImageIO returned no pixel data for the tile".to_owned(),
+            ));
+        }
+
+        // SAFETY: the format was just confirmed to be T's, the element count
+        // comes from the tile's own region, and the slice borrows `self`, so
+        // it cannot outlive the tile it points into.
+        Ok(unsafe { std::slice::from_raw_parts(data.cast::<T>(), expected) })
+    }
+}
+
+impl std::fmt::Debug for TileGuard<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TileGuard")
+            .field("format", &self.format())
+            .finish_non_exhaustive()
     }
 }
 

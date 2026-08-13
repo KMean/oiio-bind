@@ -370,6 +370,39 @@ imagecache_get_pixels_span_with_error(
 }
 
 bool
+imagecache_get_pixels_handle_span_with_error(
+    ImageCache& imagecache, ImageHandle* file, Perthread* thread_info,
+    int subimage, int miplevel, const ROI& roi, TypeDesc format,
+    rust::Slice<uint8_t> result, rust::String& error)
+{
+    error = rust::String();
+    if (file == nullptr) {
+        error = rust::String("null image handle");
+        return false;
+    }
+
+    const int64_t width    = static_cast<int64_t>(roi.xend) - roi.xbegin;
+    const int64_t height   = static_cast<int64_t>(roi.yend) - roi.ybegin;
+    const int64_t depth    = static_cast<int64_t>(roi.zend) - roi.zbegin;
+    const int64_t channels = static_cast<int64_t>(roi.chend) - roi.chbegin;
+
+    detail::PixelLayout layout;
+    if (!detail::bounded_pixel_layout(channels, width, height, depth, format,
+                                      result.size(), layout)) {
+        error = rust::String(
+            "invalid pixel layout or destination buffer byte length");
+        return false;
+    }
+
+    const auto output = detail::writable_byte_span(result, layout);
+    if (imagecache.get_pixels(file, thread_info, subimage, miplevel, roi,
+                              format, output))
+        return true;
+    error = take_cache_error(imagecache);
+    return false;
+}
+
+bool
 imagecache_get_pixels_with_handle(ImageCache& imagecache, ImageHandle* file,
                                   Perthread* thread_info, int subimage,
                                   int miplevel, int xbegin, int xend,

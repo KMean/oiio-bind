@@ -35,10 +35,14 @@ line is established and tested deliberately.
 
 - [x] Add a private-cache builder with typed configuration attributes.
 - [x] Implement `image_spec`, `get_pixels_into`, invalidation, errors, and stats.
-- Add cache-owning `ImageHandle` and `TileGuard` types; releasing a tile must be
-  automatic on drop.
-- Model per-thread cache state as neither `Send` nor `Sync`.
-- Test scanline and tiled EXR/PNG access, cache lifetime, and tile release.
+- [x] Add cache-owning `ImageHandle` and `TileGuard` types; releasing a tile is
+  automatic on drop. A handle borrows the cache so it cannot outlive it, and a
+  tile's pixels borrow the guard so they cannot outlive the tile.
+- [x] Model per-thread cache state as neither `Send` nor `Sync`, which is what
+  OpenImageIO asks for: "given one of these should NEVER be shared between
+  running threads". `ImageHandle` is `Send` and `Sync`, matching OpenImageIO's
+  own pairing of a shared handle with per-thread state.
+- [x] Test scanline and tiled EXR/PNG access, cache lifetime, and tile release.
 
 ## 3. Image I/O
 

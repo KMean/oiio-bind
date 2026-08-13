@@ -169,6 +169,14 @@ imagecache_get_pixels_span_with_error(
     const ROI& roi, TypeDesc format, rust::Slice<uint8_t> result,
     rust::String& error);
 
+// The same bounded read, addressed by a resolved handle instead of a file
+// name, so repeated reads skip the name lookup.
+bool
+imagecache_get_pixels_handle_span_with_error(
+    ImageCache& imagecache, ImageHandle* file, Perthread* thread_info,
+    int subimage, int miplevel, const ROI& roi, TypeDesc format,
+    rust::Slice<uint8_t> result, rust::String& error);
+
 bool
 imagecache_get_pixels_with_handle(ImageCache& imagecache, ImageHandle* file,
                                   Perthread* thread_info, int subimage,

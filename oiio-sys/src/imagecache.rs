@@ -294,6 +294,20 @@ mod ffi {
             error: &mut String,
         ) -> bool;
 
+        /// Safety: `file` must be a live handle from this cache, and
+        /// `thread_info` null or a live per-thread record.
+        pub unsafe fn imagecache_get_pixels_handle_span_with_error(
+            imagecache: Pin<&mut ImageCache>,
+            file: *mut ImageHandle,
+            thread_info: *mut Perthread,
+            subimage: i32,
+            miplevel: i32,
+            roi: &ROI,
+            format: TypeDesc,
+            result: &mut [u8],
+            error: &mut String,
+        ) -> bool;
+
         pub unsafe fn imagecache_get_pixels_with_handle(
             imagecache: Pin<&mut ImageCache>,
             file: *mut ImageHandle,
