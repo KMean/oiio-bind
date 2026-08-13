@@ -10,8 +10,11 @@ use crate::sys::{self, typedesc::BaseType};
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum AttributeValue {
+    /// A single 32-bit signed integer.
     Int(i32),
+    /// A single 32-bit float.
     Float(f32),
+    /// A single string.
     String(String),
     /// Several strings, such as OpenEXR's `multiView`.
     Strings(Vec<String>),

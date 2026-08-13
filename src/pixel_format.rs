@@ -9,17 +9,27 @@ use crate::sys::{self, typedesc::BaseType};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum PixelFormat {
+    /// Unsigned 8-bit, the usual format for PNG, JPEG and TGA.
     U8,
+    /// Signed 8-bit.
     I8,
+    /// Unsigned 16-bit, common in TIFF and PNG.
     U16,
+    /// Signed 16-bit.
     I16,
+    /// Unsigned 32-bit.
     U32,
+    /// Signed 32-bit.
     I32,
+    /// Unsigned 64-bit.
     U64,
+    /// Signed 64-bit.
     I64,
-    /// IEEE 754 binary16, matching [`half::f16`].
+    /// IEEE 754 binary16, matching [`half::f16`], and what most EXRs hold.
     F16,
+    /// IEEE 754 binary32.
     F32,
+    /// IEEE 754 binary64.
     F64,
     /// A format this crate does not model, including OpenImageIO's `UNKNOWN`.
     Other,

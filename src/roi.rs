@@ -67,34 +67,42 @@ impl Roi {
         Ok(self)
     }
 
+    /// The half-open x range, in image coordinates.
     pub fn x(&self) -> Range<i32> {
         self.x_begin..self.x_end
     }
 
+    /// The half-open y range, in image coordinates.
     pub fn y(&self) -> Range<i32> {
         self.y_begin..self.y_end
     }
 
+    /// The half-open z range, in image coordinates.
     pub fn z(&self) -> Range<i32> {
         self.z_begin..self.z_end
     }
 
+    /// The half-open channel range.
     pub fn channels(&self) -> Range<u32> {
         self.channel_begin as u32..self.channel_end as u32
     }
 
+    /// Number of pixels across.
     pub fn width(&self) -> usize {
         difference(self.x_begin, self.x_end)
     }
 
+    /// Number of pixels down.
     pub fn height(&self) -> usize {
         difference(self.y_begin, self.y_end)
     }
 
+    /// Number of slices, which is one for a two-dimensional image.
     pub fn depth(&self) -> usize {
         difference(self.z_begin, self.z_end)
     }
 
+    /// Number of channels the region covers.
     pub fn channel_count(&self) -> usize {
         difference(self.channel_begin, self.channel_end)
     }

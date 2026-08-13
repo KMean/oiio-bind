@@ -1,40 +1,68 @@
-//! Safe, focused Rust bindings to OpenImageIO 3.1.
+//! Safe Rust bindings to OpenImageIO 3.1.
 //!
-//! The high-level API owns native resources, validates image dimensions and
-//! buffer lengths before crossing the C++ boundary, and supports contiguous
-//! pixels of type [`u8`], [`u16`], [`struct@f16`], and [`f32`].
+//! Read and write every format OpenImageIO supports, in `u8`, `u16`,
+//! [`f16`](struct@f16) or `f32`. Dimensions, regions and buffer lengths are
+//! all checked before anything crosses into C++, so a mistake is a typed
+//! error rather than undefined behaviour.
 //!
-//! Read a whole image directly:
+//! # Reading
 //!
 //! ```no_run
 //! use oiio::ImageInput;
 //! use std::path::Path;
 //!
 //! # fn main() -> oiio::Result<()> {
-//! let mut input = ImageInput::from_path(Path::new("image.png"))?;
+//! let mut input = ImageInput::from_path(Path::new("image.exr"))?;
 //! let spec = input.image_spec()?;
-//! let mut pixels = vec![0_u16; spec.element_count()?];
+//! let mut pixels = vec![0.0_f32; spec.element_count()?];
 //! input.read_image_into(&mut pixels)?;
 //! input.close()?;
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! Or read a region through a private, thread-safe cache:
+//! Part of an image is a [`Roi`], which selects pixels *and* channels, so
+//! reading one AOV out of a 38-channel EXR does not decode the other 37:
 //!
 //! ```no_run
-//! use oiio::{ImageCache, Roi};
-//! use std::path::Path;
-//!
+//! # use oiio::ImageInput;
+//! # use std::path::Path;
 //! # fn main() -> oiio::Result<()> {
-//! let cache = ImageCache::new()?;
-//! let path = Path::new("image.exr");
-//! let roi = Roi::new(0..64, 0..64, 0..1, 0..4)?;
+//! # let mut input = ImageInput::from_path(Path::new("image.exr"))?;
+//! # let spec = input.image_spec()?;
+//! let roi = spec.data_window()?.with_y(0..64)?.with_channels(0..3)?;
 //! let mut pixels = vec![0.0_f32; roi.element_count()?];
-//! cache.get_pixels_into(path, roi, &mut pixels)?;
+//! input.read_region_into(roi, &mut pixels)?;
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! # What else is here
+//!
+//! - [`ImageOutput`] writes files, whole or in scanline and tile pieces,
+//!   with subimages, mip levels and multi-part files.
+//! - [`ImageCache`] serves regions from many files under a memory budget,
+//!   with [`ImageHandle`] to skip repeated name lookups and [`TileGuard`] to
+//!   borrow one tile at a time.
+//! - [`ImageBuf`] holds an image in memory and [`algo`] operates on it:
+//!   arithmetic, compositing, resizing, channel shuffling and colour
+//!   conversion.
+//! - [`DeepImage`] reads deep files, where each pixel holds a list of
+//!   samples rather than one value.
+//! - [`ColorConfig`] reports which colour spaces the active OpenColorIO
+//!   configuration defines, so conversions need not guess at names.
+//! - Neither reading nor writing needs the filesystem:
+//!   [`ImageInput::from_memory`] and [`ImageOutput::to_memory`] work on
+//!   buffers.
+//!
+//! # Metadata
+//!
+//! Attributes arrive as [`AttributeValue`]. Integers, floats and strings are
+//! modelled directly; everything else keeps the bytes OpenImageIO stored, so
+//! an attribute this crate does not understand still survives being read from
+//! one image and written to another.
+
+#![warn(missing_docs)]
 
 use oiio_sys as sys;
 
