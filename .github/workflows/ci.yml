@@ -110,6 +110,16 @@ jobs:
           test "$(pkg-config --modversion OpenImageIO)" = "3.1.14.1"
           cargo test --workspace --release --locked -- --nocapture
 
+      # Debug assertions and overflow checks only exist in this profile, so
+      # one platform runs it. Linux is the cheapest place to pay for the
+      # second build.
+      - name: Run debug tests
+        if: runner.os == 'Linux'
+        shell: micromamba-shell {0}
+        run: |
+          export LD_LIBRARY_PATH="$CONDA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          cargo test --workspace --locked -- --nocapture
+
   windows:
     name: Windows x86_64 / OIIO 3.1.14
     runs-on: windows-2022
@@ -120,6 +130,10 @@ jobs:
       OIIO_VCPKG_TRIPLET: x64-windows
       VCPKGRS_DYNAMIC: "1"
       VCPKG_DISABLE_METRICS: "1"
+      # Relocate vcpkg's binary cache into the workspace so it can be cached
+      # between runs. Without it every run rebuilds OpenImageIO and all of its
+      # dependencies from source, which is the whole cost of this job.
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-binary-cache
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -138,6 +152,22 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "VCPKG_ROOT=$root"
           Add-Content -Path $env:GITHUB_ENV -Value "VCPKG_INSTALLED_DIR=$root/installed"
 
+      - name: Prepare the vcpkg binary cache
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+
+      # Keyed on the vcpkg commit and the manifest, so a change to either
+      # rebuilds; otherwise the built packages are restored and the install
+      # step only unpacks them.
+      - name: Cache built vcpkg packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/vcpkg-binary-cache
+          key: vcpkg-x64-windows-9e593bb-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-x64-windows-9e593bb-
+            vcpkg-x64-windows-
+
       - name: Install OpenImageIO with vcpkg
         uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11.6
         with:
@@ -155,8 +185,8 @@ jobs:
         with:
           shared-key: windows-oiio-3.1.14
 
-      - name: Run debug tests
-        run: cargo test --workspace --locked -- --nocapture
-
+      # Only the optimized suite here. The debug suite, which is what exercises
+      # debug assertions and overflow checks, runs on Linux, where a second
+      # build costs seconds rather than minutes.
       - name: Run optimized tests
         run: cargo test --workspace --release --locked -- --nocapture
