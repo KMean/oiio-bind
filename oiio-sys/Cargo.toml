@@ -5,6 +5,7 @@ edition = "2021"
 description = "Rust sys bindings for OpenImageIO https://github.com/AcademySoftwareFoundation/OpenImageIO"
 documentation = "https://docs.rs/oiio-sys"
 authors = [
+    "KMean <kim.ranzani@gmail.com>",
     "Scott Wilson <scott@propersquid.com>",
     "David Aguilar <davvid@gmail.com>",
 ]

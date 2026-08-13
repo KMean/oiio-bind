@@ -5,6 +5,7 @@ edition = "2021"
 description = "High-level OpenImageIO bindings over oiio-sys"
 documentation = "https://docs.rs/oiio"
 authors = [
+    "KMean <kim.ranzani@gmail.com>",
     "Scott Wilson <scott@propersquid.com>",
     "David Aguilar <davvid@gmail.com>",
 ]

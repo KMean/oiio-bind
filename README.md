@@ -23,7 +23,7 @@ Building `oiio-sys` requires an OpenImageIO 3.1.4 or newer 3.1.x development ins
 including the C++ headers and libraries. The bindings currently target the
 OpenImageIO 3.1 API.
 
-Until the next crates.io release, depend on the GitHub repository:
+These crates are not published to crates.io yet, so depend on the repository:
 
 ```toml
 [dependencies]
@@ -178,8 +178,14 @@ the Unix jobs use `pkg-config`.
 ## Links
 
 - [source repository](https://github.com/KMean/oiio-bind)
-- [oiio on crates.io](https://crates.io/crates/oiio/latest)
-- [oiio-sys on crates.io](https://crates.io/crates/oiio-sys/latest)
-- [oiio documentation](https://docs.rs/crate/oiio/latest)
-- [oiio-sys documentation](https://docs.rs/crate/oiio-sys/latest)
 - [OpenImageIO 3.1 C++ documentation](https://openimageio.readthedocs.io/en/v3.1.12.0/)
+
+`oiio` and `oiio-sys` are not on crates.io yet, so there are no package or
+docs.rs links to give. Build the API documentation locally with
+`cargo doc --workspace --open`.
+
+
+## Credits
+
+This is a fork of [vfx-rs/oiio-bind](https://github.com/vfx-rs/oiio-bind) by
+Scott Wilson and David Aguilar, whose history and Apache-2.0 license it keeps.
