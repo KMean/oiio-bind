@@ -120,6 +120,24 @@ OpenImageIO type descriptor, alignment, and buffer byte size consistent.
 `PixelFormat` separately describes what a file stores, including formats such as
 `uint32` that the contiguous buffer API does not itself read or write.
 
+Deep images, where each pixel holds a list of samples rather than one value,
+are read separately, because a fixed number of values per pixel cannot
+describe them:
+
+```rust,no_run
+use oiio::ImageInput;
+use std::path::Path;
+
+let mut input = ImageInput::from_path(Path::new("deep.exr"))?;
+let deep = input.read_deep_image()?;
+let z = deep.z_channel().expect("a deep render carries depth");
+
+for sample in 0..deep.sample_count(100, 50)? {
+    println!("sample {sample} at depth {}", deep.value(100, 50, z, sample)?);
+}
+# Ok::<(), oiio::Error>(())
+```
+
 `ImageBuf` holds an image in memory and `oiio::algo` operates on it, mirroring
 OpenImageIO's `ImageBufAlgo`:
 

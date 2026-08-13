@@ -390,7 +390,15 @@ fn reads_the_openexr_test_images() {
             continue;
         };
         if spec.is_deep() {
-            deep += 1;
+            // Deep files were skipped here until they could be read at all.
+            // Now they are read, and counted only if that works.
+            match input.read_deep_image() {
+                Ok(image) => {
+                    assert_eq!(image.channel_count(), spec.channel_count() as usize);
+                    deep += 1;
+                }
+                Err(error) => failures.push(format!("{}: deep read: {error}", path.display())),
+            }
             continue;
         }
 
@@ -409,7 +417,7 @@ fn reads_the_openexr_test_images() {
     }
 
     println!(
-        "openexr corpus: {} files, {opened} opened, {read} read, {deep} deep, \
+        "openexr corpus: {} files, {opened} opened, {read} read flat, {deep} read deep, \
          {subsampled} refused by OpenImageIO as subsampled",
         files.len()
     );

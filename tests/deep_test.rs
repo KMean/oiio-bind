@@ -1,0 +1,202 @@
+//! Deep images, where each pixel holds a list of samples.
+//!
+//! Real deep files are large and not vendored, so the corpus tests here are
+//! opt-in through `OIIO_BIND_TEST_EXR_IMAGES`, as in `corpus_test`.
+
+mod common;
+
+use common::{f32_ramp, write_image, ScratchDir};
+use oiio::{Error, ImageInput, ImageSpec, PixelFormat};
+use std::path::PathBuf;
+
+fn exr_corpus() -> Option<PathBuf> {
+    let path = PathBuf::from(std::env::var_os("OIIO_BIND_TEST_EXR_IMAGES")?);
+    path.is_dir().then_some(path)
+}
+
+/// Find a deep EXR in the corpus, if one is available.
+fn a_deep_file() -> Option<PathBuf> {
+    let root = exr_corpus()?;
+    for relative in [
+        "v2/Stereo/Balls.exr",
+        "v2/LeftView/Balls.exr",
+        "v2/LowResLeftView/Balls.exr",
+        "v2/Stereo/Ground.exr",
+    ] {
+        let path = root.join(relative);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+#[test]
+fn reads_a_deep_image_and_its_samples() {
+    let Some(path) = a_deep_file() else {
+        eprintln!("skipping: set OIIO_BIND_TEST_EXR_IMAGES to a corpus with deep files");
+        return;
+    };
+
+    let mut input = ImageInput::from_path(&path).unwrap();
+    let spec = input.image_spec().unwrap();
+    assert!(spec.is_deep(), "{} should be deep", path.display());
+
+    // The contiguous API must refuse it rather than return nonsense.
+    let mut flat = vec![0.0_f32; spec.element_count().unwrap()];
+    assert!(matches!(
+        input.read_image_into(&mut flat),
+        Err(Error::UnsupportedDeepImage)
+    ));
+
+    let deep = input.read_deep_image().unwrap();
+    println!(
+        "{}: {:?}, {} channels, {} pixels",
+        path.file_name().unwrap().to_string_lossy(),
+        deep.dimensions(),
+        deep.channel_count(),
+        deep.pixel_count()
+    );
+    for channel in deep.channels() {
+        println!("  channel {} ({})", channel.name(), channel.format());
+    }
+
+    assert_eq!(deep.dimensions(), spec.dimensions());
+    assert_eq!(deep.channel_count(), spec.channel_count() as usize);
+    assert_eq!(
+        deep.pixel_count(),
+        u64::from(spec.dimensions()[0]) * u64::from(spec.dimensions()[1])
+    );
+
+    // A deep render carries depth, which is the whole point of the format.
+    let depth = deep
+        .z_channel()
+        .expect("a deep image from a renderer should have Z");
+    assert_eq!(deep.channels()[depth].name(), "Z");
+
+    // Walk the image for a pixel that actually has samples, then read them.
+    let origin = deep.origin();
+    let [width, height, _] = deep.dimensions();
+    let mut total_samples = 0u64;
+    let mut deepest = 0usize;
+    let mut sampled: Option<(i32, i32)> = None;
+
+    for y in origin[1]..origin[1] + height as i32 {
+        for x in origin[0]..origin[0] + width as i32 {
+            let count = deep.sample_count(x, y).unwrap();
+            total_samples += count as u64;
+            if count > deepest {
+                deepest = count;
+                sampled = Some((x, y));
+            }
+        }
+    }
+
+    println!("  {total_samples} samples in total, deepest pixel holds {deepest}");
+    assert!(
+        total_samples > 0,
+        "a deep image with no samples is not deep"
+    );
+
+    let (x, y) = sampled.expect("some pixel should hold samples");
+    let depths = deep.samples(x, y, depth).unwrap();
+    assert_eq!(depths.len(), deepest);
+    assert!(
+        depths.iter().all(|value| value.is_finite()),
+        "depths should be finite, got {depths:?}"
+    );
+    println!(
+        "  deepest pixel at ({x}, {y}), first depths {:?}",
+        &depths[..depths.len().min(4)]
+    );
+
+    input.close().unwrap();
+}
+
+#[test]
+fn deep_accessors_are_bounds_checked() {
+    let Some(path) = a_deep_file() else {
+        eprintln!("skipping: set OIIO_BIND_TEST_EXR_IMAGES");
+        return;
+    };
+
+    let mut input = ImageInput::from_path(&path).unwrap();
+    let deep = input.read_deep_image().unwrap();
+    let origin = deep.origin();
+    let [width, height, _] = deep.dimensions();
+
+    // Outside the data window on either axis.
+    assert!(matches!(
+        deep.sample_count(origin[0] - 1, origin[1]),
+        Err(Error::InvalidRegion { axis: "x", .. })
+    ));
+    assert!(matches!(
+        deep.sample_count(origin[0], origin[1] + height as i32),
+        Err(Error::InvalidRegion { axis: "y", .. })
+    ));
+    assert!(matches!(
+        deep.value(origin[0] + width as i32, origin[1], 0, 0),
+        Err(Error::InvalidRegion { axis: "x", .. })
+    ));
+
+    // A channel the image does not have.
+    assert!(matches!(
+        deep.value(origin[0], origin[1], deep.channel_count(), 0),
+        Err(Error::InvalidRoi(_))
+    ));
+
+    // A sample index beyond what the pixel holds must be refused, and the
+    // last valid one accepted. Deep images are sparse, so the pixel to test
+    // this on has to be searched for rather than assumed to be near a corner.
+    let mut populated = None;
+    'outer: for y in origin[1]..origin[1] + height as i32 {
+        for x in origin[0]..origin[0] + width as i32 {
+            if deep.sample_count(x, y).unwrap() > 0 {
+                populated = Some((x, y));
+                break 'outer;
+            }
+        }
+    }
+    let (x, y) = populated.expect("expected some pixel with at least one sample");
+    let count = deep.sample_count(x, y).unwrap();
+
+    assert!(deep.value(x, y, 0, count - 1).is_ok(), "last sample");
+    assert!(matches!(
+        deep.value(x, y, 0, count),
+        Err(Error::InvalidRoi(_))
+    ));
+
+    // An empty pixel has no valid sample at all.
+    let mut empty = None;
+    'search: for y in origin[1]..origin[1] + height as i32 {
+        for x in origin[0]..origin[0] + width as i32 {
+            if deep.sample_count(x, y).unwrap() == 0 {
+                empty = Some((x, y));
+                break 'search;
+            }
+        }
+    }
+    if let Some((x, y)) = empty {
+        assert!(matches!(deep.value(x, y, 0, 0), Err(Error::InvalidRoi(_))));
+    }
+}
+
+#[test]
+fn a_flat_image_is_not_read_as_deep() {
+    let scratch = ScratchDir::new("notdeep");
+    let path = scratch.file("flat.exr");
+
+    let spec = ImageSpec::new(4, 4, 3, PixelFormat::F32).unwrap();
+    write_image(&path, &spec, &f32_ramp(spec.element_count().unwrap())).unwrap();
+
+    let mut input = ImageInput::from_path(&path).unwrap();
+    assert!(!input.image_spec().unwrap().is_deep());
+
+    // Asking for deep data from a flat image is a mistake worth reporting,
+    // not something to answer with an empty result.
+    let error = input.read_deep_image().unwrap_err();
+    assert!(
+        error.to_string().contains("not deep"),
+        "unexpected error: {error}"
+    );
+}

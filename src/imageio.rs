@@ -2,7 +2,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use crate::image_spec::element_count;
-use crate::{path_to_utf8, pixel, sys, Error, ImageSpec, Pixel, Result, Roi};
+use crate::{path_to_utf8, pixel, sys, DeepImage, Error, ImageSpec, Pixel, Result, Roi};
 
 /// An open image, either a file or a buffer in memory.
 ///
@@ -323,6 +323,44 @@ impl ImageInput {
         } else {
             Err(self.take_error("read region"))
         }
+    }
+
+    /// Read a deep image, where each pixel holds a list of samples.
+    ///
+    /// The contiguous pixel API refuses deep files, because a fixed number of
+    /// values per pixel cannot describe them. This reads one instead.
+    pub fn read_deep_image(&mut self) -> Result<DeepImage> {
+        self.read_deep_image_at(0, 0)
+    }
+
+    /// Read a deep subimage and mip level.
+    pub fn read_deep_image_at(&mut self, subimage: u32, mip_level: u32) -> Result<DeepImage> {
+        let spec = self.image_spec_at(subimage, mip_level)?;
+        if !spec.is_deep() {
+            return Err(Error::operation(
+                "read deep image",
+                "this image is not deep; use read_image_into".to_owned(),
+            ));
+        }
+
+        let mut deep = sys::deepdata::deepdata_default();
+        let Some(pinned) = deep.as_mut() else {
+            return Err(Error::operation(
+                "read deep image",
+                "OpenImageIO could not allocate deep data".to_owned(),
+            ));
+        };
+        let succeeded = sys::imageio::imageinput_read_native_deep_image(
+            self.inner_mut(),
+            level_index(subimage)?,
+            level_index(mip_level)?,
+            pinned,
+        );
+        if !succeeded {
+            return Err(self.take_error("read deep image"));
+        }
+
+        DeepImage::from_parts(deep, &spec)
     }
 
     /// Close the file and report any delayed format or I/O errors.

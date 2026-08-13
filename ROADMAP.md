@@ -62,7 +62,10 @@ line is established and tested deliberately.
   from one image and written to another. Only its printed form rounds; the
   bytes do not. String arrays are carried as strings, since OpenImageIO stores
   those as pointers rather than characters.
-- [ ] Deep images, which the contiguous pixel API deliberately refuses.
+- [x] Reading deep images. The contiguous pixel API still refuses them, since
+  a fixed number of values per pixel cannot describe a list of samples;
+  `ImageInput::read_deep_image` returns a `DeepImage` instead. Writing deep
+  images is not implemented.
 
 ## Notes on the OpenImageIO 3.1 span API
 

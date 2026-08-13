@@ -41,6 +41,7 @@ use oiio_sys as sys;
 pub mod algo;
 
 mod attribute;
+mod deep;
 mod error;
 mod image_buf;
 mod image_cache;
@@ -51,6 +52,7 @@ mod pixel_format;
 mod roi;
 
 pub use attribute::AttributeValue;
+pub use deep::{DeepChannel, DeepImage};
 pub use error::{Error, Result};
 pub use half::f16;
 pub use image_buf::{ImageBuf, Storage};
