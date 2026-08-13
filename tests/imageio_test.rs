@@ -157,6 +157,40 @@ fn sys_bounded_read_defensively_rejects_short_byte_slice() -> Result<()> {
     Ok(())
 }
 
+/// Regression test: reading a tiled image whose dimensions are not an exact
+/// multiple of the tile size once failed silently, because the bounded read
+/// went through OpenImageIO's `image_span` overload. Every tile size below
+/// leaves a partial tile on at least one edge.
+#[test]
+fn reads_tiled_images_with_partial_edge_tiles() -> Result<()> {
+    use oiio::{ImageInput, ImageOutput, ImageSpec, PixelFormat};
+
+    let directory = std::env::temp_dir().join(format!("oiio-bind-tiled-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+
+    for (width, height, tile) in [(40_u32, 24_u32, 16_u32), (33, 17, 8), (16, 16, 16)] {
+        let path = directory.join(format!("tiled-{width}x{height}-{tile}.exr"));
+        let spec =
+            ImageSpec::new(width, height, 3, PixelFormat::F32)?.with_tile_size([tile, tile, 1])?;
+        let written: Vec<f32> = (0..spec.element_count()?).map(|i| i as f32).collect();
+
+        let mut output = ImageOutput::create(&path, &spec)?;
+        output.write_image(&written)?;
+        output.close()?;
+
+        let mut input = ImageInput::from_path(&path)?;
+        let read_spec = input.image_spec()?;
+        let mut read = vec![0.0_f32; read_spec.element_count()?];
+        input.read_image_into(&mut read)?;
+        input.close()?;
+
+        assert_eq!(read, written, "{width}x{height} with {tile}px tiles");
+    }
+
+    std::fs::remove_dir_all(&directory)?;
+    Ok(())
+}
+
 fn assert_pixel(pixels: &[u16], x: usize, y: usize, expected: [u16; 4]) {
     let offset = (y * 16 + x) * 4;
     assert_eq!(pixels[offset..offset + 4], expected);

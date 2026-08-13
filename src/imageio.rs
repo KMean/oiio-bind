@@ -1,5 +1,7 @@
-use std::path::Path;
+use std::ops::Range;
+use std::path::{Path, PathBuf};
 
+use crate::image_spec::element_count;
 use crate::{path_to_utf8, pixel, sys, Error, ImageSpec, Pixel, Result};
 
 /// An open image file.
@@ -151,6 +153,447 @@ impl ImageInput {
             operation,
             sys::imageio::imageinput_geterror(self.inner_mut()),
         )
+    }
+}
+
+/// An image file open for writing.
+///
+/// A writer is always open: [`ImageOutput::create`] selects the plugin from
+/// the file name and opens the file in one step, so there is no state in which
+/// a write can be attempted against an unopened file.
+///
+/// ```no_run
+/// use oiio::{f16, ImageOutput, ImageSpec, PixelFormat};
+/// use std::path::Path;
+///
+/// # fn main() -> oiio::Result<()> {
+/// let spec = ImageSpec::new(64, 64, 3, PixelFormat::F16)?;
+/// let pixels = vec![f16::ZERO; spec.element_count()?];
+///
+/// let mut output = ImageOutput::create(Path::new("out.exr"), &spec)?;
+/// output.write_image(&pixels)?;
+/// output.close()?;
+/// # Ok(())
+/// # }
+/// ```
+pub struct ImageOutput {
+    inner: cxx::UniquePtr<sys::imageio::ImageOutput>,
+    path: PathBuf,
+    spec: ImageSpec,
+}
+
+impl ImageOutput {
+    /// Create and open an image file described by `spec`.
+    ///
+    /// The output plugin is chosen from the file name's extension. The file is
+    /// truncated if it already exists.
+    pub fn create(image_path: &Path, spec: &ImageSpec) -> Result<Self> {
+        let mut output = Self::open_plugin(image_path)?;
+        let native_spec = spec.to_sys()?;
+        Self::open_native(
+            output.inner_mut(),
+            path_to_utf8(image_path)?,
+            &native_spec,
+            sys::imageio::OpenMode::Create,
+        )
+        .map_err(|message| Error::OpenImage {
+            path: image_path.to_path_buf(),
+            message,
+        })?;
+
+        output.path = image_path.to_path_buf();
+        output.spec = spec.clone();
+        Ok(output)
+    }
+
+    /// Create and open a multi-part file, declaring every subimage up front.
+    ///
+    /// Some formats — OpenEXR among them — must know all subimages when the
+    /// file is opened and reject [`ImageOutput::append_subimage`]. After this
+    /// call the writer is positioned on the first subimage; advance with
+    /// [`ImageOutput::append_subimage`], passing the same specifications in
+    /// the same order.
+    pub fn create_multi_subimage(image_path: &Path, specs: &[ImageSpec]) -> Result<Self> {
+        let Some(first) = specs.first() else {
+            return Err(Error::InvalidImageSpec(
+                "a multi-part file needs at least one subimage".to_owned(),
+            ));
+        };
+
+        let mut native_specs = sys::imageio::imagespec_vector_new();
+        for spec in specs {
+            let native_spec = spec.to_sys()?;
+            let (Some(list), Some(native_spec)) = (native_specs.as_mut(), native_spec.as_ref())
+            else {
+                return Err(Error::InvalidImageSpec(
+                    "OpenImageIO could not allocate an image specification".to_owned(),
+                ));
+            };
+            sys::imageio::imagespec_vector_push(list, native_spec);
+        }
+
+        let mut output = Self::open_plugin(image_path)?;
+        let path_str = path_to_utf8(image_path)?;
+        let opened =
+            sys::imageio::imageoutput_open_specs(output.inner_mut(), path_str, &native_specs);
+        if !opened {
+            let message = sys::imageio::imageoutput_geterror(output.inner(), true);
+            return Err(Error::OpenImage {
+                path: image_path.to_path_buf(),
+                message: if message.is_empty() {
+                    "OpenImageIO did not provide an error message".to_owned()
+                } else {
+                    message
+                },
+            });
+        }
+
+        output.path = image_path.to_path_buf();
+        output.spec = first.clone();
+        Ok(output)
+    }
+
+    /// Ask whether the output plugin for `image_path` supports a feature,
+    /// without creating the file.
+    ///
+    /// Features are OpenImageIO's own names, such as `"tiles"`,
+    /// `"mipmap"`, `"multiimage"`, or `"deepdata"`.
+    pub fn plugin_supports(image_path: &Path, feature: &str) -> Result<bool> {
+        Ok(Self::open_plugin(image_path)?.supports(feature))
+    }
+
+    /// Return the output plugin's format name.
+    pub fn format_name(&self) -> &str {
+        sys::imageio::imageoutput_format_name(self.inner())
+    }
+
+    /// Whether the open plugin supports a named feature.
+    pub fn supports(&self, feature: &str) -> bool {
+        sys::imageio::imageoutput_supports(self.inner(), feature) != 0
+    }
+
+    /// The specification the file is currently open with.
+    pub fn spec(&self) -> &ImageSpec {
+        &self.spec
+    }
+
+    /// Write every pixel of the current subimage and mip level.
+    ///
+    /// The buffer length must exactly equal
+    /// `width * height * depth * channels`. Values are converted to the
+    /// specification's pixel format by OpenImageIO.
+    pub fn write_image<T: Pixel>(&mut self, pixels: &[T]) -> Result<()> {
+        self.reject_deep()?;
+        let expected = self.spec.element_count()?;
+        validate_buffer_len(expected, pixels.len())?;
+
+        // SAFETY: Pixel is sealed to initialized scalar layouts, and the shim
+        // re-derives the layout from the open specification before writing.
+        let succeeded = unsafe {
+            sys::imageio::imageoutput_write_image_span(
+                self.inner_mut(),
+                pixel::type_desc::<T>(),
+                pixel::as_bytes(pixels),
+            )
+        };
+        self.check("write image", succeeded)
+    }
+
+    /// Write a contiguous range of scanlines of a two-dimensional image.
+    ///
+    /// The buffer length must exactly equal
+    /// `width * rows * channels`, where `rows` is the length of `y`.
+    pub fn write_scanlines<T: Pixel>(&mut self, y: Range<i32>, pixels: &[T]) -> Result<()> {
+        self.reject_deep()?;
+        if self.spec.dimensions()[2] != 1 {
+            return Err(Error::InvalidImageSpec(
+                "scanline writes require a two-dimensional image".to_owned(),
+            ));
+        }
+        let rows = self.validate_axis("y", &y, self.spec.origin()[1], self.spec.dimensions()[1])?;
+        let expected = element_count([self.spec.dimensions()[0], rows, self.spec.channel_count()])?;
+        validate_buffer_len(expected, pixels.len())?;
+
+        // SAFETY: as in `write_image`.
+        let succeeded = unsafe {
+            sys::imageio::imageoutput_write_scanlines_span(
+                self.inner_mut(),
+                y.start,
+                y.end,
+                pixel::type_desc::<T>(),
+                pixel::as_bytes(pixels),
+            )
+        };
+        self.check("write scanlines", succeeded)
+    }
+
+    /// Write a rectangular block of whole tiles.
+    ///
+    /// Each range must start on a tile boundary and either end on one or end
+    /// at the edge of the data window. The buffer length must exactly equal
+    /// the number of scalar values the block covers.
+    pub fn write_tiles<T: Pixel>(
+        &mut self,
+        x: Range<i32>,
+        y: Range<i32>,
+        z: Range<i32>,
+        pixels: &[T],
+    ) -> Result<()> {
+        self.reject_deep()?;
+        let [tile_width, tile_height, tile_depth] = self.spec.tile_dimensions();
+        if !self.spec.is_tiled() {
+            return Err(Error::InvalidImageSpec(
+                "tile writes require a specification with a tile size".to_owned(),
+            ));
+        }
+
+        let origin = self.spec.origin();
+        let dimensions = self.spec.dimensions();
+        let width = self.validate_axis("x", &x, origin[0], dimensions[0])?;
+        let height = self.validate_axis("y", &y, origin[1], dimensions[1])?;
+        let depth = self.validate_axis("z", &z, origin[2], dimensions[2])?;
+        validate_tile_alignment("x", &x, origin[0], dimensions[0], tile_width)?;
+        validate_tile_alignment("y", &y, origin[1], dimensions[1], tile_height)?;
+        validate_tile_alignment("z", &z, origin[2], dimensions[2], tile_depth.max(1))?;
+
+        let expected = element_count([width, height, depth, self.spec.channel_count()])?;
+        validate_buffer_len(expected, pixels.len())?;
+
+        // SAFETY: as in `write_image`.
+        let succeeded = unsafe {
+            sys::imageio::imageoutput_write_tiles_span(
+                self.inner_mut(),
+                x.start,
+                x.end,
+                y.start,
+                y.end,
+                z.start,
+                z.end,
+                pixel::type_desc::<T>(),
+                pixel::as_bytes(pixels),
+            )
+        };
+        self.check("write tiles", succeeded)
+    }
+
+    /// Begin a new subimage in the same file.
+    ///
+    /// Only supported by formats that report the `"multiimage"` feature.
+    pub fn append_subimage(&mut self, spec: &ImageSpec) -> Result<()> {
+        self.append(
+            spec,
+            sys::imageio::OpenMode::AppendSubimage,
+            "append subimage",
+        )
+    }
+
+    /// Begin a new mip level of the current subimage.
+    ///
+    /// Only supported by formats that report the `"mipmap"` feature.
+    pub fn append_mip_level(&mut self, spec: &ImageSpec) -> Result<()> {
+        self.append(
+            spec,
+            sys::imageio::OpenMode::AppendMIPLevel,
+            "append mip level",
+        )
+    }
+
+    /// Get the current thread count.
+    pub fn threads(&self) -> i32 {
+        sys::imageio::imageoutput_threads(self.inner())
+    }
+
+    /// Set the thread count. Zero requests OpenImageIO's default.
+    pub fn set_threads(&mut self, threads: i32) {
+        sys::imageio::imageoutput_set_threads(self.inner_mut(), threads);
+    }
+
+    /// Finish the file and report any delayed format or I/O errors.
+    ///
+    /// Dropping an `ImageOutput` without calling this method still closes the
+    /// file, but cannot report errors that only surface at close time.
+    pub fn close(mut self) -> Result<()> {
+        let succeeded = sys::imageio::imageoutput_close(self.inner_mut());
+        self.check("close image", succeeded)
+    }
+
+    fn open_plugin(image_path: &Path) -> Result<Self> {
+        let image_path_str = path_to_utf8(image_path)?;
+        // SAFETY: a null IOProxy asks OpenImageIO to open the file itself.
+        let inner =
+            unsafe { sys::imageio::imageoutput_create(image_path_str, std::ptr::null_mut(), "") };
+        if inner.is_null() {
+            return Err(Error::CreateImage {
+                path: image_path.to_path_buf(),
+                message: global_error(),
+            });
+        }
+
+        Ok(Self {
+            inner,
+            path: image_path.to_path_buf(),
+            spec: ImageSpec::new(1, 1, 1, crate::PixelFormat::U8)?,
+        })
+    }
+
+    fn open_native(
+        output: std::pin::Pin<&mut sys::imageio::ImageOutput>,
+        path: &str,
+        spec: &cxx::UniquePtr<sys::imageio::ImageSpec>,
+        mode: sys::imageio::OpenMode,
+    ) -> std::result::Result<(), String> {
+        let Some(native_spec) = spec.as_ref() else {
+            return Err("OpenImageIO could not allocate an image specification".to_owned());
+        };
+        if sys::imageio::imageoutput_open(output, path, native_spec, mode) {
+            Ok(())
+        } else {
+            Err(String::new())
+        }
+    }
+
+    fn append(
+        &mut self,
+        spec: &ImageSpec,
+        mode: sys::imageio::OpenMode,
+        operation: &'static str,
+    ) -> Result<()> {
+        let native_spec = spec.to_sys()?;
+        let path = path_to_utf8(&self.path)?.to_owned();
+        let opened = Self::open_native(self.inner_mut(), &path, &native_spec, mode);
+        match opened {
+            Ok(()) => {
+                self.spec = spec.clone();
+                Ok(())
+            }
+            Err(message) if message.is_empty() => Err(self.take_error(operation)),
+            Err(message) => Err(Error::operation(operation, message)),
+        }
+    }
+
+    fn validate_axis(
+        &self,
+        axis: &'static str,
+        range: &Range<i32>,
+        origin: i32,
+        size: u32,
+    ) -> Result<u32> {
+        if range.start >= range.end {
+            return Err(Error::InvalidWriteRegion {
+                axis,
+                message: format!(
+                    "range must be non-empty and increasing, got {}..{}",
+                    range.start, range.end
+                ),
+            });
+        }
+        let end = i64::from(origin) + i64::from(size);
+        if i64::from(range.start) < i64::from(origin) || i64::from(range.end) > end {
+            return Err(Error::InvalidWriteRegion {
+                axis,
+                message: format!(
+                    "range {}..{} lies outside the data window {origin}..{end}",
+                    range.start, range.end
+                ),
+            });
+        }
+        Ok((i64::from(range.end) - i64::from(range.start)) as u32)
+    }
+
+    fn reject_deep(&self) -> Result<()> {
+        if self.spec.is_deep() {
+            return Err(Error::UnsupportedDeepImage);
+        }
+        Ok(())
+    }
+
+    fn check(&mut self, operation: &'static str, succeeded: bool) -> Result<()> {
+        if succeeded {
+            Ok(())
+        } else {
+            Err(self.take_error(operation))
+        }
+    }
+
+    fn inner(&self) -> &sys::imageio::ImageOutput {
+        self.inner
+            .as_ref()
+            .expect("ImageOutput invariant violated: null native pointer")
+    }
+
+    fn inner_mut(&mut self) -> std::pin::Pin<&mut sys::imageio::ImageOutput> {
+        self.inner
+            .as_mut()
+            .expect("ImageOutput invariant violated: null native pointer")
+    }
+
+    fn take_error(&mut self, operation: &'static str) -> Error {
+        Error::operation(
+            operation,
+            sys::imageio::imageoutput_geterror(self.inner(), true),
+        )
+    }
+}
+
+fn validate_tile_alignment(
+    axis: &'static str,
+    range: &Range<i32>,
+    origin: i32,
+    size: u32,
+    tile: u32,
+) -> Result<()> {
+    if tile == 0 {
+        return Err(Error::InvalidImageSpec(format!(
+            "tile size on the {axis} axis must be non-zero"
+        )));
+    }
+    let tile = i64::from(tile);
+    let edge = i64::from(origin) + i64::from(size);
+
+    if (i64::from(range.start) - i64::from(origin)) % tile != 0 {
+        return Err(Error::InvalidWriteRegion {
+            axis,
+            message: format!("start {} is not on the {tile}-pixel tile grid", range.start),
+        });
+    }
+    if i64::from(range.end) != edge && (i64::from(range.end) - i64::from(origin)) % tile != 0 {
+        return Err(Error::InvalidWriteRegion {
+            axis,
+            message: format!(
+                "end {} is neither on the {tile}-pixel tile grid nor at the data window edge {edge}",
+                range.end
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn global_error() -> String {
+    if sys::imageio::has_error() {
+        sys::imageio::get_error(true)
+    } else {
+        "OpenImageIO did not provide an error message".to_owned()
+    }
+}
+
+impl std::fmt::Debug for ImageInput {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ImageInput")
+            .field("format", &self.format_name())
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for ImageOutput {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ImageOutput")
+            .field("path", &self.path)
+            .field("format", &self.format_name())
+            .field("dimensions", &self.spec.dimensions())
+            .field("pixel_format", &self.spec.format())
+            .finish_non_exhaustive()
     }
 }
 

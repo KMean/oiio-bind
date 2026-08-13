@@ -38,19 +38,23 @@
 
 use oiio_sys as sys;
 
+mod attribute;
 mod error;
 mod image_cache;
 mod image_spec;
 mod imageio;
 mod pixel;
+mod pixel_format;
 mod roi;
 
+pub use attribute::AttributeValue;
 pub use error::{Error, Result};
 pub use half::f16;
 pub use image_cache::{ImageCache, ImageCacheBuilder};
 pub use image_spec::ImageSpec;
-pub use imageio::ImageInput;
+pub use imageio::{ImageInput, ImageOutput};
 pub use pixel::Pixel;
+pub use pixel_format::PixelFormat;
 pub use roi::Roi;
 
 /// Backwards-compatible name for errors returned by `ImageInput`.
