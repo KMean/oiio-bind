@@ -21,16 +21,7 @@ impl Roi {
         validate_range("x", &x)?;
         validate_range("y", &y)?;
         validate_range("z", &z)?;
-        if channels.start >= channels.end {
-            return Err(Error::InvalidRoi(format!(
-                "channel range must be non-empty and increasing, got {}..{}",
-                channels.start, channels.end
-            )));
-        }
-        let channel_begin = i32::try_from(channels.start)
-            .map_err(|_| Error::InvalidRoi("channel start exceeds i32::MAX".to_owned()))?;
-        let channel_end = i32::try_from(channels.end)
-            .map_err(|_| Error::InvalidRoi("channel end exceeds i32::MAX".to_owned()))?;
+        let (channel_begin, channel_end) = channel_bounds(channels)?;
 
         Ok(Self {
             x_begin: x.start,
@@ -42,6 +33,38 @@ impl Roi {
             channel_begin,
             channel_end,
         })
+    }
+
+    /// Narrow or move the x range, keeping every other axis.
+    pub fn with_x(mut self, x: Range<i32>) -> Result<Self> {
+        validate_range("x", &x)?;
+        self.x_begin = x.start;
+        self.x_end = x.end;
+        Ok(self)
+    }
+
+    /// Narrow or move the y range, keeping every other axis.
+    pub fn with_y(mut self, y: Range<i32>) -> Result<Self> {
+        validate_range("y", &y)?;
+        self.y_begin = y.start;
+        self.y_end = y.end;
+        Ok(self)
+    }
+
+    /// Narrow or move the z range, keeping every other axis.
+    pub fn with_z(mut self, z: Range<i32>) -> Result<Self> {
+        validate_range("z", &z)?;
+        self.z_begin = z.start;
+        self.z_end = z.end;
+        Ok(self)
+    }
+
+    /// Narrow the channel range, keeping every axis.
+    pub fn with_channels(mut self, channels: Range<u32>) -> Result<Self> {
+        let (channel_begin, channel_end) = channel_bounds(channels)?;
+        self.channel_begin = channel_begin;
+        self.channel_end = channel_end;
+        Ok(self)
     }
 
     pub fn x(&self) -> Range<i32> {
@@ -104,6 +127,28 @@ impl Roi {
         )
     }
 
+    /// Check that this region lies inside an image's data window and channels.
+    pub(crate) fn validate_within(&self, spec: &ImageSpec) -> Result<()> {
+        let origin = spec.origin();
+        let dimensions = spec.dimensions();
+        for (axis, begin, end, start, size) in [
+            ("x", self.x_begin, self.x_end, origin[0], dimensions[0]),
+            ("y", self.y_begin, self.y_end, origin[1], dimensions[1]),
+            ("z", self.z_begin, self.z_end, origin[2], dimensions[2]),
+        ] {
+            let window_end = i64::from(start) + i64::from(size);
+            if i64::from(begin) < i64::from(start) || i64::from(end) > window_end {
+                return Err(Error::InvalidRegion {
+                    axis,
+                    message: format!(
+                        "range {begin}..{end} lies outside the data window {start}..{window_end}"
+                    ),
+                });
+            }
+        }
+        self.validate_channels(spec)
+    }
+
     pub(crate) fn validate_channels(&self, spec: &ImageSpec) -> Result<()> {
         let channel_end = i32::try_from(spec.channels()).map_err(|_| {
             Error::InvalidImageSpec("channel count does not fit in an i32".to_owned())
@@ -128,6 +173,20 @@ impl Roi {
             chend: self.channel_end,
         }
     }
+}
+
+fn channel_bounds(channels: Range<u32>) -> Result<(i32, i32)> {
+    if channels.start >= channels.end {
+        return Err(Error::InvalidRoi(format!(
+            "channel range must be non-empty and increasing, got {}..{}",
+            channels.start, channels.end
+        )));
+    }
+    let channel_begin = i32::try_from(channels.start)
+        .map_err(|_| Error::InvalidRoi("channel start exceeds i32::MAX".to_owned()))?;
+    let channel_end = i32::try_from(channels.end)
+        .map_err(|_| Error::InvalidRoi("channel end exceeds i32::MAX".to_owned()))?;
+    Ok((channel_begin, channel_end))
 }
 
 fn validate_range(name: &str, range: &Range<i32>) -> Result<()> {

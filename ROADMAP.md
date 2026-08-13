@@ -45,12 +45,14 @@ line is established and tested deliberately.
 - [x] Complete `ImageOutput` creation, writes, and round-trip tests. Whole
   images, scanline ranges, and tile blocks are covered, as are subimages, mip
   levels, multi-part files, non-zero data window origins, and metadata.
-- [ ] Complete safe, caller-buffer `ImageInput` reads. Whole images at any
-  subimage and mip level are covered; scanline, tile, and channel-subset reads
-  are not yet exposed.
-- [ ] Channel subsets on both sides.
+- [x] Complete safe, caller-buffer `ImageInput` reads. Whole images, scanline
+  ranges, tile blocks, and channel subsets, at any subimage and mip level.
+  A read region is a `Roi`, so a channel subset is just a narrowed data
+  window. Writing a channel subset instead means describing those channels in
+  the specification, so it needs no separate API.
 - [ ] Writing metadata whose OpenImageIO type this crate does not model
   directly, such as matrices and arrays.
+- [ ] Deep images, which the contiguous pixel API deliberately refuses.
 
 ## Notes on the OpenImageIO 3.1 span API
 

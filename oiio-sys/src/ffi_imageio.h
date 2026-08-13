@@ -308,6 +308,22 @@ imageinput_read_image_span(ImageInput& imageinput, int subimage, int miplevel,
                            int chbegin, int chend, TypeDesc format,
                            rust::Slice<uint8_t> data);
 
+// Bounded partial reads. Each validates the requested region and the
+// destination buffer against the subimage and MIP level's own dimensions
+// before entering OpenImageIO, and reports failures through the ImageInput's
+// error channel.
+bool
+imageinput_read_scanlines_span(ImageInput& imageinput, int subimage,
+                               int miplevel, int ybegin, int yend, int z,
+                               int chbegin, int chend, TypeDesc format,
+                               rust::Slice<uint8_t> data);
+
+bool
+imageinput_read_tiles_span(ImageInput& imageinput, int subimage, int miplevel,
+                           int xbegin, int xend, int ybegin, int yend,
+                           int zbegin, int zend, int chbegin, int chend,
+                           TypeDesc format, rust::Slice<uint8_t> data);
+
 bool
 imageinput_read_native_deep_scanlines(ImageInput& imageinput, int subimage,
                                       int miplevel, int ybegin, int yend, int z,

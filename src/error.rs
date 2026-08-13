@@ -13,8 +13,8 @@ pub enum Error {
     #[error("could not create an image writer for {path:?}: {message}")]
     CreateImage { path: PathBuf, message: String },
 
-    #[error("invalid write region on the {axis} axis: {message}")]
-    InvalidWriteRegion { axis: &'static str, message: String },
+    #[error("invalid region on the {axis} axis: {message}")]
+    InvalidRegion { axis: &'static str, message: String },
 
     #[error("{operation} failed: {message}")]
     Operation {

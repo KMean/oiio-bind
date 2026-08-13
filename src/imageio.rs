@@ -2,7 +2,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use crate::image_spec::element_count;
-use crate::{path_to_utf8, pixel, sys, Error, ImageSpec, Pixel, Result};
+use crate::{path_to_utf8, pixel, sys, Error, ImageSpec, Pixel, Result, Roi};
 
 /// An open image file.
 pub struct ImageInput(cxx::UniquePtr<sys::imageio::ImageInput>);
@@ -111,6 +111,137 @@ impl ImageInput {
             Ok(())
         } else {
             Err(self.take_error("read image"))
+        }
+    }
+
+    /// Read part of the base image into a contiguous scalar buffer.
+    ///
+    /// See [`ImageInput::read_region_into_at`].
+    pub fn read_region_into<T: Pixel>(&mut self, roi: Roi, pixels: &mut [T]) -> Result<()> {
+        self.read_region_into_at(0, 0, roi, pixels)
+    }
+
+    /// Read part of a subimage and mip level into a contiguous buffer.
+    ///
+    /// The region selects pixels and channels, so this is also how a channel
+    /// subset is read: start from [`ImageSpec::data_window`] and narrow it.
+    ///
+    /// ```no_run
+    /// use oiio::ImageInput;
+    /// use std::path::Path;
+    ///
+    /// # fn main() -> oiio::Result<()> {
+    /// let mut input = ImageInput::from_path(Path::new("image.exr"))?;
+    /// let spec = input.image_spec()?;
+    ///
+    /// // The first three channels of the top 64 scanlines.
+    /// let roi = spec.data_window()?.with_y(0..64)?.with_channels(0..3)?;
+    /// let mut pixels = vec![0.0_f32; roi.element_count()?];
+    /// input.read_region_into(roi, &mut pixels)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// How the region may be shaped depends on how the file stores pixels,
+    /// because that is what OpenImageIO itself can address:
+    ///
+    /// - A tiled image is read tile by tile, so each axis must start on the
+    ///   tile grid and either end on it or at the edge of the data window.
+    /// - A scanline image is read a whole row at a time, so the x range must
+    ///   cover the full width and the region must be a single z slice.
+    ///
+    /// For arbitrary regions of a tiled file, use
+    /// [`ImageCache::get_pixels_into`](crate::ImageCache::get_pixels_into),
+    /// which assembles them from tiles.
+    pub fn read_region_into_at<T: Pixel>(
+        &mut self,
+        subimage: u32,
+        mip_level: u32,
+        roi: Roi,
+        pixels: &mut [T],
+    ) -> Result<()> {
+        let spec = self.image_spec_at(subimage, mip_level)?;
+        if spec.is_deep() {
+            return Err(Error::UnsupportedDeepImage);
+        }
+        roi.validate_within(&spec)?;
+        validate_buffer_len(roi.element_count()?, pixels.len())?;
+
+        let subimage_i32 = level_index(subimage)?;
+        let mip_level_i32 = level_index(mip_level)?;
+        let channels = roi.channels();
+        let channel_begin = level_index(channels.start)?;
+        let channel_end = level_index(channels.end)?;
+        let origin = spec.origin();
+        let dimensions = spec.dimensions();
+
+        let succeeded = if spec.is_tiled() {
+            let [tile_width, tile_height, tile_depth] = spec.tile_dimensions();
+            validate_tile_alignment("x", &roi.x(), origin[0], dimensions[0], tile_width)?;
+            validate_tile_alignment("y", &roi.y(), origin[1], dimensions[1], tile_height)?;
+            validate_tile_alignment("z", &roi.z(), origin[2], dimensions[2], tile_depth.max(1))?;
+
+            // SAFETY: Pixel is sealed to initialized scalar layouts, and the
+            // shim re-derives the layout from this level's own dimensions.
+            unsafe {
+                sys::imageio::imageinput_read_tiles_span(
+                    self.inner_mut(),
+                    subimage_i32,
+                    mip_level_i32,
+                    roi.x().start,
+                    roi.x().end,
+                    roi.y().start,
+                    roi.y().end,
+                    roi.z().start,
+                    roi.z().end,
+                    channel_begin,
+                    channel_end,
+                    pixel::type_desc::<T>(),
+                    pixel::as_bytes_mut(pixels),
+                )
+            }
+        } else {
+            let width_end = i64::from(origin[0]) + i64::from(dimensions[0]);
+            if i64::from(roi.x().start) != i64::from(origin[0])
+                || i64::from(roi.x().end) != width_end
+            {
+                return Err(Error::InvalidRegion {
+                    axis: "x",
+                    message: format!(
+                        "a scanline image is read a whole row at a time, so the x range must \
+                         cover the full width {}..{width_end}",
+                        origin[0]
+                    ),
+                });
+            }
+            if roi.depth() != 1 {
+                return Err(Error::InvalidRegion {
+                    axis: "z",
+                    message: "a scanline image is read one z slice at a time".to_owned(),
+                });
+            }
+
+            // SAFETY: as in the tiled branch.
+            unsafe {
+                sys::imageio::imageinput_read_scanlines_span(
+                    self.inner_mut(),
+                    subimage_i32,
+                    mip_level_i32,
+                    roi.y().start,
+                    roi.y().end,
+                    roi.z().start,
+                    channel_begin,
+                    channel_end,
+                    pixel::type_desc::<T>(),
+                    pixel::as_bytes_mut(pixels),
+                )
+            }
+        };
+
+        if succeeded {
+            Ok(())
+        } else {
+            Err(self.take_error("read region"))
         }
     }
 
@@ -479,7 +610,7 @@ impl ImageOutput {
         size: u32,
     ) -> Result<u32> {
         if range.start >= range.end {
-            return Err(Error::InvalidWriteRegion {
+            return Err(Error::InvalidRegion {
                 axis,
                 message: format!(
                     "range must be non-empty and increasing, got {}..{}",
@@ -489,7 +620,7 @@ impl ImageOutput {
         }
         let end = i64::from(origin) + i64::from(size);
         if i64::from(range.start) < i64::from(origin) || i64::from(range.end) > end {
-            return Err(Error::InvalidWriteRegion {
+            return Err(Error::InvalidRegion {
                 axis,
                 message: format!(
                     "range {}..{} lies outside the data window {origin}..{end}",
@@ -551,13 +682,13 @@ fn validate_tile_alignment(
     let edge = i64::from(origin) + i64::from(size);
 
     if (i64::from(range.start) - i64::from(origin)) % tile != 0 {
-        return Err(Error::InvalidWriteRegion {
+        return Err(Error::InvalidRegion {
             axis,
             message: format!("start {} is not on the {tile}-pixel tile grid", range.start),
         });
     }
     if i64::from(range.end) != edge && (i64::from(range.end) - i64::from(origin)) % tile != 0 {
-        return Err(Error::InvalidWriteRegion {
+        return Err(Error::InvalidRegion {
             axis,
             message: format!(
                 "end {} is neither on the {tile}-pixel tile grid nor at the data window edge {edge}",

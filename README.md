@@ -45,6 +45,29 @@ cache.get_pixels_into(path, roi, &mut pixels)?;
 # Ok::<(), oiio::Error>(())
 ```
 
+Read part of one — a region is a `Roi`, so a channel subset is a narrowed data
+window:
+
+```rust,no_run
+use oiio::ImageInput;
+use std::path::Path;
+
+let mut input = ImageInput::from_path(Path::new("image.exr"))?;
+let spec = input.image_spec()?;
+
+// The first three channels of the top 64 scanlines.
+let roi = spec.data_window()?.with_y(0..64)?.with_channels(0..3)?;
+let mut pixels = vec![0.0_f32; roi.element_count()?];
+input.read_region_into(roi, &mut pixels)?;
+# Ok::<(), oiio::Error>(())
+```
+
+How the region may be shaped follows what OpenImageIO can address: a tiled
+image is read tile by tile, so each axis must sit on the tile grid or end at
+the data window edge; a scanline image is read a row at a time, so the x range
+must cover the full width. For arbitrary regions of a tiled file, the
+`ImageCache` assembles them from tiles.
+
 Write one:
 
 ```rust,no_run

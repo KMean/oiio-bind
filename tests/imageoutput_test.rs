@@ -1,46 +1,16 @@
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+mod common;
 
-use oiio::{AttributeValue, Error, ImageInput, ImageOutput, ImageSpec, Pixel, PixelFormat, Result};
+use std::path::Path;
 
-/// A scratch directory that removes itself when the test ends.
-struct ScratchDir(PathBuf);
-
-impl ScratchDir {
-    fn new(name: &str) -> Self {
-        static COUNTER: AtomicU32 = AtomicU32::new(0);
-        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let path =
-            std::env::temp_dir().join(format!("oiio-bind-{name}-{}-{unique}", std::process::id()));
-        std::fs::create_dir_all(&path).expect("could not create the scratch directory");
-        Self(path)
-    }
-
-    fn file(&self, name: &str) -> PathBuf {
-        self.0.join(name)
-    }
-}
-
-impl Drop for ScratchDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use common::{f16_ramp, f32_ramp, ScratchDir};
+use oiio::{
+    f16, AttributeValue, Error, ImageInput, ImageOutput, ImageSpec, Pixel, PixelFormat, Result,
+};
 
 /// A deterministic ramp, distinct per channel and per pixel.
 fn ramp<T: Pixel + From<u8>>(count: usize) -> Vec<T> {
     (0..count)
         .map(|index| T::from((index % 251) as u8))
-        .collect()
-}
-
-fn f32_ramp(count: usize) -> Vec<f32> {
-    (0..count).map(|index| index as f32 * 0.125 - 4.0).collect()
-}
-
-fn f16_ramp(count: usize) -> Vec<half::f16> {
-    (0..count)
-        .map(|index| half::f16::from_f32(index as f32 * 0.5 - 2.0))
         .collect()
 }
 
@@ -122,7 +92,7 @@ fn round_trips_a_half_exr_without_loss() {
     output.write_image(&written).unwrap();
     output.close().unwrap();
 
-    let (read_spec, read): (ImageSpec, Vec<half::f16>) = read_back(&path).unwrap();
+    let (read_spec, read): (ImageSpec, Vec<f16>) = read_back(&path).unwrap();
     assert_eq!(read_spec.format(), PixelFormat::F16);
     assert_eq!(read, written);
 }
@@ -147,7 +117,7 @@ fn preserves_channel_names_and_metadata() {
     output.write_image(&written).unwrap();
     output.close().unwrap();
 
-    let (read_spec, _): (ImageSpec, Vec<half::f16>) = read_back(&path).unwrap();
+    let (read_spec, _): (ImageSpec, Vec<f16>) = read_back(&path).unwrap();
     assert_eq!(
         read_spec.channel_names(),
         ["depth.Z", "motion.u", "motion.v"]
@@ -185,7 +155,7 @@ fn reports_unmodelled_metadata_types_without_losing_them() {
 
     // OpenEXR always records a screen window centre, which is a float pair and
     // therefore not one of the three directly modelled attribute types.
-    let (read_spec, _): (ImageSpec, Vec<half::f16>) = read_back(&path).unwrap();
+    let (read_spec, _): (ImageSpec, Vec<f16>) = read_back(&path).unwrap();
     let centre = read_spec
         .attribute("screenWindowCenter")
         .expect("OpenEXR records a screen window centre");
@@ -264,7 +234,7 @@ fn writes_a_tiled_exr_tile_by_tile() {
     }
     output.close().unwrap();
 
-    let (read_spec, read): (ImageSpec, Vec<half::f16>) = read_back(&path).unwrap();
+    let (read_spec, read): (ImageSpec, Vec<f16>) = read_back(&path).unwrap();
     assert!(read_spec.is_tiled());
     assert_eq!(read_spec.tile_dimensions(), [16, 16, 1]);
     assert_eq!(read, written);
@@ -309,7 +279,7 @@ fn writes_and_reads_back_mip_levels() {
         assert_eq!(spec.dimensions(), level.dimensions());
 
         let expected = f16_ramp(level.element_count().unwrap());
-        let mut pixels = vec![half::f16::default(); expected.len()];
+        let mut pixels = vec![f16::default(); expected.len()];
         input
             .read_image_into_at(0, index as u32, &mut pixels)
             .unwrap();
@@ -382,7 +352,7 @@ fn honours_a_non_zero_data_window_origin() {
     output.write_scanlines(-7..-3, &written).unwrap();
     output.close().unwrap();
 
-    let (read_spec, read): (ImageSpec, Vec<half::f16>) = read_back(&path).unwrap();
+    let (read_spec, read): (ImageSpec, Vec<f16>) = read_back(&path).unwrap();
     assert_eq!(read_spec.origin(), [12, -7, 0]);
     assert_eq!(read_spec.full_dimensions(), [32, 32, 1]);
     assert_eq!(read, written);
@@ -429,15 +399,15 @@ fn rejects_write_regions_outside_the_data_window() {
     let row = vec![0.0_f32; 8];
     assert!(matches!(
         output.write_scanlines(7..9, &[row.clone(), row.clone()].concat()),
-        Err(Error::InvalidWriteRegion { axis: "y", .. })
+        Err(Error::InvalidRegion { axis: "y", .. })
     ));
     assert!(matches!(
         output.write_scanlines(4..4, &row),
-        Err(Error::InvalidWriteRegion { axis: "y", .. })
+        Err(Error::InvalidRegion { axis: "y", .. })
     ));
     assert!(matches!(
         output.write_scanlines(-1..1, &row),
-        Err(Error::InvalidWriteRegion { axis: "y", .. })
+        Err(Error::InvalidRegion { axis: "y", .. })
     ));
 }
 
@@ -452,14 +422,14 @@ fn rejects_tile_regions_that_are_not_on_the_tile_grid() {
         .unwrap();
     let mut output = ImageOutput::create(&path, &spec).unwrap();
 
-    let tile = vec![half::f16::ZERO; 16 * 16];
+    let tile = vec![f16::ZERO; 16 * 16];
     assert!(matches!(
         output.write_tiles(8..24, 0..16, 0..1, &tile),
-        Err(Error::InvalidWriteRegion { axis: "x", .. })
+        Err(Error::InvalidRegion { axis: "x", .. })
     ));
     assert!(matches!(
         output.write_tiles(0..16, 4..20, 0..1, &tile),
-        Err(Error::InvalidWriteRegion { axis: "y", .. })
+        Err(Error::InvalidRegion { axis: "y", .. })
     ));
     // Aligned, but the buffer describes a different region.
     assert!(matches!(
@@ -477,7 +447,7 @@ fn rejects_tile_writes_to_a_scanline_image() {
     assert!(!spec.is_tiled());
 
     let mut output = ImageOutput::create(&path, &spec).unwrap();
-    let pixels = vec![half::f16::ZERO; 64];
+    let pixels = vec![f16::ZERO; 64];
     assert!(matches!(
         output.write_tiles(0..8, 0..8, 0..1, &pixels),
         Err(Error::InvalidImageSpec(_))

@@ -234,6 +234,37 @@ mod ffi {
         ) -> bool;
         /// The byte slice must be aligned for and contain initialized storage
         /// for `format`. Its length must exactly match the requested image.
+        /// Safety: the buffer must be writable for its full length.
+        pub unsafe fn imageinput_read_scanlines_span(
+            imageinput: Pin<&mut ImageInput>,
+            subimage: i32,
+            miplevel: i32,
+            ybegin: i32,
+            yend: i32,
+            z: i32,
+            chbegin: i32,
+            chend: i32,
+            format: TypeDesc,
+            data: &mut [u8],
+        ) -> bool;
+
+        /// Safety: the buffer must be writable for its full length.
+        pub unsafe fn imageinput_read_tiles_span(
+            imageinput: Pin<&mut ImageInput>,
+            subimage: i32,
+            miplevel: i32,
+            xbegin: i32,
+            xend: i32,
+            ybegin: i32,
+            yend: i32,
+            zbegin: i32,
+            zend: i32,
+            chbegin: i32,
+            chend: i32,
+            format: TypeDesc,
+            data: &mut [u8],
+        ) -> bool;
+
         pub unsafe fn imageinput_read_image_span(
             imageinput: Pin<&mut ImageInput>,
             subimage: i32,

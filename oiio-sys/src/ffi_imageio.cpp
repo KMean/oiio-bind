@@ -617,6 +617,78 @@ imageinput_read_image_span(ImageInput& imageinput, int subimage, int miplevel,
                                  layout.z_stride);
 }
 
+namespace {
+// Shared front half of the bounded partial reads: resolve the level's
+// dimensions and normalise the channel range.
+inline bool
+bounded_read_setup(ImageInput& imageinput, int subimage, int miplevel,
+                   int chbegin, int& chend, ImageSpec& spec)
+{
+    spec = imageinput.spec_dimensions(subimage, miplevel);
+    if (chend < 0 || chend > spec.nchannels)
+        chend = spec.nchannels;
+    return imagespec_valid(spec) && chbegin >= 0 && chbegin < chend;
+}
+}  // namespace
+
+bool
+imageinput_read_scanlines_span(ImageInput& imageinput, int subimage,
+                               int miplevel, int ybegin, int yend, int z,
+                               int chbegin, int chend, TypeDesc format,
+                               rust::Slice<uint8_t> data)
+{
+    ImageSpec spec;
+    detail::PixelLayout layout;
+    if (!bounded_read_setup(imageinput, subimage, miplevel, chbegin, chend,
+                            spec)
+        || ybegin >= yend || ybegin < spec.y
+        || yend > static_cast<int64_t>(spec.y) + spec.height || z < spec.z
+        || z >= static_cast<int64_t>(spec.z) + spec.depth
+        || !detail::bounded_pixel_layout(static_cast<int64_t>(chend) - chbegin,
+                                         spec.width,
+                                         static_cast<int64_t>(yend) - ybegin, 1,
+                                         format, data.size(), layout)) {
+        imageinput.errorfmt(
+            "invalid scanline range or destination buffer for bounded read");
+        return false;
+    }
+
+    return imageinput.read_scanlines(subimage, miplevel, ybegin, yend, z,
+                                     chbegin, chend, format, data.data(),
+                                     layout.x_stride, layout.y_stride);
+}
+
+bool
+imageinput_read_tiles_span(ImageInput& imageinput, int subimage, int miplevel,
+                           int xbegin, int xend, int ybegin, int yend,
+                           int zbegin, int zend, int chbegin, int chend,
+                           TypeDesc format, rust::Slice<uint8_t> data)
+{
+    ImageSpec spec;
+    detail::PixelLayout layout;
+    if (!bounded_read_setup(imageinput, subimage, miplevel, chbegin, chend,
+                            spec)
+        || spec.tile_width <= 0 || xbegin >= xend || ybegin >= yend
+        || zbegin >= zend || xbegin < spec.x
+        || xend > static_cast<int64_t>(spec.x) + spec.width || ybegin < spec.y
+        || yend > static_cast<int64_t>(spec.y) + spec.height || zbegin < spec.z
+        || zend > static_cast<int64_t>(spec.z) + spec.depth
+        || !detail::bounded_pixel_layout(static_cast<int64_t>(chend) - chbegin,
+                                         static_cast<int64_t>(xend) - xbegin,
+                                         static_cast<int64_t>(yend) - ybegin,
+                                         static_cast<int64_t>(zend) - zbegin,
+                                         format, data.size(), layout)) {
+        imageinput.errorfmt(
+            "invalid tile range or destination buffer for bounded read");
+        return false;
+    }
+
+    return imageinput.read_tiles(subimage, miplevel, xbegin, xend, ybegin, yend,
+                                 zbegin, zend, chbegin, chend, format,
+                                 data.data(), layout.x_stride, layout.y_stride,
+                                 layout.z_stride);
+}
+
 bool
 imageinput_read_native_deep_scanlines(ImageInput& imageinput, int subimage,
                                       int miplevel, int ybegin, int yend, int z,
