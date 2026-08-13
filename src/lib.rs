@@ -79,6 +79,7 @@ mod imageio;
 mod pixel;
 mod pixel_format;
 mod roi;
+mod texture;
 
 pub use attribute::AttributeValue;
 pub use color::ColorConfig;
@@ -92,6 +93,9 @@ pub use imageio::{ImageInput, ImageOutput};
 pub use pixel::Pixel;
 pub use pixel_format::PixelFormat;
 pub use roi::Roi;
+pub use texture::{
+    Derivatives, InterpolationMode, MipMode, TextureOptions, TextureSystem, WrapMode,
+};
 
 /// Backwards-compatible name for errors returned by `ImageInput`.
 pub type ImageInputIoError = Error;

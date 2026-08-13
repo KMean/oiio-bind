@@ -12,6 +12,7 @@ const NAMES: &[&str] = &[
     "imagebuf",
     "imagebufalgo",
     "imagecache",
+    "texture",
     "imageio",
     "typedesc",
 ];

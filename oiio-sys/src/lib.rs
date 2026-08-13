@@ -12,4 +12,5 @@ pub mod imagebuf;
 pub mod imagebufalgo;
 pub mod imagecache;
 pub mod imageio;
+pub mod texture;
 pub mod typedesc;
