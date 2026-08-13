@@ -9,7 +9,11 @@
 #include <cstdint>
 #include <limits>
 
-#if !OIIO_VERSION_GREATER_EQUAL(3, 1, 4)
+// Deliberately not written as !OIIO_VERSION_GREATER_EQUAL(3, 1, 4). That macro
+// expands to an unparenthesised `OIIO_VERSION >= ...`, so a leading `!` binds
+// to OIIO_VERSION alone and the test silently evaluates to `0 >= version`,
+// which is always false. Comparing OIIO_VERSION directly cannot misparse.
+#if OIIO_VERSION < OIIO_MAKE_VERSION(3, 1, 4)
 #    error "oiio-bind's bounded pixel API requires OpenImageIO 3.1.4 or newer"
 #endif
 
