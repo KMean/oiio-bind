@@ -6,7 +6,8 @@
 //! caller needs to match on becomes unnameable.
 
 use oiio::algo::{
-    self, ChannelSource, CompareSummary, ContrastRemap, FitMode, Operand, PixelStats, WarpOptions,
+    self, ChannelSource, CompareSummary, ContrastRemap, FitMode, OcioOptions, Operand, PixelStats,
+    WarpOptions,
 };
 use oiio::{
     f16, make_texture, make_texture_from_buffer, AttributeValue, ColorConfig, DeepChannel,
@@ -139,6 +140,32 @@ fn a_dependent_can_use_the_whole_surface() -> Result<()> {
         Some(spec.data_window()?.with_x(0..8)?),
     )?;
     assert_eq!(trimmed.spec()?.origin(), [0, 0, 0]);
+
+    // Colour beyond a space change.
+    let mut graded = ImageBuf::empty()?;
+    algo::color_matrix_transform(
+        &mut graded,
+        &image,
+        &[
+            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        ],
+        false,
+        None,
+    )?;
+    let ocio: OcioOptions<'_> = OcioOptions::default();
+    assert!(ocio.unpremult);
+    // These need a configuration that defines the names, so only the call
+    // shape is asserted here; algo_color_test covers the behaviour.
+    let _ = algo::ocio_look(&mut graded, &image, "", None, None, &ocio, None);
+    let _ = algo::ocio_display(&mut graded, &image, "", "", None, "", &ocio, None);
+    let _ = algo::ocio_named_transform(&mut graded, &image, "", &ocio, None);
+    let _ = algo::ocio_file_transform(
+        &mut graded,
+        &image,
+        std::path::Path::new("none.cube"),
+        &ocio,
+        None,
+    );
 
     // The measurements.
     let stats: PixelStats = algo::pixel_stats(&image, None)?;

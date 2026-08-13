@@ -188,6 +188,66 @@ mod ffi {
             nthreads: i32,
         ) -> bool;
 
+        pub fn imagebufalgo_colormatrixtransform(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            matrix: &[f32],
+            unpremult: bool,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_ociolook(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            looks: &str,
+            fromspace: &str,
+            tospace: &str,
+            unpremult: bool,
+            inverse: bool,
+            context_key: &str,
+            context_value: &str,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_ociodisplay(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            display: &str,
+            view: &str,
+            fromspace: &str,
+            looks: &str,
+            unpremult: bool,
+            inverse: bool,
+            context_key: &str,
+            context_value: &str,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_ociofiletransform(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            name: &str,
+            unpremult: bool,
+            inverse: bool,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_ocionamedtransform(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            name: &str,
+            unpremult: bool,
+            inverse: bool,
+            context_key: &str,
+            context_value: &str,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
         pub fn imagebufalgo_resize(
             dst: Pin<&mut ImageBuf>,
             src: &ImageBuf,

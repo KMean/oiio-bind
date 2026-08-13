@@ -1,6 +1,7 @@
 #include "ffi_imagebufalgo.h"
 #include "oiio-sys/src/imagebufalgo.rs.h"
 
+#include <OpenImageIO/color.h>
 #include <OpenImageIO/paramlist.h>
 
 #include <algorithm>
@@ -48,6 +49,51 @@ collect_texture_failure(const std::ostringstream& printed, rust::String& error)
         message += logged;
     }
     error = rust::String(message);
+}
+
+// Every colour operation shares one pixel engine, and that engine corrupts
+// channels past the fourth. Where color_ocio.cpp says
+//
+//     // If there are "leftover" channels, just copy them
+//     // unaltered from the source.
+//
+// the loop underneath it writes `r[c] = 0.5 + 10 * a[c];`. It looks like
+// debugging code that was committed; whatever its history, it is the content
+// of both 3.1.9 and 3.2.0.2dev, and it means any colour conversion of an
+// image with more than four channels — a multi-AOV EXR, say — silently
+// scribbles over every channel after the first four.
+//
+// The four the transform actually reads are correct, so the repair is to copy
+// the rest from the source afterwards, which is what the comment promises. The
+// copy costs one pass over channels that were about to be wrong anyway.
+bool
+repair_leftover_channels(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                         int nthreads)
+{
+    ROI bounded = roi.defined() ? roi : src.roi();
+    bounded.chend = std::min(bounded.chend, src.nchannels());
+    if (bounded.chend <= 4)
+        return true;
+
+    ROI leftover    = bounded;
+    leftover.chbegin = 4;
+    leftover.chend   = std::min(bounded.chend, dst.nchannels());
+    if (leftover.chend <= leftover.chbegin)
+        return true;
+
+    return OIIO::ImageBufAlgo::copy(dst, src, OIIO::TypeDesc(), leftover,
+                                    nthreads);
+}
+
+// ociolook resolves "scene_linear" through the ColorConfig two statements
+// before it checks whether that pointer is null, so the documented way of
+// asking for the source's own colour space crashes on the default
+// configuration. Every colour shim here passes a real ColorConfig, which side
+// steps it entirely.
+const OIIO::ColorConfig&
+default_color_config()
+{
+    return OIIO::ColorConfig::default_colorconfig();
 }
 
 // None of the statistics guards against a deep image, and a deep ImageBuf's
@@ -411,10 +457,119 @@ imagebufalgo_colorconvert(ImageBuf& dst, const ImageBuf& src,
                           const rust::Str fromspace, const rust::Str tospace,
                           bool unpremult, const ROI& roi, int nthreads)
 {
-    return OIIO::ImageBufAlgo::colorconvert(
-        dst, src, OIIO::string_view(fromspace.data(), fromspace.size()),
-        OIIO::string_view(tospace.data(), tospace.size()), unpremult, "", "",
-        nullptr, roi, nthreads);
+    const std::string from(to_string_view(fromspace));
+    const std::string to(to_string_view(tospace));
+    if (!OIIO::ImageBufAlgo::colorconvert(dst, src, from, to, unpremult, "", "",
+                                          &default_color_config(), roi,
+                                          nthreads))
+        return false;
+    return repair_leftover_channels(dst, src, roi, nthreads);
+}
+
+bool
+imagebufalgo_colormatrixtransform(ImageBuf& dst, const ImageBuf& src,
+                                  rust::Slice<const float> matrix,
+                                  bool unpremult, const ROI& roi, int nthreads)
+{
+    if (matrix.size() != 16) {
+        dst.errorfmt("colour matrix transform: the matrix needs sixteen "
+                     "values, got {}",
+                     matrix.size());
+        return false;
+    }
+    float m[4][4];
+    for (std::size_t row = 0; row < 4; ++row)
+        for (std::size_t column = 0; column < 4; ++column)
+            m[row][column] = matrix[row * 4 + column];
+
+    if (!OIIO::ImageBufAlgo::colormatrixtransform(dst, src, m, unpremult, roi,
+                                                  nthreads))
+        return false;
+    return repair_leftover_channels(dst, src, roi, nthreads);
+}
+
+bool
+imagebufalgo_ociolook(ImageBuf& dst, const ImageBuf& src,
+                      const rust::Str looks, const rust::Str fromspace,
+                      const rust::Str tospace, bool unpremult, bool inverse,
+                      const rust::Str context_key,
+                      const rust::Str context_value, const ROI& roi,
+                      int nthreads)
+{
+    const std::string look_list(to_string_view(looks));
+    const std::string from(to_string_view(fromspace));
+    const std::string to(to_string_view(tospace));
+    const std::string key(to_string_view(context_key));
+    const std::string value(to_string_view(context_value));
+
+    if (!OIIO::ImageBufAlgo::ociolook(dst, src, look_list, from, to, unpremult,
+                                      inverse, key, value,
+                                      &default_color_config(), roi, nthreads))
+        return false;
+    return repair_leftover_channels(dst, src, roi, nthreads);
+}
+
+bool
+imagebufalgo_ociodisplay(ImageBuf& dst, const ImageBuf& src,
+                         const rust::Str display, const rust::Str view,
+                         const rust::Str fromspace, const rust::Str looks,
+                         bool unpremult, bool inverse,
+                         const rust::Str context_key,
+                         const rust::Str context_value, const ROI& roi,
+                         int nthreads)
+{
+    const std::string display_name(to_string_view(display));
+    const std::string view_name(to_string_view(view));
+    const std::string from(to_string_view(fromspace));
+    const std::string look_list(to_string_view(looks));
+    const std::string key(to_string_view(context_key));
+    const std::string value(to_string_view(context_value));
+
+    if (!OIIO::ImageBufAlgo::ociodisplay(dst, src, display_name, view_name,
+                                         from, look_list, unpremult, inverse,
+                                         key, value, &default_color_config(),
+                                         roi, nthreads))
+        return false;
+    return repair_leftover_channels(dst, src, roi, nthreads);
+}
+
+bool
+imagebufalgo_ociofiletransform(ImageBuf& dst, const ImageBuf& src,
+                               const rust::Str name, bool unpremult,
+                               bool inverse, const ROI& roi, int nthreads)
+{
+    // OpenImageIO hands this straight to OCIO through c_str(string_view),
+    // which reads one byte past a view that is not NUL-terminated. A Rust
+    // &str never is, so it becomes a std::string here first.
+    const std::string transform(to_string_view(name));
+    if (transform.empty()) {
+        dst.errorfmt("colour file transform: no transform file was named");
+        return false;
+    }
+    if (!OIIO::ImageBufAlgo::ociofiletransform(dst, src, transform, unpremult,
+                                               inverse, &default_color_config(),
+                                               roi, nthreads))
+        return false;
+    return repair_leftover_channels(dst, src, roi, nthreads);
+}
+
+bool
+imagebufalgo_ocionamedtransform(ImageBuf& dst, const ImageBuf& src,
+                                const rust::Str name, bool unpremult,
+                                bool inverse, const rust::Str context_key,
+                                const rust::Str context_value, const ROI& roi,
+                                int nthreads)
+{
+    const std::string transform(to_string_view(name));
+    const std::string key(to_string_view(context_key));
+    const std::string value(to_string_view(context_value));
+
+    if (!OIIO::ImageBufAlgo::ocionamedtransform(dst, src, transform, unpremult,
+                                                inverse, key, value,
+                                                &default_color_config(), roi,
+                                                nthreads))
+        return false;
+    return repair_leftover_channels(dst, src, roi, nthreads);
 }
 
 bool

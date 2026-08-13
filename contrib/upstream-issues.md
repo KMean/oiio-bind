@@ -304,3 +304,84 @@ The index should be `(ybegin - roi.ybegin) / blocksize`.
 Found while binding these for Rust. The binding does not expose `blocksize` at
 all, partly for this and partly because the two paths give different digests
 for identical pixels.
+
+## Issue 8 — the colour engine corrupts channels past the fourth
+
+**Title:** `colorconvert` and friends write `0.5 + 10 * src` into channels 4 and
+above instead of copying them
+
+In `color_ocio.cpp`, at the end of `colorconvert_impl`:
+
+```c++
+if (channelsToCopy < roi.chend && (&R != &A)) {
+    // If there are "leftover" channels, just copy them
+    // unaltered from the source.
+    a.rerange(roi.xbegin, roi.xend, j, j + 1, k, k + 1);
+    r.rerange(roi.xbegin, roi.xend, j, j + 1, k, k + 1);
+    for (; !r.done(); ++r, ++a)
+        for (int c = channelsToCopy; c < roi.chend; ++c)
+            r[c] = 0.5 + 10 * a[c];
+}
+```
+
+The comment says the leftover channels are copied unaltered. The loop scales
+and offsets them instead. It has the shape of debugging code that was committed
+by accident.
+
+Every operation built on this engine is affected — `colorconvert`,
+`colormatrixtransform`, `ociolook`, `ociodisplay`, `ociofiletransform`,
+`ocionamedtransform` — for any image with more than four channels, which in
+practice means most multi-AOV EXRs. It only triggers in the generic template
+path with a destination distinct from the source, so the RGBA fast path hides
+it, which is presumably why it has lasted.
+
+Measured on 3.1.9: converting a six-channel image whose fifth and sixth
+channels hold 0.125 and 0.875 gives 1.75 and 9.25, exactly `0.5 + 10 * x`.
+The line is identical on 3.2.0.2dev.
+
+The fix is what the comment already says:
+
+```c++
+r[c] = a[c];
+```
+
+Found while binding the colour operations for Rust. Until it is fixed there,
+the binding copies those channels from the source itself after each colour
+call, and has a regression test that fails without that repair.
+
+## Issue 9 — `ociolook` dereferences the ColorConfig before checking it
+
+**Title:** `ImageBufAlgo::ociolook` null-dereferences when `fromspace` or
+`tospace` is empty and no ColorConfig is supplied
+
+```c++
+if (from.empty() || from == "current") {
+    auto linearspace = colorconfig->resolve("scene_linear");
+    ...
+}
+...
+{
+    if (!colorconfig)
+        colorconfig = &ColorConfig::default_colorconfig();
+```
+
+The null check is fifteen lines below the first dereference. `colorconfig`
+defaults to `nullptr`, and an empty `fromspace` is the documented way to say
+"use the source's own colour space", so the combination is neither exotic nor
+discouraged — it is the default call.
+
+`ColorConfig::resolve` dereferences `getImpl()`, so this is an immediate crash
+rather than a bad answer.
+
+`ociodisplay` does the same job in the correct order, which is what the fix
+should look like: hoist the
+
+```c++
+if (!colorconfig)
+    colorconfig = &ColorConfig::default_colorconfig();
+```
+
+above the two `from`/`to` resolution blocks.
+
+Found while binding these for Rust. The binding always passes a real
+ColorConfig, so it cannot reach this.

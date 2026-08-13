@@ -160,6 +160,46 @@ imagebufalgo_colorconvert(ImageBuf& dst, const ImageBuf& src,
                           const rust::Str fromspace, const rust::Str tospace,
                           bool unpremult, const ROI& roi, int nthreads);
 
+// The remaining colour operations. Every one of them shares OpenImageIO's
+// colorconvert pixel engine, which corrupts channels past the fourth, so each
+// shim repairs those afterwards; see the implementation.
+//
+// None takes a ColorConfig: they always use the default one. Passing nothing
+// is not an option, because ociolook dereferences the configuration before it
+// checks whether one was given.
+bool
+imagebufalgo_colormatrixtransform(ImageBuf& dst, const ImageBuf& src,
+                                  rust::Slice<const float> matrix,
+                                  bool unpremult, const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_ociolook(ImageBuf& dst, const ImageBuf& src, const rust::Str looks,
+                      const rust::Str fromspace, const rust::Str tospace,
+                      bool unpremult, bool inverse, const rust::Str context_key,
+                      const rust::Str context_value, const ROI& roi,
+                      int nthreads);
+
+bool
+imagebufalgo_ociodisplay(ImageBuf& dst, const ImageBuf& src,
+                         const rust::Str display, const rust::Str view,
+                         const rust::Str fromspace, const rust::Str looks,
+                         bool unpremult, bool inverse,
+                         const rust::Str context_key,
+                         const rust::Str context_value, const ROI& roi,
+                         int nthreads);
+
+bool
+imagebufalgo_ociofiletransform(ImageBuf& dst, const ImageBuf& src,
+                               const rust::Str name, bool unpremult,
+                               bool inverse, const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_ocionamedtransform(ImageBuf& dst, const ImageBuf& src,
+                                const rust::Str name, bool unpremult,
+                                bool inverse, const rust::Str context_key,
+                                const rust::Str context_value, const ROI& roi,
+                                int nthreads);
+
 // Resizing takes its filter through OpenImageIO's keyword arguments; the
 // options list is assembled here rather than exposed across the bridge. An
 // empty filter name asks OpenImageIO to choose one.

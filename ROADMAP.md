@@ -168,8 +168,13 @@ The `ImageBufAlgo` surface is being completed in slices, each one commit:
 - [ ] Filtering: `convolve`, `make_kernel`, `unsharp_mask`, `median_filter`,
   `laplacian`, `dilate`, `erode`, and the Fourier pair.
 - [ ] Deep compositing: `flatten`, `deepen`, `deep_merge`, `deep_holdout`.
-- [ ] Colour transforms beyond a space change: `colormatrixtransform`,
-  `ociolook`, `ociodisplay`, `ociofiletransform`.
+- [x] Colour transforms beyond a space change: `color_matrix_transform`,
+  `ocio_look`, `ocio_display`, `ocio_file_transform` and
+  `ocio_named_transform`. All of them, and `color_convert`, share one
+  OpenImageIO pixel engine that corrupts channels past the fourth, so each
+  restores those from the source; see issue 8. They also always pass a real
+  `ColorConfig`, because `ociolook` dereferences it before checking whether
+  one was given (issue 9).
 - [ ] Drawing and generators: `render_text`, `render_line`, `render_box`,
   `render_point`, `noise`, `checker`.
 

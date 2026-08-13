@@ -23,6 +23,11 @@ crates.io yet, so there are no version numbers to hang them on.
   another image or a constant, `abs`, `absdiff`, `copy`, `crop`, `flip`,
   `flop`, `transpose`, `compare`, `resize`, `resample`, `fit`, `over`,
   `premult`, `unpremult`, `channel_sum`, `channels` and `color_convert`.
+- `oiio::algo` colour transforms beyond a space change:
+  `color_matrix_transform` by a 4x4 matrix, and `ocio_look`, `ocio_display`,
+  `ocio_file_transform` and `ocio_named_transform` through OpenColorIO.
+  `OcioOptions` carries the settings they share, defaulting as OpenImageIO
+  does — which means unpremultiplication is on.
 - `oiio::algo` measurements: `pixel_stats` for range, mean, spread and how
   many values were not finite; `histogram`; `constant_color`,
   `is_constant_channel` and `is_monochrome`; `nonzero_region` to shrink-wrap
@@ -68,6 +73,21 @@ crates.io yet, so there are no version numbers to hang them on.
 
 ### Fixed
 
+- Colour operations no longer corrupt channels past the fourth. OpenImageIO's
+  colour engine says in a comment that it copies leftover channels "unaltered
+  from the source" and then writes `0.5 + 10 * source` into them, so any
+  conversion of an image with more than four channels — a multi-AOV EXR, say —
+  silently ruined every channel after the first four. This affected
+  `color_convert`, which this crate already had, as much as the new
+  transforms. Each colour call now restores those channels from the source,
+  and a test fails without the repair. Drafted for upstream as issue 8;
+  present in 3.1 and still in 3.2.
+- `algo::ocio_look` cannot be made to dereference a null pointer.
+  OpenImageIO's `ociolook` resolves a colour space through the `ColorConfig`
+  fifteen lines before it checks whether one was supplied, so the documented
+  way of asking for the source's own space crashes on the default
+  configuration. The bindings always pass a real configuration. Drafted for
+  upstream as issue 9.
 - The measurements cannot be made to read or write out of bounds, nor to
   dereference a deep image's absent pixel pointer. OpenImageIO's
   `isConstantColor` sizes its reference buffer to the region's channel count

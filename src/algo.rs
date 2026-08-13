@@ -124,6 +124,196 @@ binary_operation!(
     "divide"
 );
 
+/// Settings the OpenColorIO operations share.
+///
+/// [`Default`] matches OpenImageIO's own defaults, which means `unpremult` is
+/// **on**: colour is divided by alpha before the transform and multiplied back
+/// after, which is what a premultiplied image needs.
+#[derive(Debug, Clone, Copy)]
+pub struct OcioOptions<'a> {
+    /// Divide colour by alpha before transforming and multiply back after.
+    ///
+    /// OpenImageIO ignores this when the region covers fewer than four
+    /// channels, or when the source is marked as holding unassociated alpha.
+    pub unpremult: bool,
+    /// Apply the transform backwards.
+    pub inverse: bool,
+    /// An OpenColorIO context key, or several separated by commas.
+    ///
+    /// Keys and values are matched up pairwise. If the two lists are different
+    /// lengths, or only one is given, OpenImageIO discards the context without
+    /// saying so.
+    pub context_key: &'a str,
+    /// The value, or values, for [`context_key`](Self::context_key).
+    pub context_value: &'a str,
+}
+
+impl Default for OcioOptions<'_> {
+    fn default() -> Self {
+        Self {
+            unpremult: true,
+            inverse: false,
+            context_key: "",
+            context_value: "",
+        }
+    }
+}
+
+/// Transform colours by a 4x4 matrix.
+///
+/// `matrix` is sixteen values in row order, applied as a row vector times the
+/// matrix, so elements 12, 13 and 14 are the translation.
+///
+/// Two consequences of OpenImageIO applying this as a four-component transform
+/// are worth knowing. The fourth component is the alpha channel when the image
+/// has one and zero when it does not, so on an RGB image the translation row is
+/// multiplied by zero and has no effect; and on an RGBA image, a matrix whose
+/// fourth column is not `(0, 0, 0, 1)` changes alpha as well as colour.
+///
+/// This does not consult OpenColorIO, and does not update the image's recorded
+/// colour space, which will go on claiming whatever the source said.
+pub fn color_matrix_transform(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    matrix: &[f32; 16],
+    unpremult: bool,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_colormatrixtransform(
+        dst.inner_mut(),
+        src.inner(),
+        matrix,
+        unpremult,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "colour matrix transform", succeeded)
+}
+
+/// Apply one or more OpenColorIO looks.
+///
+/// `looks` is a comma- or colon-separated list, each optionally prefixed `+` or
+/// `-` to apply it forwards or backwards. An empty list is allowed, and gives a
+/// plain conversion from one space to the other.
+///
+/// `from_space` and `to_space` of `None` mean the source's own recorded colour
+/// space, falling back to the configuration's `scene_linear` role.
+pub fn ocio_look(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    looks: &str,
+    from_space: Option<&str>,
+    to_space: Option<&str>,
+    options: &OcioOptions<'_>,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_ociolook(
+        dst.inner_mut(),
+        src.inner(),
+        looks,
+        from_space.unwrap_or_default(),
+        to_space.unwrap_or_default(),
+        options.unpremult,
+        options.inverse,
+        options.context_key,
+        options.context_value,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "OpenColorIO look", succeeded)
+}
+
+/// Apply an OpenColorIO display and view transform.
+///
+/// This is what turns a rendered image into one to put on a particular screen.
+/// `from_space` of `None` means the source's own recorded colour space.
+// Eight arguments, one past clippy's limit. The display, the view, the source
+// space and the looks are four independent names with no natural grouping —
+// inventing a struct to hold them would obscure the call rather than clarify
+// it, and OpenImageIO's own signature has them separate for the same reason.
+#[allow(clippy::too_many_arguments)]
+pub fn ocio_display(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    display: &str,
+    view: &str,
+    from_space: Option<&str>,
+    looks: &str,
+    options: &OcioOptions<'_>,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_ociodisplay(
+        dst.inner_mut(),
+        src.inner(),
+        display,
+        view,
+        from_space.unwrap_or_default(),
+        looks,
+        options.unpremult,
+        options.inverse,
+        options.context_key,
+        options.context_value,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "OpenColorIO display", succeeded)
+}
+
+/// Apply a transform read from a file: a LUT, a `.cube`, a `.clf`, or anything
+/// else OpenColorIO's file transform accepts.
+///
+/// The file is the whole transform, so there are no colour spaces to name.
+///
+/// On success OpenColorIO may retag the result's colour space from the
+/// transform file's own path, if that path matches one of the configuration's
+/// file rules — so the name of your LUT can change what the image claims to be.
+pub fn ocio_file_transform(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    transform_path: &std::path::Path,
+    options: &OcioOptions<'_>,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let name = crate::path_to_utf8(transform_path)?;
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_ociofiletransform(
+        dst.inner_mut(),
+        src.inner(),
+        name,
+        options.unpremult,
+        options.inverse,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "OpenColorIO file transform", succeeded)
+}
+
+/// Apply a transform the OpenColorIO configuration defines by name.
+pub fn ocio_named_transform(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    name: &str,
+    options: &OcioOptions<'_>,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_ocionamedtransform(
+        dst.inner_mut(),
+        src.inner(),
+        name,
+        options.unpremult,
+        options.inverse,
+        options.context_key,
+        options.context_value,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "OpenColorIO named transform", succeeded)
+}
+
 /// What [`pixel_stats`] measured, one entry per channel of the source.
 ///
 /// Every vector has the source's channel count, not the region's, so a region
