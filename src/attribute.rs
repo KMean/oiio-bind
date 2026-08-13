@@ -13,11 +13,21 @@ pub enum AttributeValue {
     Int(i32),
     Float(f32),
     String(String),
+    /// Several strings, such as OpenEXR's `multiView`.
+    Strings(Vec<String>),
+    /// Any other OpenImageIO type, carried verbatim.
+    ///
+    /// The stored bytes are the value exactly as OpenImageIO holds it, so an
+    /// attribute this crate does not model — `float2`, `uint16`, `timecode`,
+    /// an ICC profile — still survives being read from one image and written
+    /// to another. `value` is only for display, and rounds.
     Other {
-        /// The OpenImageIO type name, such as `"matrix44"` or `"float[3]"`.
+        /// The OpenImageIO type name, such as `"float2"` or `"uint8[3144]"`.
         type_name: String,
         /// The value as OpenImageIO renders it for display.
         value: String,
+        /// The value as OpenImageIO stores it.
+        bytes: Vec<u8>,
     },
 }
 
@@ -48,11 +58,15 @@ impl AttributeValue {
 
     /// Whether this crate can write the attribute back to a file.
     ///
-    /// [`AttributeValue::Other`] values are readable but are dropped when a
-    /// specification is handed to a writer, because their original
-    /// OpenImageIO type is not reconstructed from the string rendering.
+    /// Every variant can, including [`AttributeValue::Other`], which carries
+    /// the value's original bytes rather than only its printed form. The one
+    /// exception is an `Other` whose bytes did not come from OpenImageIO,
+    /// which is only possible if it was built by hand.
     pub fn is_writable(&self) -> bool {
-        !matches!(self, Self::Other { .. })
+        match self {
+            Self::Other { bytes, .. } => !bytes.is_empty(),
+            _ => true,
+        }
     }
 
     pub(crate) fn read(spec: &sys::imageio::ImageSpec, name: &str) -> Self {
@@ -66,23 +80,44 @@ impl AttributeValue {
         if scalar && type_desc.basetype == BaseType::Float32 as u8 {
             return Self::Float(sys::imageio::imagespec_get_float_attribute(spec, name, 0.0));
         }
-        if scalar && type_desc.basetype == BaseType::String as u8 {
-            return Self::String(sys::imageio::imagespec_get_string_attribute(spec, name, ""));
+        if type_desc.basetype == BaseType::String as u8 {
+            if scalar {
+                return Self::String(sys::imageio::imagespec_get_string_attribute(spec, name, ""));
+            }
+            // A string array holds pointers, not characters, so it is read as
+            // strings rather than as bytes.
+            return Self::Strings(sys::imageio::imagespec_attribute_strings(spec, name));
         }
 
         Self::Other {
             type_name: sys::typedesc::typedesc_to_str(&type_desc).to_owned(),
             value: sys::imageio::imagespec_attribute_to_string(spec, name),
+            bytes: sys::imageio::imagespec_attribute_bytes(spec, name),
         }
     }
 
-    pub(crate) fn write(&self, spec: std::pin::Pin<&mut sys::imageio::ImageSpec>, name: &str) {
+    pub(crate) fn write(&self, mut spec: std::pin::Pin<&mut sys::imageio::ImageSpec>, name: &str) {
         match self {
             Self::Int(value) => sys::imageio::imagespec_attribute_int(spec, name, *value),
             Self::Float(value) => sys::imageio::imagespec_attribute_float(spec, name, *value),
             Self::String(value) => sys::imageio::imagespec_attribute_string(spec, name, value),
-            // Deliberately not reconstructed; see `is_writable`.
-            Self::Other { .. } => {}
+            Self::Strings(values) => {
+                let type_name = format!("string[{}]", values.len());
+                sys::imageio::imagespec_attribute_set_strings(
+                    spec.as_mut(),
+                    name,
+                    &type_name,
+                    values,
+                );
+            }
+            Self::Other {
+                type_name, bytes, ..
+            } => {
+                // Re-emitted from the stored bytes, so nothing is lost to the
+                // rounding in the printed form. A mismatched length is
+                // refused by the shim rather than read past.
+                sys::imageio::imagespec_attribute_set_bytes(spec.as_mut(), name, type_name, bytes);
+            }
         }
     }
 }
@@ -117,6 +152,7 @@ impl std::fmt::Display for AttributeValue {
             Self::Int(value) => write!(formatter, "{value}"),
             Self::Float(value) => write!(formatter, "{value}"),
             Self::String(value) => formatter.write_str(value),
+            Self::Strings(values) => formatter.write_str(&values.join(", ")),
             Self::Other { value, .. } => formatter.write_str(value),
         }
     }

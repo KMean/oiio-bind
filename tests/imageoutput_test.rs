@@ -154,19 +154,66 @@ fn reports_unmodelled_metadata_types_without_losing_them() {
     output.close().unwrap();
 
     // OpenEXR always records a screen window centre, which is a float pair and
-    // therefore not one of the three directly modelled attribute types.
+    // therefore not one of the directly modelled attribute types.
     let (read_spec, _): (ImageSpec, Vec<f16>) = read_back(&path).unwrap();
     let centre = read_spec
         .attribute("screenWindowCenter")
         .expect("OpenEXR records a screen window centre");
     match centre {
-        AttributeValue::Other { type_name, value } => {
+        AttributeValue::Other {
+            type_name,
+            value,
+            bytes,
+        } => {
             assert!(type_name.contains("float"), "unexpected type {type_name}");
-            assert!(!value.is_empty());
-            assert!(!centre.is_writable());
+            assert!(!value.is_empty(), "it should still print");
+            // Two floats, carried as the eight bytes OpenImageIO stored, which
+            // is what lets it be written back out.
+            assert_eq!(bytes.len(), 8, "expected two floats of stored value");
+            assert!(centre.is_writable());
         }
         other => panic!("expected an unmodelled attribute, got {other:?}"),
     }
+}
+
+#[test]
+fn unmodelled_metadata_survives_being_written_again() {
+    let scratch = ScratchDir::new("metaroundtrip");
+    let first = scratch.file("first.exr");
+    let second = scratch.file("second.exr");
+
+    let spec = ImageSpec::new(4, 4, 3, PixelFormat::F16).unwrap();
+    let pixels = f16_ramp(spec.element_count().unwrap());
+    let mut output = ImageOutput::create(&first, &spec).unwrap();
+    output.write_image(&pixels).unwrap();
+    output.close().unwrap();
+
+    // Read it back, then write the specification we just read straight out
+    // again, without touching the attributes.
+    let (read_spec, read_pixels): (ImageSpec, Vec<f16>) = read_back(&first).unwrap();
+    let mut again = ImageOutput::create(&second, &read_spec).unwrap();
+    again.write_image(&read_pixels).unwrap();
+    again.close().unwrap();
+
+    let (final_spec, _): (ImageSpec, Vec<f16>) = read_back(&second).unwrap();
+
+    // Every attribute that was unmodelled the first time must still be there,
+    // with the same value, rather than having been quietly dropped.
+    let mut compared = 0usize;
+    for (name, before) in read_spec.attributes() {
+        if !matches!(before, AttributeValue::Other { .. }) {
+            continue;
+        }
+        let after = final_spec
+            .attribute(name)
+            .unwrap_or_else(|| panic!("{name} was lost on the second write"));
+        assert_eq!(before, after, "{name} changed on the second write");
+        compared += 1;
+    }
+    assert!(
+        compared > 0,
+        "no unmodelled attributes were present to test"
+    );
 }
 
 #[test]

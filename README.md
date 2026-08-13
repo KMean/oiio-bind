@@ -145,10 +145,12 @@ operation should decide the result's shape — `transpose` swaps the dimensions
 and `copy` can change the pixel format, neither of which happens if you hand
 them a buffer you already sized.
 
-Metadata is read as `AttributeValue`. Integer, float, and string attributes are
-modelled directly and can be written back; any other OpenImageIO type is
-preserved for inspection with its type name and OpenImageIO's own rendering of
-the value.
+Metadata is read as `AttributeValue`. Integers, floats, strings and string
+arrays are modelled directly; every other OpenImageIO type — `float2`,
+`timecode`, chromaticities, an ICC profile — is carried as its type name, its
+printed form, and the bytes OpenImageIO stored. Writing uses those bytes, so
+an attribute this crate does not understand still survives being read from one
+image and written to another rather than being silently dropped.
 
 The `oiio` crate is built using `cargo build`. `oiio-sys` discovers
 OpenImageIO in this order:

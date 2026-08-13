@@ -410,6 +410,89 @@ imagespec_attribute_to_string(const ImageSpec& spec, const rust::Str name)
     return rust::String::lossy(value.data(), value.size());
 }
 
+rust::Vec<uint8_t>
+imagespec_attribute_bytes(const ImageSpec& spec, const rust::Str name)
+{
+    rust::Vec<uint8_t> bytes;
+    const OIIO::ParamValue* attribute = spec.find_attribute(
+        to_string_view(name));
+    if (attribute == nullptr)
+        return bytes;
+
+    const int size = attribute->datasize();
+    if (size <= 0)
+        return bytes;
+    const auto* data = static_cast<const uint8_t*>(attribute->data());
+    if (data == nullptr)
+        return bytes;
+
+    bytes.reserve(std::size_t(size));
+    for (int i = 0; i < size; ++i)
+        bytes.push_back(data[i]);
+    return bytes;
+}
+
+bool
+imagespec_attribute_set_bytes(ImageSpec& spec, const rust::Str name,
+                              const rust::Str type_name,
+                              rust::Slice<const uint8_t> bytes)
+{
+    const OIIO::TypeDesc type(std::string(type_name.data(), type_name.size()));
+    if (type == OIIO::TypeUnknown)
+        return false;
+    // The value must be exactly the size the type describes, or OpenImageIO
+    // would read past what was handed to it.
+    if (type.size() != bytes.size())
+        return false;
+    if (type.basetype == OIIO::TypeDesc::STRING)
+        return false;
+
+    spec.attribute(to_string_view(name), type, bytes.data());
+    return true;
+}
+
+rust::Vec<rust::String>
+imagespec_attribute_strings(const ImageSpec& spec, const rust::Str name)
+{
+    rust::Vec<rust::String> values;
+    const OIIO::ParamValue* attribute = spec.find_attribute(
+        to_string_view(name));
+    if (attribute == nullptr || attribute->type().basetype != OIIO::TypeDesc::STRING)
+        return values;
+
+    const int count = attribute->type().basevalues();
+    const auto* strings = static_cast<const OIIO::ustring*>(attribute->data());
+    if (strings == nullptr)
+        return values;
+    for (int i = 0; i < count; ++i) {
+        const OIIO::string_view text = strings[i];
+        values.push_back(rust::String::lossy(text.data(), text.size()));
+    }
+    return values;
+}
+
+bool
+imagespec_attribute_set_strings(ImageSpec& spec, const rust::Str name,
+                                const rust::Str type_name,
+                                const rust::Vec<rust::String>& values)
+{
+    const OIIO::TypeDesc type(std::string(type_name.data(), type_name.size()));
+    if (type == OIIO::TypeUnknown || type.basetype != OIIO::TypeDesc::STRING)
+        return false;
+    if (std::size_t(type.basevalues()) != values.size())
+        return false;
+
+    // ustrings live for the life of the process, so the pointers handed to
+    // OpenImageIO stay valid after this vector goes away.
+    std::vector<OIIO::ustring> interned;
+    interned.reserve(values.size());
+    for (const rust::String& value : values)
+        interned.emplace_back(value.data(), value.size());
+
+    spec.attribute(to_string_view(name), type, interned.data());
+    return true;
+}
+
 std::unique_ptr<std::vector<ImageSpec>>
 imagespec_vector_new()
 {

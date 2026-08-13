@@ -130,6 +130,20 @@ mod ffi {
             defaultval: &str,
         ) -> String;
         pub fn imagespec_attribute_to_string(spec: &ImageSpec, name: &str) -> String;
+        pub fn imagespec_attribute_bytes(spec: &ImageSpec, name: &str) -> Vec<u8>;
+        pub fn imagespec_attribute_set_bytes(
+            spec: Pin<&mut ImageSpec>,
+            name: &str,
+            type_name: &str,
+            bytes: &[u8],
+        ) -> bool;
+        pub fn imagespec_attribute_strings(spec: &ImageSpec, name: &str) -> Vec<String>;
+        pub fn imagespec_attribute_set_strings(
+            spec: Pin<&mut ImageSpec>,
+            name: &str,
+            type_name: &str,
+            values: &Vec<String>,
+        ) -> bool;
         pub fn imagespec_vector_new() -> UniquePtr<CxxVector<ImageSpec>>;
         pub fn imagespec_vector_push(specs: Pin<&mut CxxVector<ImageSpec>>, spec: &ImageSpec);
         pub fn imagespec_attribute_names(spec: &ImageSpec) -> Vec<String>;

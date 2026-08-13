@@ -56,8 +56,12 @@ line is established and tested deliberately.
   the specification, so it needs no separate API.
 - [x] Read and write images in memory through an `IOProxy`, so a caller can
   decode bytes it already holds and encode without touching the filesystem.
-- [ ] Writing metadata whose OpenImageIO type this crate does not model
-  directly, such as matrices and arrays.
+- [x] Writing metadata whose OpenImageIO type this crate does not model
+  directly. `AttributeValue::Other` carries the value's original bytes, so a
+  `float2`, a `timecode`, an ICC profile or a chromaticity survives being read
+  from one image and written to another. Only its printed form rounds; the
+  bytes do not. String arrays are carried as strings, since OpenImageIO stores
+  those as pointers rather than characters.
 - [ ] Deep images, which the contiguous pixel API deliberately refuses.
 
 ## Notes on the OpenImageIO 3.1 span API

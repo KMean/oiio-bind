@@ -150,6 +150,27 @@ imagespec_get_string_attribute(const ImageSpec& spec, const rust::Str name,
 rust::String
 imagespec_attribute_to_string(const ImageSpec& spec, const rust::Str name);
 
+// Verbatim access to an attribute's stored value, so a type this crate does
+// not model can still be carried from one specification to another without
+// going through its printed form, which rounds floats.
+rust::Vec<uint8_t>
+imagespec_attribute_bytes(const ImageSpec& spec, const rust::Str name);
+
+bool
+imagespec_attribute_set_bytes(ImageSpec& spec, const rust::Str name,
+                              const rust::Str type_name,
+                              rust::Slice<const uint8_t> bytes);
+
+// String-typed attributes hold pointers rather than characters, so they are
+// read and written as strings instead of as bytes.
+rust::Vec<rust::String>
+imagespec_attribute_strings(const ImageSpec& spec, const rust::Str name);
+
+bool
+imagespec_attribute_set_strings(ImageSpec& spec, const rust::Str name,
+                                const rust::Str type_name,
+                                const rust::Vec<rust::String>& values);
+
 std::unique_ptr<std::vector<ImageSpec>>
 imagespec_vector_new();
 

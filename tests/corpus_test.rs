@@ -602,6 +602,101 @@ fn reads_multi_part_exrs() {
     assert!(multi_part > 0, "expected a multi-part EXR in Beachball");
 }
 
+/// Metadata this crate does not model directly must still survive being read
+/// from a real file and written to a new one. Losing a chromaticity, a
+/// timecode or a camera matrix silently is worse than refusing to write it.
+#[test]
+fn carries_unmodelled_metadata_through_a_round_trip() {
+    let root = exr_corpus_or_skip!("metadata round trip");
+
+    let mut files = Vec::new();
+    walk(&root, &mut files);
+    files.retain(|path| {
+        path.extension().and_then(|e| e.to_str()) == Some("exr")
+            && !path.components().any(|part| part.as_os_str() == "Damaged")
+    });
+    files.sort();
+
+    let scratch = std::env::temp_dir().join(format!("oiio-bind-meta-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).unwrap();
+
+    let mut checked = 0usize;
+    let mut carried = 0usize;
+    let mut dropped: Vec<String> = Vec::new();
+
+    for path in files.iter() {
+        let Ok(mut input) = ImageInput::from_path(path) else {
+            continue;
+        };
+        let Ok(spec) = input.image_spec() else {
+            continue;
+        };
+        let Ok(count) = spec.element_count() else {
+            continue;
+        };
+        if spec.is_deep() || count > 2_000_000 {
+            continue;
+        }
+        // Only files that actually carry something unmodelled are interesting.
+        let unmodelled: Vec<&String> = spec
+            .attributes()
+            .iter()
+            .filter(|(_, value)| matches!(value, oiio::AttributeValue::Other { .. }))
+            .map(|(name, _)| name)
+            .collect();
+        if unmodelled.is_empty() {
+            continue;
+        }
+
+        let mut pixels = vec![0.0_f32; count];
+        if input.read_image_into(&mut pixels).is_err() {
+            continue;
+        }
+
+        let written = scratch.join(format!("round-trip-{checked}.exr"));
+        let mut output = oiio::ImageOutput::create(&written, &spec).unwrap();
+        output.write_image(&pixels).unwrap();
+        output.close().unwrap();
+
+        let again = ImageInput::from_path(&written).unwrap();
+        let after = again.image_spec().unwrap();
+
+        for name in unmodelled {
+            match (spec.attribute(name), after.attribute(name)) {
+                (Some(before), Some(now)) if before == now => carried += 1,
+                (Some(before), Some(now)) => dropped.push(format!(
+                    "{}: {name} changed, {before} -> {now}",
+                    path.file_name().unwrap().to_string_lossy()
+                )),
+                (Some(_), None) => dropped.push(format!(
+                    "{}: {name} was lost",
+                    path.file_name().unwrap().to_string_lossy()
+                )),
+                _ => {}
+            }
+        }
+        checked += 1;
+        if checked >= 25 {
+            break;
+        }
+    }
+
+    let _ = std::fs::remove_dir_all(&scratch);
+
+    println!("metadata round trip: {checked} files, {carried} unmodelled attributes preserved");
+    for loss in dropped.iter().take(15) {
+        println!("  {loss}");
+    }
+    assert!(checked > 0, "no files with unmodelled metadata were found");
+    assert!(carried > 0, "nothing was preserved, so nothing was tested");
+    assert!(
+        dropped.is_empty(),
+        "{} unmodelled attributes did not survive; first: {:?}",
+        dropped.len(),
+        dropped.first()
+    );
+}
+
 /// An ImageBuf must load a real file as happily as one we produced.
 #[test]
 fn image_buf_loads_real_files() {
