@@ -88,6 +88,26 @@ read_with_span(const std::string& path, int width, int height,
     return ok;
 }
 
+// The simplest possible spelling: a typed image_span over a contiguous buffer,
+// letting OpenImageIO compute every stride itself. If this fails too, the
+// explicit strides above are not the cause.
+bool
+read_with_default_strides(const std::string& path, int width, int height,
+                          std::string& error)
+{
+    auto in = ImageInput::open(path);
+    if (!in) {
+        error = "could not open the file";
+        return false;
+    }
+    auto buffer = std::vector<float>(std::size_t(width) * height * NCHANNELS);
+    const image_span<float> data(buffer.data(), uint32_t(NCHANNELS),
+                                 uint32_t(width), uint32_t(height));
+    const bool ok = in->read_image(0, 0, 0, NCHANNELS, data);
+    error         = in->geterror();
+    return ok;
+}
+
 bool
 read_with_pointer(const std::string& path, int width, int height,
                   std::string& error)
@@ -122,19 +142,25 @@ tiled_case(int width, int height, int tile)
         return;
     }
 
-    std::string span_error, pointer_error;
+    std::string span_error, default_error, pointer_error;
     const bool span_ok    = read_with_span(path, width, height, span_error);
+    const bool default_ok = read_with_default_strides(path, width, height,
+                                                      default_error);
     const bool pointer_ok = read_with_pointer(path, width, height,
                                               pointer_error);
 
-    std::printf("  read_image(image_span) : %s%s%s\n", span_ok ? "ok" : "FAILED",
+    std::printf("  read_image(image_span, explicit strides) : %s%s%s\n",
+                span_ok ? "ok" : "FAILED",
                 span_error.empty() ? "" : ", error: ", span_error.c_str());
-    std::printf("  read_image(pointer)    : %s%s%s\n",
+    std::printf("  read_image(image_span, default strides)  : %s%s%s\n",
+                default_ok ? "ok" : "FAILED",
+                default_error.empty() ? "" : ", error: ", default_error.c_str());
+    std::printf("  read_image(pointer)                      : %s%s%s\n",
                 pointer_ok ? "ok" : "FAILED",
                 pointer_error.empty() ? "" : ", error: ",
                 pointer_error.c_str());
 
-    if (span_ok != pointer_ok) {
+    if (span_ok != pointer_ok || default_ok != pointer_ok) {
         std::printf("  >>> MISMATCH: the two overloads disagree on the same "
                     "file\n");
         ++failures;
@@ -168,6 +194,24 @@ offset_origin_case()
         }
     }
 
+    // Does the span overload perhaps want rows relative to the data window
+    // rather than image coordinates? If this succeeds, the two overloads
+    // simply disagree about the coordinate system.
+    bool relative_ok = false;
+    std::string relative_error;
+    {
+        auto out = ImageOutput::create("span_repro_offset_relative.exr");
+        ImageSpec spec(width, height, NCHANNELS, TypeDesc::FLOAT);
+        spec.y = origin_y;
+        if (out && out->open("span_repro_offset_relative.exr", spec)) {
+            auto data   = byte_span(pixels, NCHANNELS, width, height);
+            relative_ok = out->write_scanlines(0, height, TypeDesc::FLOAT,
+                                               data);
+            relative_error = out->geterror();
+            out->close();
+        }
+    }
+
     // Pointer overload, same specification and same range.
     bool pointer_ok = false;
     std::string pointer_error;
@@ -183,17 +227,56 @@ offset_origin_case()
         }
     }
 
-    std::printf("  write_scanlines(image_span) : %s%s%s\n",
-                span_ok ? "ok" : "FAILED",
+    std::printf("  write_scanlines(image_span), rows %d..%d : %s%s%s\n",
+                origin_y, origin_y + height, span_ok ? "ok" : "FAILED",
                 span_error.empty() ? "" : ", error: ", span_error.c_str());
-    std::printf("  write_scanlines(pointer)    : %s%s%s\n",
-                pointer_ok ? "ok" : "FAILED",
+    std::printf("  write_scanlines(image_span), rows 0..%d  : %s%s%s\n", height,
+                relative_ok ? "ok" : "FAILED",
+                relative_error.empty() ? "" : ", error: ",
+                relative_error.c_str());
+    std::printf("  write_scanlines(pointer),   rows %d..%d : %s%s%s\n", origin_y,
+                origin_y + height, pointer_ok ? "ok" : "FAILED",
                 pointer_error.empty() ? "" : ", error: ",
                 pointer_error.c_str());
     if (span_ok != pointer_ok) {
         std::printf("  >>> MISMATCH: the two overloads disagree on the same "
                     "range\n");
         ++failures;
+    }
+
+    // If rows 0..height succeeded, did it write the same pixels to the same
+    // rows as the pointer overload? That decides whether the span overload
+    // simply uses a different coordinate system, or writes the wrong data.
+    if (relative_ok && pointer_ok) {
+        auto read_all = [&](const char* file, std::vector<float>& out,
+                            int& origin) {
+            auto in = ImageInput::open(file);
+            if (!in)
+                return false;
+            origin = in->spec().y;
+            out.resize(std::size_t(width) * height * NCHANNELS);
+            return in->read_image(0, 0, 0, NCHANNELS, TypeDesc::FLOAT,
+                                  out.data());
+        };
+        std::vector<float> from_pointer, from_relative;
+        int pointer_origin = 0, relative_origin = 0;
+        const bool a = read_all(path.c_str(), from_pointer, pointer_origin);
+        const bool b = read_all("span_repro_offset_relative.exr", from_relative,
+                                relative_origin);
+        if (a && b) {
+            const bool same_pixels = (from_pointer == from_relative);
+            const bool same_origin = (pointer_origin == relative_origin);
+            std::printf("  read back: origins %d and %d (%s), pixels %s\n",
+                        pointer_origin, relative_origin,
+                        same_origin ? "same" : "DIFFER",
+                        same_pixels ? "identical" : "DIFFER");
+            if (same_pixels && same_origin)
+                std::printf("  >>> the span overload takes rows RELATIVE to the "
+                            "data window origin;\n      the pointer overload "
+                            "takes ABSOLUTE image coordinates\n");
+            else
+                std::printf("  >>> the span overload wrote different data\n");
+        }
     }
     std::printf("\n");
 }
