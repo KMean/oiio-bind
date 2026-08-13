@@ -532,6 +532,12 @@ imageinput_spec_dimensions(OIIO::ImageInput& imageinput, int32_t subimage,
         imageinput.spec_dimensions(subimage, miplevel));
 }
 
+std::unique_ptr<ImageInput>
+imageinput_open_with_ioproxy(const rust::Str filename, IOProxy* ioproxy)
+{
+    return OIIO::ImageInput::open(std::string(filename), nullptr, ioproxy);
+}
+
 bool
 imageinput_close(ImageInput& imageinput)
 {

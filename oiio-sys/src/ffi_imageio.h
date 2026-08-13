@@ -263,6 +263,11 @@ std::unique_ptr<ImageSpec>
 imageinput_spec_dimensions(ImageInput& imageinput, int32_t subimage,
                            int32_t miplevel);
 
+// Open an image through an IOProxy rather than the filesystem. The file name
+// only selects the reader; it is never opened.
+std::unique_ptr<ImageInput>
+imageinput_open_with_ioproxy(const rust::Str filename, IOProxy* ioproxy);
+
 bool
 imageinput_close(ImageInput& imageinput);
 

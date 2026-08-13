@@ -188,6 +188,12 @@ mod ffi {
             subimage: i32,
             miplevel: i32,
         ) -> UniquePtr<ImageSpec>;
+        /// Safety: must be called with a valid ioproxy pointer that outlives
+        /// the returned reader.
+        pub unsafe fn imageinput_open_with_ioproxy(
+            filename: &str,
+            ioproxy: *mut IOProxy,
+        ) -> UniquePtr<ImageInput>;
         pub fn imageinput_close(imageinput: Pin<&mut ImageInput>) -> bool;
         pub fn imageinput_current_subimage(imageinput: &ImageInput) -> i32;
         pub fn imageinput_current_miplevel(imageinput: &ImageInput) -> i32;

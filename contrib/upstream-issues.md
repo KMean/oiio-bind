@@ -1,9 +1,15 @@
 # Draft reports for OpenImageIO
 
-Three findings from building Rust bindings against OpenImageIO 3.1/3.2. Each
-is reproduced by `contrib/span_repro.cpp`, which uses only public OpenImageIO
-API — no Rust and no binding code — and exits non-zero when two overloads of
-the same call disagree about the same file.
+Three findings from building Rust bindings against OpenImageIO 3.1/3.2.
+
+Each has its own self-contained reproduction, so a maintainer running one is
+never shown a second unrelated API behaviour:
+
+- `contrib/span_tiled_read_repro.cpp` — issue 1
+- `contrib/span_scanline_origin_repro.cpp` — issue 2
+
+Both use only public OpenImageIO API — no Rust and no binding code — and exit
+non-zero when two overloads of the same call disagree about the same file.
 
 File at <https://github.com/AcademySoftwareFoundation/OpenImageIO/issues>
 using the "Bug report" template. Their `CONTRIBUTING.md` asks for the version,
@@ -51,7 +57,7 @@ overload reads, and on failure to record an error explaining why.
 
 **To Reproduce**
 
-Build and run the attached `span_repro.cpp`. It writes tiled OpenEXR files
+Build and run the attached `span_tiled_read_repro.cpp`. It writes tiled OpenEXR files
 with `write_image`, then reads each back three ways. Output on 3.2.0.2dev:
 
 ```
@@ -74,10 +80,12 @@ with `write_image`, then reads each back three ways. Output on 3.2.0.2dev:
 40x24, 16x16 tiles (PARTIAL edge tiles)   -> same as above
 ```
 
-The "default strides" rows construct `image_span<float>(buffer.data(),
-nchannels, width, height)` and let OpenImageIO compute every stride, so the
-result does not depend on the caller's stride arithmetic. Images whose
-dimensions are an exact multiple of the tile size are unaffected.
+Both `image_span` forms are covered: the `image_span<std::byte>` plus
+`TypeDesc::FLOAT` overload with strides spelled out, and the typed
+`image_span<float>` overload with OpenImageIO computing every stride itself.
+They fail identically, so the result does not depend on the caller's stride
+arithmetic. Images whose dimensions are an exact multiple of the tile size are
+unaffected.
 
 I have not tried to identify the cause in the reading code, so the summary
 above is only what is observable from outside.
@@ -115,7 +123,7 @@ rejection, the acceptance, or both.
 
 **To Reproduce**
 
-The attached `span_repro.cpp`, section 2. Output on 3.2.0.2dev:
+The attached `span_scanline_origin_repro.cpp`. Output on 3.2.0.2dev:
 
 ```
 data window origin y=5, writing scanlines 5..9

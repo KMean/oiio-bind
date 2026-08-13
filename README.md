@@ -85,6 +85,29 @@ output.close()?;
 # Ok::<(), oiio::Error>(())
 ```
 
+Neither side needs the filesystem. `ImageOutput::to_memory` encodes into a
+buffer you take with `close_into_bytes`, and `ImageInput::from_memory` decodes
+bytes you already hold — useful for images arriving over a network or held in a
+cache:
+
+```rust,no_run
+use oiio::{ImageInput, ImageOutput, ImageSpec, PixelFormat};
+
+let spec = ImageSpec::new(64, 64, 3, PixelFormat::F32)?;
+let pixels = vec![0.5_f32; spec.element_count()?];
+
+let mut output = ImageOutput::to_memory("image.exr", &spec)?;
+output.write_image(&pixels)?;
+let encoded: Vec<u8> = output.close_into_bytes()?;
+
+let mut input = ImageInput::from_memory("image.exr", encoded)?;
+let mut decoded = vec![0.0_f32; spec.element_count()?];
+input.read_image_into(&mut decoded)?;
+# Ok::<(), oiio::Error>(())
+```
+
+The file name is never opened in either case; it only selects the format.
+
 A writer is always open: `ImageOutput::create` selects the plugin from the file
 name and opens the file in one step, so a write can never be attempted against
 an unopened file. Whole images, scanline ranges, and blocks of tiles are all

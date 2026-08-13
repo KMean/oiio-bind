@@ -4,8 +4,16 @@ use std::path::{Path, PathBuf};
 use crate::image_spec::element_count;
 use crate::{path_to_utf8, pixel, sys, Error, ImageSpec, Pixel, Result, Roi};
 
-/// An open image file.
-pub struct ImageInput(cxx::UniquePtr<sys::imageio::ImageInput>);
+/// An open image, either a file or a buffer in memory.
+///
+/// Field order is load-bearing: Rust drops fields in declaration order, so the
+/// reader closes before the proxy it reads through, which in turn drops before
+/// the memory that proxy borrows.
+pub struct ImageInput {
+    inner: cxx::UniquePtr<sys::imageio::ImageInput>,
+    _proxy: Option<cxx::UniquePtr<sys::filesystem::IOProxy>>,
+    _bytes: Option<Vec<u8>>,
+}
 
 impl ImageInput {
     /// Open an image file.
@@ -13,7 +21,11 @@ impl ImageInput {
         let image_path_str = path_to_utf8(image_path)?;
 
         match sys::imageio::imageinput_open_without_config(image_path_str) {
-            Ok(imageinput) if !imageinput.is_null() => Ok(Self(imageinput)),
+            Ok(imageinput) if !imageinput.is_null() => Ok(Self {
+                inner: imageinput,
+                _proxy: None,
+                _bytes: None,
+            }),
             Ok(_) => {
                 let message = if sys::imageio::has_error() {
                     sys::imageio::get_error(true)
@@ -32,9 +44,77 @@ impl ImageInput {
         }
     }
 
+    /// Read an image already held in memory, without touching the filesystem.
+    ///
+    /// `name_hint` is not opened; it only tells OpenImageIO which reader to
+    /// use, so its extension must match the bytes. The buffer is moved into
+    /// the reader and released when the reader is dropped.
+    ///
+    /// ```
+    /// use oiio::{ImageInput, ImageOutput, ImageSpec, PixelFormat};
+    ///
+    /// # fn main() -> oiio::Result<()> {
+    /// let spec = ImageSpec::new(4, 4, 3, PixelFormat::F32)?;
+    /// let pixels = vec![0.5_f32; spec.element_count()?];
+    ///
+    /// let mut output = ImageOutput::to_memory("image.exr", &spec)?;
+    /// output.write_image(&pixels)?;
+    /// let encoded = output.close_into_bytes()?;
+    ///
+    /// let mut input = ImageInput::from_memory("image.exr", encoded)?;
+    /// let mut decoded = vec![0.0_f32; spec.element_count()?];
+    /// input.read_image_into(&mut decoded)?;
+    /// input.close()?;
+    ///
+    /// assert_eq!(decoded, pixels);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn from_memory(name_hint: &str, bytes: Vec<u8>) -> Result<Self> {
+        // The proxy borrows the buffer, so `bytes` must outlive it. Moving the
+        // Vec afterwards moves only its header, never the heap allocation the
+        // proxy points at.
+        // SAFETY: `bytes` is moved into the returned value below and dropped
+        // after both the reader and the proxy.
+        let mut proxy = unsafe { sys::filesystem::ioproxy_memreader_new(&bytes) };
+        let Some(proxy_ref) = proxy.as_mut() else {
+            return Err(Self::memory_error(
+                name_hint,
+                "OpenImageIO could not allocate a memory proxy".to_owned(),
+            ));
+        };
+
+        // SAFETY: the proxy outlives the reader; both are owned by the value
+        // returned here, and the reader is declared first so it drops first.
+        let inner = unsafe {
+            let proxy_ptr = proxy_ref.get_unchecked_mut() as *mut sys::filesystem::IOProxy;
+            sys::imageio::imageinput_open_with_ioproxy(name_hint, proxy_ptr)
+        };
+        if inner.is_null() {
+            return Err(Self::memory_error(name_hint, global_error()));
+        }
+
+        Ok(Self {
+            inner,
+            _proxy: Some(proxy),
+            _bytes: Some(bytes),
+        })
+    }
+
     /// Return the input plugin's format name.
     pub fn format_name(&self) -> &str {
         sys::imageio::imageinput_format_name(self.inner())
+    }
+
+    fn memory_error(name_hint: &str, message: String) -> Error {
+        Error::OpenImage {
+            path: PathBuf::from(name_hint),
+            message: if message.is_empty() {
+                "OpenImageIO did not provide an error message".to_owned()
+            } else {
+                message
+            },
+        }
     }
 
     /// Return an owned description of the currently selected image.
@@ -268,13 +348,13 @@ impl ImageInput {
     }
 
     fn inner(&self) -> &sys::imageio::ImageInput {
-        self.0
+        self.inner
             .as_ref()
             .expect("ImageInput invariant violated: null native pointer")
     }
 
     fn inner_mut(&mut self) -> std::pin::Pin<&mut sys::imageio::ImageInput> {
-        self.0
+        self.inner
             .as_mut()
             .expect("ImageInput invariant violated: null native pointer")
     }
@@ -311,6 +391,9 @@ pub struct ImageOutput {
     inner: cxx::UniquePtr<sys::imageio::ImageOutput>,
     path: PathBuf,
     spec: ImageSpec,
+    /// Present only for in-memory writers. Declared last so it drops after
+    /// the writer that fills it.
+    proxy: Option<cxx::UniquePtr<sys::filesystem::IOProxy>>,
 }
 
 impl ImageOutput {
@@ -382,6 +465,87 @@ impl ImageOutput {
         output.path = image_path.to_path_buf();
         output.spec = first.clone();
         Ok(output)
+    }
+
+    /// Write an image into memory instead of a file.
+    ///
+    /// `name_hint` is never created on disk; it only selects the writer, so
+    /// its extension decides the encoding. Finish with
+    /// [`ImageOutput::close_into_bytes`] to take the encoded bytes.
+    ///
+    /// Not every format can write to memory — those that cannot are reported
+    /// here rather than at close time.
+    pub fn to_memory(name_hint: &str, spec: &ImageSpec) -> Result<Self> {
+        let mut proxy = sys::filesystem::ioproxy_vecoutput_new();
+        let Some(proxy_ref) = proxy.as_mut() else {
+            return Err(Error::CreateImage {
+                path: PathBuf::from(name_hint),
+                message: "OpenImageIO could not allocate a memory proxy".to_owned(),
+            });
+        };
+
+        // SAFETY: the proxy is owned by the value returned here and is
+        // declared after the writer, so the writer drops first.
+        let inner = unsafe {
+            let proxy_ptr = proxy_ref.get_unchecked_mut() as *mut sys::filesystem::IOProxy;
+            sys::imageio::imageoutput_create(name_hint, proxy_ptr, "")
+        };
+        if inner.is_null() {
+            return Err(Error::CreateImage {
+                path: PathBuf::from(name_hint),
+                message: global_error(),
+            });
+        }
+
+        let mut output = Self {
+            inner,
+            path: PathBuf::from(name_hint),
+            spec: spec.clone(),
+            proxy: Some(proxy),
+        };
+        if !output.supports("ioproxy") {
+            return Err(Error::CreateImage {
+                path: PathBuf::from(name_hint),
+                message: format!("the {} writer cannot write to memory", output.format_name()),
+            });
+        }
+
+        let native_spec = spec.to_sys()?;
+        Self::open_native(
+            output.inner_mut(),
+            name_hint,
+            &native_spec,
+            sys::imageio::OpenMode::Create,
+        )
+        .map_err(|message| Error::OpenImage {
+            path: PathBuf::from(name_hint),
+            message,
+        })?;
+        Ok(output)
+    }
+
+    /// Finish an in-memory write and take the encoded bytes.
+    ///
+    /// Returns [`Error::Operation`] if this writer targets a file, since there
+    /// are no bytes to hand back; use [`ImageOutput::close`] for those.
+    pub fn close_into_bytes(mut self) -> Result<Vec<u8>> {
+        if self.proxy.is_none() {
+            return Err(Error::operation(
+                "take encoded bytes",
+                "this writer targets a file, not memory".to_owned(),
+            ));
+        }
+        let succeeded = sys::imageio::imageoutput_close(self.inner_mut());
+        self.check("close image", succeeded)?;
+
+        let proxy = self.proxy.as_ref().expect("checked above");
+        let proxy_ref = proxy.as_ref().ok_or_else(|| {
+            Error::operation(
+                "take encoded bytes",
+                "the memory proxy was released early".to_owned(),
+            )
+        })?;
+        Ok(sys::filesystem::ioproxy_vecoutput_bytes(proxy_ref))
     }
 
     /// Ask whether the output plugin for `image_path` supports a feature,
@@ -564,6 +728,7 @@ impl ImageOutput {
             inner,
             path: image_path.to_path_buf(),
             spec: ImageSpec::new(1, 1, 1, crate::PixelFormat::U8)?,
+            proxy: None,
         })
     }
 

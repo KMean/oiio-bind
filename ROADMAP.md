@@ -54,6 +54,8 @@ line is established and tested deliberately.
   A read region is a `Roi`, so a channel subset is just a narrowed data
   window. Writing a channel subset instead means describing those channels in
   the specification, so it needs no separate API.
+- [x] Read and write images in memory through an `IOProxy`, so a caller can
+  decode bytes it already holds and encode without touching the filesystem.
 - [ ] Writing metadata whose OpenImageIO type this crate does not model
   directly, such as matrices and arrays.
 - [ ] Deep images, which the contiguous pixel API deliberately refuses.
