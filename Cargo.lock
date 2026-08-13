@@ -202,7 +202,7 @@ dependencies = [
 
 [[package]]
 name = "oiio-sys"
-version = "0.2.0-beta0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "cxx",

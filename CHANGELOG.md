@@ -1,9 +1,15 @@
 # Changelog
 
-This fork's changes, newest first. Nothing here has been released to
-crates.io yet, so there are no version numbers to hang them on.
+This fork's changes, newest first.
 
-## Unreleased
+## 0.1.0 — unreleased
+
+The first release of this fork, and the first release under these names:
+neither `oiio` nor `oiio-sys` had been published to crates.io before.
+
+Both crates are versioned 0.1.0 together. `oiio-sys` carried 0.2.0-beta0 from
+before the fork, but nothing was ever published under it, so starting both at
+0.1.0 says what is true — this is a first release, and the API may still move.
 
 ### Added
 

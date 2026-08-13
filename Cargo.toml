@@ -30,13 +30,15 @@ half = "2.7.1"
 thiserror = "1.0.57"
 
 [dependencies]
-anyhow = { workspace = true }
 cxx = { workspace = true }
 half = { workspace = true }
-oiio-sys = { path = "oiio-sys", version = "0.2.0-beta0" }
+oiio-sys = { path = "oiio-sys", version = "0.1.0" }
 thiserror = { workspace = true }
 
+# anyhow is only used by the integration tests, so it is not imposed on
+# anything that depends on this crate.
 [dev-dependencies]
+anyhow = { workspace = true }
 
 # The docs are the same across all platforms so we only need to build once.
 [package.metadata.docs.rs]

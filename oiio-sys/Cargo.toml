@@ -1,6 +1,6 @@
 [package]
 name = "oiio-sys"
-version = "0.2.0-beta0"
+version = "0.1.0"
 edition = "2021"
 # See the note in the workspace manifest: the oldest toolchain CI verifies.
 rust-version = "1.95"

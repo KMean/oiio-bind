@@ -205,5 +205,39 @@ The `ImageBufAlgo` surface is being completed in slices, each one commit:
   reported rather than that letters appear. A build with FreeType would
   exercise the rest.
 
+The `ImageBufAlgo` surface this project set out to bind is now complete.
+
+## Publishing
+
+Both crate names are free on crates.io; neither has ever been published. The
+first release is 0.1.0 for both, `oiio-sys` first. `contrib/publishing.md` has
+the checklist and what was verified.
+
+## On binding OpenImageIO safely
+
+Binding this library turned up nine defects in it, six of which let safe Rust
+read or write out of bounds, crash, or silently corrupt an image.
+`contrib/upstream-issues.md` has all of them, each reproduced against the
+3.1.9 source and, where it matters, confirmed still present on 3.2. Six are
+guarded here rather than passed on, which is why a few operations refuse
+arguments OpenImageIO accepts:
+
+- `algo::max` refuses unequal channel counts and a narrower destination.
+- `algo::constant_color` and `algo::nonzero_region` refuse a region that
+  begins above channel zero.
+- `algo::flatten` refuses a destination wider than its source.
+- `algo::unsharp_mask` refuses a destination of a different pixel type.
+- `algo::checker` refuses a square of zero, `render_box` a reversed filled
+  box, `render_text` text with no glyphs, and the filter window ops a width of
+  one.
+- Every measurement, and `ifft`, refuse inputs whose pixels they would
+  dereference through a null pointer.
+
+The colour operations do not refuse anything: they repair, copying the
+channels past the fourth that OpenImageIO's colour engine would otherwise
+scale and offset.
+
+Each of these is a documented restriction with a test, not a silent narrowing.
+
 The project intentionally does not try to generate bindings for every OIIO C++
 template or expose raw C++ pointer semantics through the safe crate.
