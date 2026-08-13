@@ -377,6 +377,99 @@ mod ffi {
             error: &mut String,
         ) -> String;
 
+        pub fn imagebufalgo_fill_vertical(
+            dst: Pin<&mut ImageBuf>,
+            top: &[f32],
+            bottom: &[f32],
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_fill_corners(
+            dst: Pin<&mut ImageBuf>,
+            topleft: &[f32],
+            topright: &[f32],
+            bottomleft: &[f32],
+            bottomright: &[f32],
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_checker(
+            dst: Pin<&mut ImageBuf>,
+            width: i32,
+            height: i32,
+            depth: i32,
+            color1: &[f32],
+            color2: &[f32],
+            xoffset: i32,
+            yoffset: i32,
+            zoffset: i32,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_noise(
+            dst: Pin<&mut ImageBuf>,
+            noisetype: &str,
+            a: f32,
+            b: f32,
+            mono: bool,
+            seed: i32,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_render_point(
+            dst: Pin<&mut ImageBuf>,
+            x: i32,
+            y: i32,
+            color: &[f32],
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_render_line(
+            dst: Pin<&mut ImageBuf>,
+            x1: i32,
+            y1: i32,
+            x2: i32,
+            y2: i32,
+            color: &[f32],
+            skip_first_point: bool,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_render_box(
+            dst: Pin<&mut ImageBuf>,
+            x1: i32,
+            y1: i32,
+            x2: i32,
+            y2: i32,
+            color: &[f32],
+            fill: bool,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_render_text(
+            dst: Pin<&mut ImageBuf>,
+            x: i32,
+            y: i32,
+            text: &str,
+            fontsize: i32,
+            fontname: &str,
+            color: &[f32],
+            alignx: i32,
+            aligny: i32,
+            shadow: i32,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_text_size(text: &str, fontsize: i32, fontname: &str) -> ROI;
+
         pub fn imagebufalgo_flatten(
             dst: Pin<&mut ImageBuf>,
             src: &ImageBuf,

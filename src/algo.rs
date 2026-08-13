@@ -124,6 +124,378 @@ binary_operation!(
     "divide"
 );
 
+/// Fill the region with a vertical gradient.
+///
+/// The ramp runs over the *region*, not the image, so filling part of an image
+/// gives a complete gradient inside that part rather than a slice of a longer
+/// one. A region one pixel tall is entirely `top`.
+pub fn fill_gradient(
+    dst: &mut ImageBuf,
+    top: &[f32],
+    bottom: &[f32],
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_fill_vertical(
+        dst.inner_mut(),
+        top,
+        bottom,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "fill gradient", succeeded)
+}
+
+/// Fill the region by interpolating between four corner colours.
+pub fn fill_corners(
+    dst: &mut ImageBuf,
+    top_left: &[f32],
+    top_right: &[f32],
+    bottom_left: &[f32],
+    bottom_right: &[f32],
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_fill_corners(
+        dst.inner_mut(),
+        top_left,
+        top_right,
+        bottom_left,
+        bottom_right,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "fill corners", succeeded)
+}
+
+/// Fill the region with a checkerboard.
+///
+/// `size` is one square's width, height and depth; each must be at least one,
+/// because OpenImageIO divides the coordinate by them without checking.
+/// `offset` shifts the pattern.
+pub fn checker(
+    dst: &mut ImageBuf,
+    size: [u32; 3],
+    color1: &[f32],
+    color2: &[f32],
+    offset: [i32; 3],
+    roi: Option<Roi>,
+) -> Result<()> {
+    let dimension = |name: &'static str, value: u32| {
+        i32::try_from(value)
+            .map_err(|_| Error::InvalidImageSpec(format!("checker {name} exceeds i32::MAX")))
+    };
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_checker(
+        dst.inner_mut(),
+        dimension("width", size[0])?,
+        dimension("height", size[1])?,
+        dimension("depth", size[2])?,
+        color1,
+        color2,
+        offset[0],
+        offset[1],
+        offset[2],
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "checker", succeeded)
+}
+
+/// Which kind of noise [`noise`] should add, and its parameters.
+///
+/// Each variant names what OpenImageIO's two anonymous floats mean for it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Noise {
+    /// Normally distributed, about a mean and by a standard deviation.
+    Gaussian {
+        /// The centre of the distribution.
+        mean: f32,
+        /// Its spread.
+        standard_deviation: f32,
+    },
+    /// Evenly distributed between two values.
+    Uniform {
+        /// The smallest value.
+        min: f32,
+        /// The largest.
+        max: f32,
+    },
+    /// Evenly distributed, but spread out in space so nearby pixels differ —
+    /// which looks less clumpy than uniform noise at the same amplitude.
+    Blue {
+        /// The smallest value.
+        min: f32,
+        /// The largest.
+        max: f32,
+    },
+    /// Set a portion of the pixels to one value, and leave the rest alone.
+    ///
+    /// This is the one kind that assigns rather than adds.
+    Salt {
+        /// The value written.
+        value: f32,
+        /// The fraction of pixels to write, from 0 to 1.
+        portion: f32,
+    },
+}
+
+impl Noise {
+    fn parts(self) -> (&'static str, f32, f32) {
+        match self {
+            Self::Gaussian {
+                mean,
+                standard_deviation,
+            } => ("gaussian", mean, standard_deviation),
+            Self::Uniform { min, max } => ("uniform", min, max),
+            Self::Blue { min, max } => ("blue", min, max),
+            Self::Salt { value, portion } => ("salt", value, portion),
+        }
+    }
+}
+
+/// Add noise to the region.
+///
+/// This **adds** to what the destination already holds — every kind but
+/// [`Noise::Salt`], which assigns. To generate noise rather than dirty an
+/// existing image, start from [`zero`].
+///
+/// `mono` draws one value per pixel rather than one per channel, so the noise
+/// is grey rather than coloured. `seed` makes the result repeatable.
+pub fn noise(
+    dst: &mut ImageBuf,
+    kind: Noise,
+    mono: bool,
+    seed: i32,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let (name, a, b) = kind.parts();
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_noise(
+        dst.inner_mut(),
+        name,
+        a,
+        b,
+        mono,
+        seed,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "noise", succeeded)
+}
+
+/// Set one pixel.
+///
+/// A position outside the region is a silent no-op, which is OpenImageIO's
+/// behaviour rather than an error. Drawing only happens on the `z = 0` plane.
+pub fn render_point(
+    dst: &mut ImageBuf,
+    x: i32,
+    y: i32,
+    color: &[f32],
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_render_point(
+        dst.inner_mut(),
+        x,
+        y,
+        color,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "render point", succeeded)
+}
+
+/// Draw a line between two points, both included.
+///
+/// `skip_first_point` leaves the starting pixel alone, which is what you want
+/// when drawing a chain of lines so the joints are not blended twice.
+///
+/// The colour is blended by its alpha. A colour with fewer values than the
+/// image has channels repeats its last value, so a three-value colour on an
+/// RGBA image gives alpha the red value's neighbour rather than one — pass all
+/// four to be sure.
+pub fn render_line(
+    dst: &mut ImageBuf,
+    from: [i32; 2],
+    to: [i32; 2],
+    color: &[f32],
+    skip_first_point: bool,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_render_line(
+        dst.inner_mut(),
+        from[0],
+        from[1],
+        to[0],
+        to[1],
+        color,
+        skip_first_point,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "render line", succeeded)
+}
+
+/// Draw a box, outlined or filled. Both corners are included.
+///
+/// A filled box needs its first corner above and to the left of its second;
+/// OpenImageIO draws nothing for the other order and calls it success, so that
+/// is refused here. An outline accepts either order.
+pub fn render_box(
+    dst: &mut ImageBuf,
+    corner: [i32; 2],
+    opposite: [i32; 2],
+    color: &[f32],
+    fill: bool,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_render_box(
+        dst.inner_mut(),
+        corner[0],
+        corner[1],
+        opposite[0],
+        opposite[1],
+        color,
+        fill,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "render box", succeeded)
+}
+
+/// Where text sits relative to the position given for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum TextAlignX {
+    /// The position is the text's left edge.
+    #[default]
+    Left,
+    /// The position is its right edge.
+    Right,
+    /// The position is its horizontal centre.
+    Center,
+}
+
+/// Where text sits vertically relative to the position given for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum TextAlignY {
+    /// The position is the baseline the letters stand on.
+    #[default]
+    Baseline,
+    /// The position is the top of the text.
+    Top,
+    /// The position is the bottom, below any descenders.
+    Bottom,
+    /// The position is its vertical centre.
+    Center,
+}
+
+/// How [`render_text`] should draw.
+#[derive(Debug, Clone, Copy)]
+pub struct TextOptions<'a> {
+    /// Height in pixels. Must be at least one.
+    pub size: u32,
+    /// The font's name or path. Empty asks OpenImageIO for its default, which
+    /// it may not have; an unfindable font is an error.
+    pub font: &'a str,
+    /// One value per channel. Blended by its alpha, as [`render_line`] notes.
+    pub color: &'a [f32],
+    /// Horizontal placement relative to the position.
+    pub align_x: TextAlignX,
+    /// Vertical placement relative to the position.
+    pub align_y: TextAlignY,
+    /// Draw a dark halo this many pixels wide behind the text, so it stays
+    /// legible over a busy image. Zero for none.
+    pub shadow: u32,
+}
+
+impl Default for TextOptions<'_> {
+    fn default() -> Self {
+        Self {
+            size: 16,
+            font: "",
+            color: &[1.0],
+            align_x: TextAlignX::default(),
+            align_y: TextAlignY::default(),
+            shadow: 0,
+        }
+    }
+}
+
+/// Draw text into the image.
+///
+/// Text with nothing to draw — empty, or only line breaks — is refused.
+/// OpenImageIO measures an inverted bounding box for it and then builds an
+/// image from that box without checking, so its width underflows.
+///
+/// This needs a font. OpenImageIO looks in its own search path and in the
+/// system's; if it was built without FreeType, or cannot find the font named,
+/// the call fails.
+pub fn render_text(
+    dst: &mut ImageBuf,
+    position: [i32; 2],
+    text: &str,
+    options: &TextOptions<'_>,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let (size, shadow) = text_metrics(options.size, options.shadow)?;
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_render_text(
+        dst.inner_mut(),
+        position[0],
+        position[1],
+        text,
+        size,
+        options.font,
+        options.color,
+        options.align_x as i32,
+        options.align_y as i32,
+        shadow,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "render text", succeeded)
+}
+
+/// Measure what [`render_text`] would draw, without drawing it.
+///
+/// The region is where the text would land if drawn at the origin, so its width
+/// and height are the text's size.
+///
+/// OpenImageIO reports failure here by returning nothing at all — no message,
+/// on the buffer or anywhere else — so a missing font and unrenderable text
+/// come back as the same error.
+pub fn text_size(text: &str, size: u32, font: &str) -> Result<Roi> {
+    let (size, _) = text_metrics(size, 0)?;
+    let measured = sys::imagebufalgo::imagebufalgo_text_size(text, size, font);
+    Roi::from_sys_optional(measured)?.ok_or_else(|| {
+        Error::operation(
+            "text size",
+            "nothing could be measured; the text may be empty, or the font \
+             missing, and OpenImageIO does not say which"
+                .to_owned(),
+        )
+    })
+}
+
+fn text_metrics(size: u32, shadow: u32) -> Result<(i32, i32)> {
+    let size = i32::try_from(size)
+        .map_err(|_| Error::InvalidImageSpec("font size exceeds i32::MAX".to_owned()))?;
+    if size < 1 {
+        return Err(Error::InvalidImageSpec(
+            "the font size must be at least 1".to_owned(),
+        ));
+    }
+    let shadow = i32::try_from(shadow)
+        .map_err(|_| Error::InvalidImageSpec("shadow width exceeds i32::MAX".to_owned()))?;
+    Ok((size, shadow))
+}
+
 /// Composite each pixel's deep samples down into one flat pixel.
 ///
 /// Samples are combined front to back, so the nearest opaque one hides what is

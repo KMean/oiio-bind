@@ -684,6 +684,141 @@ imagebufalgo_compare(const ImageBuf& a, const ImageBuf& b, float failthresh,
 }
 
 bool
+imagebufalgo_fill_vertical(ImageBuf& dst, rust::Slice<const float> top,
+                           rust::Slice<const float> bottom, const ROI& roi,
+                           int nthreads)
+{
+    return OIIO::ImageBufAlgo::fill(dst, to_cspan(top), to_cspan(bottom), roi,
+                                    nthreads);
+}
+
+bool
+imagebufalgo_fill_corners(ImageBuf& dst, rust::Slice<const float> topleft,
+                          rust::Slice<const float> topright,
+                          rust::Slice<const float> bottomleft,
+                          rust::Slice<const float> bottomright, const ROI& roi,
+                          int nthreads)
+{
+    return OIIO::ImageBufAlgo::fill(dst, to_cspan(topleft), to_cspan(topright),
+                                    to_cspan(bottomleft),
+                                    to_cspan(bottomright), roi, nthreads);
+}
+
+bool
+imagebufalgo_checker(ImageBuf& dst, int width, int height, int depth,
+                     rust::Slice<const float> color1,
+                     rust::Slice<const float> color2, int xoffset, int yoffset,
+                     int zoffset, const ROI& roi, int nthreads)
+{
+    if (width < 1 || height < 1 || depth < 1) {
+        // These divide the coordinate, and nothing upstream checks them.
+        dst.errorfmt("checker: every square dimension must be at least 1, got "
+                     "{}x{}x{}",
+                     width, height, depth);
+        return false;
+    }
+    return OIIO::ImageBufAlgo::checker(dst, width, height, depth,
+                                       to_cspan(color1), to_cspan(color2),
+                                       xoffset, yoffset, zoffset, roi,
+                                       nthreads);
+}
+
+bool
+imagebufalgo_noise(ImageBuf& dst, const rust::Str noisetype, float a, float b,
+                   bool mono, int seed, const ROI& roi, int nthreads)
+{
+    return OIIO::ImageBufAlgo::noise(dst, to_string_view(noisetype), a, b, mono,
+                                     seed, roi, nthreads);
+}
+
+bool
+imagebufalgo_render_point(ImageBuf& dst, int x, int y,
+                          rust::Slice<const float> color, const ROI& roi,
+                          int nthreads)
+{
+    return OIIO::ImageBufAlgo::render_point(dst, x, y, to_cspan(color), roi,
+                                           nthreads);
+}
+
+bool
+imagebufalgo_render_line(ImageBuf& dst, int x1, int y1, int x2, int y2,
+                         rust::Slice<const float> color, bool skip_first_point,
+                         const ROI& roi, int nthreads)
+{
+    return OIIO::ImageBufAlgo::render_line(dst, x1, y1, x2, y2, to_cspan(color),
+                                           skip_first_point, roi, nthreads);
+}
+
+bool
+imagebufalgo_render_box(ImageBuf& dst, int x1, int y1, int x2, int y2,
+                        rust::Slice<const float> color, bool fill,
+                        const ROI& roi, int nthreads)
+{
+    if (fill && (x2 < x1 || y2 < y1)) {
+        // The filled path intersects an empty region and draws nothing, while
+        // reporting success. The outline path accepts either corner order, so
+        // only this one needs saying.
+        dst.errorfmt("render_box: a filled box needs its first corner above "
+                     "and left of its second, got {},{} to {},{}",
+                     x1, y1, x2, y2);
+        return false;
+    }
+    return OIIO::ImageBufAlgo::render_box(dst, x1, y1, x2, y2, to_cspan(color),
+                                          fill, roi, nthreads);
+}
+
+namespace {
+
+// Every glyph failing to rasterise leaves the measured box at its initial
+// xbegin = ybegin = INT_MAX, xend = yend = INT_MIN. render_text builds an
+// ImageSpec from that without clamping, and the width underflows.
+bool
+text_renders_something(const rust::Str text)
+{
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const char c = text.data()[i];
+        if (c != '\n' && c != '\r' && c != '\0')
+            return true;
+    }
+    return false;
+}
+
+}  // namespace
+
+bool
+imagebufalgo_render_text(ImageBuf& dst, int x, int y, const rust::Str text,
+                         int fontsize, const rust::Str fontname,
+                         rust::Slice<const float> color, int alignx, int aligny,
+                         int shadow, const ROI& roi, int nthreads)
+{
+    if (!text_renders_something(text)) {
+        dst.errorfmt("render_text: there is nothing to draw; OpenImageIO "
+                     "measures an inverted box for text with no glyphs and "
+                     "builds an image from it");
+        return false;
+    }
+    if (fontsize < 1) {
+        dst.errorfmt("render_text: the font size must be at least 1, got {}",
+                     fontsize);
+        return false;
+    }
+    return OIIO::ImageBufAlgo::render_text(
+        dst, x, y, to_string_view(text), fontsize, to_string_view(fontname),
+        to_cspan(color), OIIO::ImageBufAlgo::TextAlignX(alignx),
+        OIIO::ImageBufAlgo::TextAlignY(aligny), shadow, roi, nthreads);
+}
+
+ROI
+imagebufalgo_text_size(const rust::Str text, int fontsize,
+                       const rust::Str fontname)
+{
+    if (!text_renders_something(text) || fontsize < 1)
+        return ROI();
+    return OIIO::ImageBufAlgo::text_size(to_string_view(text), fontsize,
+                                         to_string_view(fontname));
+}
+
+bool
 imagebufalgo_flatten(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
                      int nthreads)
 {

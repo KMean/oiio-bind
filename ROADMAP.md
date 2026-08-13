@@ -189,8 +189,21 @@ The `ImageBufAlgo` surface is being completed in slices, each one commit:
   restores those from the source; see issue 8. They also always pass a real
   `ColorConfig`, because `ociolook` dereferences it before checking whether
   one was given (issue 9).
-- [ ] Drawing and generators: `render_text`, `render_line`, `render_box`,
-  `render_point`, `noise`, `checker`.
+- [x] Drawing and generators: `fill_gradient` and `fill_corners`, `checker`,
+  `noise`, `render_point`, `render_line`, `render_box`, `render_text` and
+  `text_size`. `Noise` is an enum, so the two anonymous floats OpenImageIO
+  takes are named per kind; note that noise is *added* to the destination
+  rather than replacing it, except `Salt`. Guards: a checkerboard square of
+  zero is a division by zero; a filled box with reversed corners draws nothing
+  and reports success; and text with no glyphs leaves the measured box
+  inverted, which `render_text` then builds an `ImageSpec` from, underflowing
+  its width.
+
+  **`render_text` is bound but not exercised against real glyphs here.** The
+  vcpkg OpenImageIO this crate builds against reports "not compiled with
+  FreeType for font rendering", so the tests assert that the reason is
+  reported rather than that letters appear. A build with FreeType would
+  exercise the rest.
 
 The project intentionally does not try to generate bindings for every OIIO C++
 template or expose raw C++ pointer semantics through the safe crate.

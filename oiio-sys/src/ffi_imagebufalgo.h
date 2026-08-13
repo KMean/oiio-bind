@@ -244,6 +244,68 @@ imagebufalgo_channels(ImageBuf& dst, const ImageBuf& src, int nchannels,
                       const rust::Vec<rust::String>& newchannelnames,
                       bool shuffle_channel_names, int nthreads);
 
+// Generators and drawing.
+
+// The two gradient forms of fill. Values are indexed by absolute channel
+// number, and the ramp is parameterised over the region rather than the image,
+// so filling part of an image gives a full ramp inside that part.
+bool
+imagebufalgo_fill_vertical(ImageBuf& dst, rust::Slice<const float> top,
+                           rust::Slice<const float> bottom, const ROI& roi,
+                           int nthreads);
+
+bool
+imagebufalgo_fill_corners(ImageBuf& dst, rust::Slice<const float> topleft,
+                          rust::Slice<const float> topright,
+                          rust::Slice<const float> bottomleft,
+                          rust::Slice<const float> bottomright, const ROI& roi,
+                          int nthreads);
+
+// The three sizes are divisors, and nothing upstream checks them, so a zero is
+// a division by zero rather than an error.
+bool
+imagebufalgo_checker(ImageBuf& dst, int width, int height, int depth,
+                     rust::Slice<const float> color1,
+                     rust::Slice<const float> color2, int xoffset, int yoffset,
+                     int zoffset, const ROI& roi, int nthreads);
+
+// Noise is added to whatever the destination already holds, rather than
+// replacing it; "salt" is the exception and assigns.
+bool
+imagebufalgo_noise(ImageBuf& dst, const rust::Str noisetype, float a, float b,
+                   bool mono, int seed, const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_render_point(ImageBuf& dst, int x, int y,
+                          rust::Slice<const float> color, const ROI& roi,
+                          int nthreads);
+
+bool
+imagebufalgo_render_line(ImageBuf& dst, int x1, int y1, int x2, int y2,
+                         rust::Slice<const float> color, bool skip_first_point,
+                         const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_render_box(ImageBuf& dst, int x1, int y1, int x2, int y2,
+                        rust::Slice<const float> color, bool fill,
+                        const ROI& roi, int nthreads);
+
+// Text whose glyphs all fail to rasterise — an empty string, or one holding
+// only line breaks — leaves the measured box inverted, and render_text builds
+// an ImageSpec straight from it, underflowing its width. The shim refuses that
+// before it can happen.
+bool
+imagebufalgo_render_text(ImageBuf& dst, int x, int y, const rust::Str text,
+                         int fontsize, const rust::Str fontname,
+                         rust::Slice<const float> color, int alignx, int aligny,
+                         int shadow, const ROI& roi, int nthreads);
+
+// text_size reports failure only by returning an undefined region: it records
+// nothing, on the buffer or globally, so the message has to be invented here.
+ROI
+imagebufalgo_text_size(const rust::Str text, int fontsize,
+                       const rust::Str fontname);
+
 // The deep compositing operations. Every one of them reports through `dst`,
 // and three of the four return a bool that is not a real success signal: only
 // the early guards can make it false. The safe wrappers surface dst's message

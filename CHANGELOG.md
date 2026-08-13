@@ -23,6 +23,17 @@ crates.io yet, so there are no version numbers to hang them on.
   another image or a constant, `abs`, `absdiff`, `copy`, `crop`, `flip`,
   `flop`, `transpose`, `compare`, `resize`, `resample`, `fit`, `over`,
   `premult`, `unpremult`, `channel_sum`, `channels` and `color_convert`.
+- `oiio::algo` drawing and generators: `fill_gradient`, `fill_corners`,
+  `checker`, `noise`, `render_point`, `render_line`, `render_box`,
+  `render_text` and `text_size`. `Noise` names what OpenImageIO's two
+  anonymous floats mean for each kind, and the documentation says plainly
+  that noise is added to the destination rather than replacing it — every
+  kind but `Salt`, which assigns. A checkerboard square of zero, a filled box
+  with reversed corners, and text with nothing to draw are all refused; each
+  is respectively a division by zero, a silent no-op reported as success, and
+  an inverted bounding box that OpenImageIO builds an image from without
+  checking. Text rendering itself is untested against glyphs, because the
+  OpenImageIO this builds against has no FreeType.
 - `oiio::algo` deep compositing: `flatten`, `deepen`, `deep_merge` and
   `deep_holdout`, together with the `ImageBuf` sample access they need —
   `is_deep`, `deep_sample_count`, `deep_value`, `deep_value_uint` and their

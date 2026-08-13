@@ -6,8 +6,8 @@
 //! caller needs to match on becomes unnameable.
 
 use oiio::algo::{
-    self, ChannelSource, CompareSummary, ContrastRemap, FitMode, OcioOptions, Operand, PixelStats,
-    WarpOptions,
+    self, ChannelSource, CompareSummary, ContrastRemap, FitMode, Noise, OcioOptions, Operand,
+    PixelStats, TextAlignX, TextAlignY, TextOptions, WarpOptions,
 };
 use oiio::{
     f16, make_texture, make_texture_from_buffer, AttributeValue, ColorConfig, DeepChannel,
@@ -140,6 +140,59 @@ fn a_dependent_can_use_the_whole_surface() -> Result<()> {
         Some(spec.data_window()?.with_x(0..8)?),
     )?;
     assert_eq!(trimmed.spec()?.origin(), [0, 0, 0]);
+
+    // Generators and drawing.
+    let mut drawn = ImageBuf::new(&spec)?;
+    algo::fill_gradient(&mut drawn, &[0.0], &[1.0], None)?;
+    algo::fill_corners(&mut drawn, &[0.0], &[1.0], &[1.0], &[0.0], None)?;
+    algo::checker(&mut drawn, [4, 4, 1], &[0.0], &[1.0], [0, 0, 0], None)?;
+    algo::noise(
+        &mut drawn,
+        Noise::Gaussian {
+            mean: 0.0,
+            standard_deviation: 0.1,
+        },
+        true,
+        1,
+        None,
+    )?;
+    algo::noise(
+        &mut drawn,
+        Noise::Uniform { min: 0.0, max: 1.0 },
+        false,
+        1,
+        None,
+    )?;
+    algo::noise(
+        &mut drawn,
+        Noise::Blue { min: 0.0, max: 1.0 },
+        false,
+        1,
+        None,
+    )?;
+    algo::noise(
+        &mut drawn,
+        Noise::Salt {
+            value: 1.0,
+            portion: 0.1,
+        },
+        false,
+        1,
+        None,
+    )?;
+    algo::render_point(&mut drawn, 1, 1, &[1.0], None)?;
+    algo::render_line(&mut drawn, [0, 0], [8, 8], &[1.0], false, None)?;
+    algo::render_box(&mut drawn, [1, 1], [5, 5], &[1.0], true, None)?;
+
+    // Text needs a font this build may not have, so only the shape is named.
+    let text = TextOptions {
+        size: 12,
+        align_x: TextAlignX::Center,
+        align_y: TextAlignY::Top,
+        ..TextOptions::default()
+    };
+    let _ = algo::render_text(&mut drawn, [4, 4], "hi", &text, None);
+    let _ = algo::text_size("hi", 12, "");
 
     // Deep, from a flat image and back.
     let flat_rgba =
