@@ -30,6 +30,11 @@ crates.io yet, so there are no version numbers to hang them on.
 - `TextureSystem`: filtered texture lookups, with wrap, mip and interpolation
   modes and explicit derivatives — the mip selection and filtering a renderer
   would otherwise write itself.
+- `make_texture`, which writes the tiled, MIP-mapped files `TextureSystem`
+  reads, from a file or from an `ImageBuf`. `TextureConfig` gives the common
+  `maketx` settings names and types, and still reaches the rest by attribute.
+  The crate no longer needs `maketx` or `oiiotool` to produce a texture, so
+  the texture tests no longer need an external corpus to have a real one.
 - `ColorConfig`: report which colour spaces and roles the active
   OpenColorIO configuration defines.
 - `PixelFormat`, describing what a file stores, including formats the

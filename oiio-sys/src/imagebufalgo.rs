@@ -25,6 +25,7 @@ mod ffi {
         include!("oiio-sys/src/ffi_imagebufalgo.h");
 
         type ImageBuf = crate::imagebuf::ImageBuf;
+        type ImageSpec = crate::imageio::ImageSpec;
         type ROI = crate::imageio::ROI;
         type TypeDesc = crate::typedesc::TypeDesc;
 
@@ -238,6 +239,22 @@ mod ffi {
             newchannelnames: &Vec<String>,
             shuffle_channel_names: bool,
             nthreads: i32,
+        ) -> bool;
+
+        pub fn imagebufalgo_make_texture_from_buffer(
+            mode: i32,
+            input: &ImageBuf,
+            outputfilename: &str,
+            config: &ImageSpec,
+            error: &mut String,
+        ) -> bool;
+
+        pub fn imagebufalgo_make_texture_from_file(
+            mode: i32,
+            filename: &str,
+            outputfilename: &str,
+            config: &ImageSpec,
+            error: &mut String,
         ) -> bool;
     }
 }

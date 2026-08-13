@@ -2,13 +2,15 @@
 
 #include <OpenImageIO/imagebuf.h>
 #include <OpenImageIO/imagebufalgo.h>
+#include <OpenImageIO/imageio.h>
 #include <rust/cxx.h>
 #include <cstdint>
 
 namespace oiio {
-using ImageBuf = OIIO::ImageBuf;
-using ROI      = OIIO::ROI;
-using TypeDesc = OIIO::TypeDesc;
+using ImageBuf  = OIIO::ImageBuf;
+using ImageSpec = OIIO::ImageSpec;
+using ROI       = OIIO::ROI;
+using TypeDesc  = OIIO::TypeDesc;
 
 struct CompareSummary;
 
@@ -140,5 +142,26 @@ imagebufalgo_channels(ImageBuf& dst, const ImageBuf& src, int nchannels,
                       rust::Slice<const float> channelvalues,
                       const rust::Vec<rust::String>& newchannelnames,
                       bool shuffle_channel_names, int nthreads);
+
+// Turning an image into a tiled, MIP-mapped texture file. Unlike every call
+// above, this one writes a file rather than filling a destination buffer, so
+// there is no ImageBuf in which OpenImageIO could record an error: it puts the
+// message in the global error channel instead, and explains refusals on the
+// stream it is handed. Both are collected into `error`, because neither on its
+// own reliably holds the reason.
+//
+// `mode` is a MakeTextureMode; an out-of-range value is refused here rather
+// than cast into whatever the enum happens to have at that position.
+bool
+imagebufalgo_make_texture_from_buffer(int32_t mode, const ImageBuf& input,
+                                      const rust::Str outputfilename,
+                                      const ImageSpec& config,
+                                      rust::String& error);
+
+bool
+imagebufalgo_make_texture_from_file(int32_t mode, const rust::Str filename,
+                                    const rust::Str outputfilename,
+                                    const ImageSpec& config,
+                                    rust::String& error);
 
 }  // namespace oiio

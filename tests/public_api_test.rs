@@ -7,9 +7,10 @@
 
 use oiio::algo::{self, ChannelSource, CompareSummary, FitMode};
 use oiio::{
-    f16, AttributeValue, ColorConfig, DeepChannel, DeepImage, Error, ImageBuf, ImageCache,
-    ImageCacheBuilder, ImageHandle, ImageInput, ImageOutput, ImageSpec, Perthread, Pixel,
-    PixelFormat, Result, Roi, Storage, TileGuard,
+    f16, make_texture, make_texture_from_buffer, AttributeValue, ColorConfig, DeepChannel,
+    DeepImage, Derivatives, Error, ImageBuf, ImageCache, ImageCacheBuilder, ImageHandle, ImageInput,
+    ImageOutput, ImageSpec, InterpolationMode, MipMode, Perthread, Pixel, PixelFormat, Result, Roi,
+    Storage, TextureConfig, TextureMode, TextureOptions, TextureSystem, TileGuard, WrapMode,
 };
 
 /// Types reachable only from a live file or cache still have to be nameable,
@@ -86,6 +87,62 @@ fn a_dependent_can_use_the_whole_surface() -> Result<()> {
     let _: FitMode = FitMode::default();
     let _spaces = ColorConfig::new()?.color_space_names();
 
+    Ok(())
+}
+
+/// The texture half of the crate, from making a file to reading it back.
+///
+/// Both free functions are named, so neither can quietly stop being exported,
+/// and every option type is constructed rather than merely imported.
+#[test]
+fn a_dependent_can_make_and_look_up_a_texture() -> Result<()> {
+    let directory = std::env::temp_dir().join("oiio-bind-public-api");
+    std::fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("public-api-source.exr");
+    let texture = directory.join("public-api.tx");
+
+    let mut image = ImageBuf::new(&ImageSpec::new(32, 32, 3, PixelFormat::F32)?)?;
+    algo::fill(&mut image, &[0.4, 0.6, 0.8], None)?;
+    image.write(&source)?;
+
+    let config = TextureConfig::new()
+        .with_format(PixelFormat::F32)
+        .with_tile_size([16, 16, 1])
+        .with_wrap_modes(WrapMode::Clamp, WrapMode::Periodic)
+        .with_filter("lanczos3")
+        .with_mipmap(true)
+        .with_attribute("maketx:updatemode", 0);
+
+    make_texture(TextureMode::Texture, &source, &texture, &config)?;
+    make_texture_from_buffer(TextureMode::Texture, &image, &texture, &config)?;
+
+    let textures = TextureSystem::new()?;
+    assert_eq!(textures.resolution(&texture)?, [32, 32]);
+
+    let options = TextureOptions {
+        mip_mode: MipMode::Trilinear,
+        interpolation: InterpolationMode::Bilinear,
+        s_wrap: WrapMode::Clamp,
+        t_wrap: WrapMode::Clamp,
+        ..TextureOptions::default()
+    };
+    let mut rgb = [0.0_f32; 3];
+    textures.texture(
+        &texture,
+        &options,
+        0.5,
+        0.5,
+        Derivatives::uniform(1.0 / 32.0),
+        &mut rgb,
+    )?;
+    assert!((rgb[0] - 0.4).abs() < 0.05, "unexpected lookup {rgb:?}");
+
+    let mut point = [0.0_f32; 3];
+    textures.texture(&texture, &options, 0.5, 0.5, Derivatives::point(), &mut point)?;
+    assert!(point.iter().all(|value| value.is_finite()));
+
+    std::fs::remove_file(&source).ok();
+    std::fs::remove_file(&texture).ok();
     Ok(())
 }
 

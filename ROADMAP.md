@@ -141,7 +141,12 @@ in this fork has changed that.
 
 The `ImageBufAlgo` surface is being completed in slices, each one commit:
 
-- [ ] `make_texture`, to write the `.tx` mip pyramids `TextureSystem` reads.
+- [x] `make_texture`, to write the `.tx` mip pyramids `TextureSystem` reads,
+  from a file or from an `ImageBuf`. Configuration is a `TextureConfig` with
+  typed settings rather than the raw `maketx:` attribute names, though those
+  remain reachable. Note that the output format has the last word on the data
+  format and takes it silently: TIFF, which is what a `.tx` is, promotes
+  `half` to `float`, and OpenEXR demotes integer formats to `half`.
 - [ ] Statistics and introspection: `computePixelStats`, `histogram`,
   `isConstantColor`, `isMonochrome`, `nonzero_region`, `computePixelHashSHA1`.
 - [ ] Remaining pixel maths: `mad`, `pow`, `clamp`, `min`, `max`,

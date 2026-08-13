@@ -51,6 +51,8 @@
 //!   samples rather than one value.
 //! - [`ColorConfig`] reports which colour spaces the active OpenColorIO
 //!   configuration defines, so conversions need not guess at names.
+//! - [`make_texture`] writes the tiled, MIP-mapped files a renderer wants,
+//!   and [`TextureSystem`] does the filtered lookups into them.
 //! - Neither reading nor writing needs the filesystem:
 //!   [`ImageInput::from_memory`] and [`ImageOutput::to_memory`] work on
 //!   buffers.
@@ -94,7 +96,8 @@ pub use pixel::Pixel;
 pub use pixel_format::PixelFormat;
 pub use roi::Roi;
 pub use texture::{
-    Derivatives, InterpolationMode, MipMode, TextureOptions, TextureSystem, WrapMode,
+    make_texture, make_texture_from_buffer, Derivatives, InterpolationMode, MipMode, TextureConfig,
+    TextureMode, TextureOptions, TextureSystem, WrapMode,
 };
 
 /// Backwards-compatible name for errors returned by `ImageInput`.

@@ -1,6 +1,9 @@
 #include "ffi_imagebufalgo.h"
 #include "oiio-sys/src/imagebufalgo.rs.h"
 
+#include <sstream>
+#include <string>
+
 namespace oiio {
 namespace {
 
@@ -11,6 +14,37 @@ inline OIIO::cspan<float>
 to_cspan(rust::Slice<const float> values)
 {
     return OIIO::cspan<float>(values.data(), std::ptrdiff_t(values.size()));
+}
+
+inline OIIO::string_view
+to_string_view(const rust::Str text)
+{
+    return OIIO::string_view(text.data(), text.size());
+}
+
+bool
+to_texture_mode(int32_t mode, OIIO::ImageBufAlgo::MakeTextureMode& out)
+{
+    if (mode < 0 || mode >= int32_t(OIIO::ImageBufAlgo::_MakeTxLast))
+        return false;
+    out = OIIO::ImageBufAlgo::MakeTextureMode(mode);
+    return true;
+}
+
+// A refused input is explained on the operation's own stream, while a failed
+// write lands in the global error channel. Report whichever spoke, and both
+// when both did.
+void
+collect_texture_failure(const std::ostringstream& printed, rust::String& error)
+{
+    std::string message = OIIO::geterror();
+    const std::string logged = printed.str();
+    if (!logged.empty()) {
+        if (!message.empty())
+            message += '\n';
+        message += logged;
+    }
+    error = rust::String(message);
 }
 
 }  // namespace
@@ -256,6 +290,54 @@ imagebufalgo_compare(const ImageBuf& a, const ImageBuf& b, float failthresh,
     summary.failures                  = uint64_t(results.nfail);
     summary.failed                    = results.error;
     return summary;
+}
+
+bool
+imagebufalgo_make_texture_from_buffer(int32_t mode, const ImageBuf& input,
+                                      const rust::Str outputfilename,
+                                      const ImageSpec& config,
+                                      rust::String& error)
+{
+    OIIO::ImageBufAlgo::MakeTextureMode texture_mode;
+    if (!to_texture_mode(mode, texture_mode)) {
+        error = rust::String("unknown make_texture mode");
+        return false;
+    }
+
+    std::ostringstream printed;
+    const bool succeeded
+        = OIIO::ImageBufAlgo::make_texture(texture_mode, input,
+                                           std::string(to_string_view(
+                                               outputfilename)),
+                                           config, &printed);
+    if (!succeeded)
+        collect_texture_failure(printed, error);
+    return succeeded;
+}
+
+bool
+imagebufalgo_make_texture_from_file(int32_t mode, const rust::Str filename,
+                                    const rust::Str outputfilename,
+                                    const ImageSpec& config,
+                                    rust::String& error)
+{
+    OIIO::ImageBufAlgo::MakeTextureMode texture_mode;
+    if (!to_texture_mode(mode, texture_mode)) {
+        error = rust::String("unknown make_texture mode");
+        return false;
+    }
+
+    std::ostringstream printed;
+    const bool succeeded
+        = OIIO::ImageBufAlgo::make_texture(texture_mode,
+                                           std::string(
+                                               to_string_view(filename)),
+                                           std::string(to_string_view(
+                                               outputfilename)),
+                                           config, &printed);
+    if (!succeeded)
+        collect_texture_failure(printed, error);
+    return succeeded;
 }
 
 }  // namespace oiio

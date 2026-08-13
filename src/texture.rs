@@ -1,13 +1,15 @@
-//! Filtered texture lookups.
+//! Making textures, and looking them up.
 //!
-//! A [`TextureSystem`] answers "what colour is this texture at this point",
-//! doing the mip selection and filtering that a renderer would otherwise
-//! write itself. It reads through an image cache, so the same file serves
-//! many lookups without being re-read.
+//! [`make_texture`] turns an ordinary image into the tiled, MIP-mapped file a
+//! renderer wants — the `.tx` that `maketx` and `oiiotool -otex` produce. A
+//! [`TextureSystem`] then answers "what colour is this texture at this point",
+//! doing the mip selection and filtering that a renderer would otherwise write
+//! itself. It reads through an image cache, so the same file serves many
+//! lookups without being re-read.
 
 use std::path::Path;
 
-use crate::{path_to_utf8, sys, Error, Result};
+use crate::{path_to_utf8, sys, AttributeValue, Error, ImageBuf, PixelFormat, Result};
 
 /// What happens to texture coordinates outside the unit square.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -34,6 +36,17 @@ impl WrapMode {
             Self::Clamp => 2,
             Self::Periodic => 3,
             Self::Mirror => 4,
+        }
+    }
+
+    /// The OpenImageIO name for this mode, as a texture file records it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Black => "black",
+            Self::Clamp => "clamp",
+            Self::Periodic => "periodic",
+            Self::Mirror => "mirror",
         }
     }
 }
@@ -90,6 +103,318 @@ impl InterpolationMode {
             Self::Bicubic => 2,
             Self::SmartBicubic => 3,
         }
+    }
+}
+
+/// What kind of texture [`make_texture`] should write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum TextureMode {
+    /// An ordinary texture, for surfaces.
+    #[default]
+    Texture,
+    /// A shadow map.
+    Shadow,
+    /// A latitude-longitude environment map, from an image already in that
+    /// layout.
+    LatLongEnvironment,
+    /// A latitude-longitude environment map, from a light probe image, which
+    /// is reprojected on the way.
+    LightProbe,
+    /// A bump map that also carries the slopes derived from it.
+    BumpWithSlopes,
+}
+
+impl TextureMode {
+    fn code(self) -> i32 {
+        match self {
+            Self::Texture => 0,
+            Self::Shadow => 1,
+            Self::LatLongEnvironment => 2,
+            Self::LightProbe => 3,
+            Self::BumpWithSlopes => 4,
+        }
+    }
+}
+
+/// How [`make_texture`] should write a texture.
+///
+/// Every setting has a default that matches OpenImageIO's own, so
+/// `TextureConfig::default()` writes what `maketx` with no options would.
+///
+/// ```no_run
+/// use oiio::{make_texture, PixelFormat, TextureConfig, TextureMode, WrapMode};
+/// use std::path::Path;
+///
+/// # fn main() -> oiio::Result<()> {
+/// let config = TextureConfig::new()
+///     .with_format(PixelFormat::F16)
+///     .with_wrap_modes(WrapMode::Periodic, WrapMode::Periodic)
+///     .with_filter("lanczos3");
+///
+/// make_texture(
+///     TextureMode::Texture,
+///     Path::new("source.exr"),
+///     Path::new("texture.tx"),
+///     &config,
+/// )?;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TextureConfig {
+    format: Option<PixelFormat>,
+    tile: Option<[u32; 3]>,
+    attributes: Vec<(String, AttributeValue)>,
+}
+
+impl TextureConfig {
+    /// A configuration with every OpenImageIO default in place.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The data format to write. Unset, the texture keeps the input's.
+    ///
+    /// The output format has the last word, and takes it silently. A `.tx` is
+    /// a TIFF, and OpenImageIO's TIFF writer turns a request for `half` into
+    /// `float` unless the `tiff:half` attribute is set; an OpenEXR turns a
+    /// request for any integer format into `half`. Neither is an error, and
+    /// neither is reported, so read the written file's specification back if
+    /// the format matters.
+    pub fn with_format(mut self, format: PixelFormat) -> Self {
+        self.format = Some(format);
+        self
+    }
+
+    /// Tile dimensions. OpenImageIO's default is 64x64x1.
+    pub fn with_tile_size(mut self, dimensions: [u32; 3]) -> Self {
+        self.tile = Some(dimensions);
+        self
+    }
+
+    /// The compression the output format should use. Default: `"zip"`.
+    pub fn with_compression(self, compression: &str) -> Self {
+        self.with_attribute("compression", compression)
+    }
+
+    /// The wrap modes to record in the texture, which a lookup that asks for
+    /// [`WrapMode::Default`] will then use. Default: black in both directions.
+    pub fn with_wrap_modes(self, s_wrap: WrapMode, t_wrap: WrapMode) -> Self {
+        let modes = format!("{},{}", s_wrap.name(), t_wrap.name());
+        self.with_attribute("wrapmodes", modes)
+    }
+
+    /// The filter to resample with when building mip levels, such as
+    /// `"lanczos3"` or `"box"`. Unset, OpenImageIO resamples bilinearly.
+    pub fn with_filter(self, filter_name: &str) -> Self {
+        self.with_attribute("maketx:filtername", filter_name)
+    }
+
+    /// Whether to build a mip pyramid at all. Default: true.
+    ///
+    /// A texture without one still reads, but every lookup pays for
+    /// filtering the full resolution, which is the cost the pyramid exists to
+    /// avoid.
+    pub fn with_mipmap(self, enabled: bool) -> Self {
+        self.with_attribute("maketx:nomipmap", i32::from(!enabled))
+    }
+
+    /// Whether to resize up to a power of two first. Default: false.
+    pub fn with_resize_to_power_of_two(self, enabled: bool) -> Self {
+        self.with_attribute("maketx:resize", i32::from(enabled))
+    }
+
+    /// Whether to shrink an image that is entirely one colour down to a tiny
+    /// one. Default: false.
+    pub fn with_constant_color_detect(self, enabled: bool) -> Self {
+        self.with_attribute("maketx:constant_color_detect", i32::from(enabled))
+    }
+
+    /// Whether to collapse an RGB image whose channels are equal everywhere
+    /// to a single channel. Default: false.
+    pub fn with_monochrome_detect(self, enabled: bool) -> Self {
+        self.with_attribute("maketx:monochrome_detect", i32::from(enabled))
+    }
+
+    /// Whether to drop an alpha channel that is 1.0 in every pixel.
+    /// Default: false.
+    pub fn with_opaque_detect(self, enabled: bool) -> Self {
+        self.with_attribute("maketx:opaque_detect", i32::from(enabled))
+    }
+
+    /// Whether to divide colour by alpha before converting colour space and
+    /// multiply it back after. Default: false.
+    pub fn with_unpremult(self, enabled: bool) -> Self {
+        self.with_attribute("maketx:unpremult", i32::from(enabled))
+    }
+
+    /// Convert from one colour space to another while building the texture.
+    ///
+    /// The names are the ones the active OpenColorIO configuration defines;
+    /// [`ColorConfig`](crate::ColorConfig) reports them.
+    pub fn with_color_conversion(self, from_space: &str, to_space: &str) -> Self {
+        self.with_attribute("maketx:incolorspace", from_space)
+            .with_attribute("maketx:outcolorspace", to_space)
+    }
+
+    /// How many channels the texture should have, padding with zeroes or
+    /// dropping channels. Unset, it keeps the input's.
+    pub fn with_channel_count(self, channels: u32) -> Self {
+        let channels = i32::try_from(channels).unwrap_or(i32::MAX);
+        self.with_attribute("maketx:nchannels", channels)
+    }
+
+    /// Sharpen by this contrast metric when building mip levels.
+    /// Default: 0.0, meaning no sharpening.
+    pub fn with_sharpen(self, amount: f32) -> Self {
+        self.with_attribute("maketx:sharpen", amount)
+    }
+
+    /// Whether to compress and expand the range around each resize, which
+    /// reduces the ringing a filter with negative lobes causes on high dynamic
+    /// range images. Default: false.
+    pub fn with_highlight_compensation(self, enabled: bool) -> Self {
+        self.with_attribute("maketx:highlightcomp", i32::from(enabled))
+    }
+
+    /// Whether a NaN anywhere in the input is an error. Default: false.
+    pub fn with_nan_check(self, enabled: bool) -> Self {
+        self.with_attribute("maketx:checknan", i32::from(enabled))
+    }
+
+    /// Set any other configuration attribute by name.
+    ///
+    /// This is the escape hatch for the `maketx:` settings the methods above
+    /// do not cover. Setting the same name twice keeps the last value.
+    pub fn with_attribute(
+        mut self,
+        name: impl Into<String>,
+        value: impl Into<AttributeValue>,
+    ) -> Self {
+        let name = name.into();
+        let value = value.into();
+        match self.attributes.iter_mut().find(|(key, _)| *key == name) {
+            Some(existing) => existing.1 = value,
+            None => self.attributes.push((name, value)),
+        }
+        self
+    }
+
+    /// Build the specification OpenImageIO reads the configuration out of.
+    ///
+    /// Only the data format, the tile size and the attributes are read; a
+    /// configuration describes how to write a texture, not what the texture
+    /// contains, so its resolution and channel count are left at zero.
+    fn to_sys(&self) -> Result<cxx::UniquePtr<sys::imageio::ImageSpec>> {
+        let mut spec = sys::imageio::imagespec_from_resolution(0, 0, 0);
+        let Some(mut pinned) = spec.as_mut() else {
+            return Err(Error::InvalidImageSpec(
+                "OpenImageIO could not allocate an image specification".to_owned(),
+            ));
+        };
+
+        if let Some(format) = self.format {
+            if format == PixelFormat::Other {
+                return Err(Error::InvalidImageSpec(
+                    "a texture needs a concrete pixel format; leave it unset to keep the input's"
+                        .to_owned(),
+                ));
+            }
+            sys::imageio::imagespec_set_format(pinned.as_mut(), format.to_sys());
+        }
+
+        if let Some(tile) = self.tile {
+            let dimension = |name: &'static str, value: u32| {
+                i32::try_from(value).map_err(|_| {
+                    Error::InvalidImageSpec(format!("{name} {value} exceeds i32::MAX"))
+                })
+            };
+            sys::imageio::imagespec_set_tile_size(
+                pinned.as_mut(),
+                dimension("tile width", tile[0])?,
+                dimension("tile height", tile[1])?,
+                dimension("tile depth", tile[2])?,
+            );
+        }
+
+        for (name, value) in &self.attributes {
+            value.write(pinned.as_mut(), name);
+        }
+
+        Ok(spec)
+    }
+}
+
+/// Write `input_path` as a texture at `output_path`.
+///
+/// The input is read with OpenImageIO's own texture pipeline, which is the
+/// difference between this and reading the file yourself: it can stream an
+/// image too large to hold in memory.
+///
+/// Errors are reported as OpenImageIO gives them — it has no destination image
+/// to record them in, so the message comes from the global error channel and
+/// from whatever the operation printed while refusing.
+pub fn make_texture(
+    mode: TextureMode,
+    input_path: &Path,
+    output_path: &Path,
+    config: &TextureConfig,
+) -> Result<()> {
+    let input = path_to_utf8(input_path)?;
+    let output = path_to_utf8(output_path)?;
+    let config = config.to_sys()?;
+    let Some(config) = config.as_ref() else {
+        return Err(Error::InvalidImageSpec(
+            "OpenImageIO could not allocate an image specification".to_owned(),
+        ));
+    };
+
+    let mut message = String::new();
+    let succeeded = sys::imagebufalgo::imagebufalgo_make_texture_from_file(
+        mode.code(),
+        input,
+        output,
+        config,
+        &mut message,
+    );
+    if succeeded {
+        Ok(())
+    } else {
+        Err(Error::operation("make texture", message))
+    }
+}
+
+/// Write an image already in memory as a texture at `output_path`.
+///
+/// Use [`make_texture`] instead when the source is a file: it streams, and so
+/// does not need the whole image resident.
+pub fn make_texture_from_buffer(
+    mode: TextureMode,
+    source: &ImageBuf,
+    output_path: &Path,
+    config: &TextureConfig,
+) -> Result<()> {
+    let output = path_to_utf8(output_path)?;
+    let config = config.to_sys()?;
+    let Some(config) = config.as_ref() else {
+        return Err(Error::InvalidImageSpec(
+            "OpenImageIO could not allocate an image specification".to_owned(),
+        ));
+    };
+
+    let mut message = String::new();
+    let succeeded = sys::imagebufalgo::imagebufalgo_make_texture_from_buffer(
+        mode.code(),
+        source.inner(),
+        output,
+        config,
+        &mut message,
+    );
+    if succeeded {
+        Ok(())
+    } else {
+        Err(Error::operation("make texture", message))
     }
 }
 
