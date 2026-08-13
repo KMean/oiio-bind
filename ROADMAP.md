@@ -26,10 +26,10 @@ line is established and tested deliberately.
   `f32`.
 - [x] Validate dimensions, channels, strides, multiplication overflow, and buffer
   lengths before entering C++.
-- [x] Introduce safe `ImageSpec`, `Roi`, and error types. Metadata coverage is
-  still intentionally narrow.
-- [ ] Give `ImageInput` and `ImageOutput` explicit fallible `close` operations.
-  (`ImageInput` is complete.)
+- [x] Introduce safe `ImageSpec`, `Roi`, and error types. `ImageSpec` is
+  constructible from Rust, carries its `PixelFormat`, and exposes every
+  metadata attribute as an `AttributeValue`.
+- [x] Give `ImageInput` and `ImageOutput` explicit fallible `close` operations.
 
 ## 2. ImageCache as a first-class API
 
@@ -42,9 +42,35 @@ line is established and tested deliberately.
 
 ## 3. Image I/O
 
-- Complete safe, caller-buffer `ImageInput` reads.
-- Complete `ImageOutput` creation, writes, and round-trip tests.
-- Cover subimages, mip levels, tiled data, channel subsets, and metadata.
+- [x] Complete `ImageOutput` creation, writes, and round-trip tests. Whole
+  images, scanline ranges, and tile blocks are covered, as are subimages, mip
+  levels, multi-part files, non-zero data window origins, and metadata.
+- [ ] Complete safe, caller-buffer `ImageInput` reads. Whole images at any
+  subimage and mip level are covered; scanline, tile, and channel-subset reads
+  are not yet exposed.
+- [ ] Channel subsets on both sides.
+- [ ] Writing metadata whose OpenImageIO type this crate does not model
+  directly, such as matrices and arrays.
+
+## Notes on the OpenImageIO 3.1 span API
+
+The bounded pixel calls validate the caller's buffer against the image
+specification and then pass explicit strides, rather than using OpenImageIO's
+`image_span` overloads. Two behaviours measured against OpenImageIO 3.1.12
+motivate that:
+
+- `ImageInput::read_image` taking an `image_span` returns false, without
+  recording an error, whenever a tiled image's width or height is not an exact
+  multiple of the tile size. No exactly sized destination buffer can satisfy
+  it, so tiled images with partial edge tiles could not be read at all.
+- `ImageOutput::write_scanlines` taking an `image_span` rejects scanline ranges
+  expressed in image coordinates when the data window origin is non-zero.
+
+The explicit-stride overloads handle both cases correctly, and the safety
+argument is unchanged: `bounded_pixel_layout` still proves that the buffer holds
+exactly one contiguous value per channel, pixel, row, and slice before any
+pointer reaches C++. Both behaviours have regression tests. Neither is reported
+upstream yet; if they are fixed, the span overloads can be restored.
 
 ## Later subsystems
 

@@ -45,9 +45,39 @@ cache.get_pixels_into(path, roi, &mut pixels)?;
 # Ok::<(), oiio::Error>(())
 ```
 
+Write one:
+
+```rust,no_run
+use oiio::{f16, ImageOutput, ImageSpec, PixelFormat};
+use std::path::Path;
+
+let spec = ImageSpec::new(1920, 1080, 4, PixelFormat::F16)?
+    .with_channel_names(["R", "G", "B", "A"])?
+    .with_attribute("Artist", "oiio-bind");
+let pixels = vec![f16::ZERO; spec.element_count()?];
+
+let mut output = ImageOutput::create(Path::new("out.exr"), &spec)?;
+output.write_image(&pixels)?;
+output.close()?;
+# Ok::<(), oiio::Error>(())
+```
+
+A writer is always open: `ImageOutput::create` selects the plugin from the file
+name and opens the file in one step, so a write can never be attempted against
+an unopened file. Whole images, scanline ranges, and blocks of tiles are all
+supported, along with subimages, mip levels, and a non-zero data window origin.
+Every write region and buffer length is validated before any call into C++.
+
 The contiguous safe APIs support `u8`, `u16`, [`half::f16`](https://docs.rs/half),
 and `f32` pixel components. A sealed `Pixel` trait keeps the Rust element type,
 OpenImageIO type descriptor, alignment, and buffer byte size consistent.
+`PixelFormat` separately describes what a file stores, including formats such as
+`uint32` that the contiguous buffer API does not itself read or write.
+
+Metadata is read as `AttributeValue`. Integer, float, and string attributes are
+modelled directly and can be written back; any other OpenImageIO type is
+preserved for inspection with its type name and OpenImageIO's own rendering of
+the value.
 
 The `oiio` crate is built using `cargo build`. `oiio-sys` discovers
 OpenImageIO in this order:
