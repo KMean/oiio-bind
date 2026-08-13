@@ -155,6 +155,16 @@ imagebuf_set_pixels(ImageBuf& imagebuf, ROI roi, TypeDesc format,
                     const uint8_t* data, int64_t xstride, int64_t ystride,
                     int64_t zstride);
 
+// Bounded pixel transfer: the buffer is checked against the region before any
+// pointer reaches OpenImageIO, and the strides are derived from that check.
+bool
+imagebuf_get_pixels_span(const ImageBuf& imagebuf, const ROI& roi,
+                         TypeDesc format, rust::Slice<uint8_t> result);
+
+bool
+imagebuf_set_pixels_span(ImageBuf& imagebuf, const ROI& roi, TypeDesc format,
+                         rust::Slice<const uint8_t> data);
+
 bool
 imagebuf_initialized(const ImageBuf& imagebuf);
 

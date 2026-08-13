@@ -1,6 +1,8 @@
 #include "ffi_imagebuf.h"
+#include "ffi_pixel.h"
 #include "oiio-sys/src/imagebuf.rs.h"
 #include <OpenImageIO/imagebuf.h>
+#include <cstddef>
 #include <memory>
 #include <stdexcept>
 #include <stdio.h>
@@ -254,6 +256,45 @@ imagebuf_set_pixels(ImageBuf& imagebuf, ROI roi, TypeDesc format,
     return imagebuf.set_pixels(roi, format, data, xstride, ystride, zstride);
 }
 
+namespace {
+// Shared validation for the bounded pixel calls: the region must be non-empty
+// and the buffer must hold exactly one contiguous value per channel, pixel,
+// row and slice of it.
+inline bool
+bounded_roi_layout(const ROI& roi, TypeDesc format, std::size_t buffer_bytes,
+                   detail::PixelLayout& layout)
+{
+    const int64_t width    = static_cast<int64_t>(roi.xend) - roi.xbegin;
+    const int64_t height   = static_cast<int64_t>(roi.yend) - roi.ybegin;
+    const int64_t depth    = static_cast<int64_t>(roi.zend) - roi.zbegin;
+    const int64_t channels = static_cast<int64_t>(roi.chend) - roi.chbegin;
+    return detail::bounded_pixel_layout(channels, width, height, depth, format,
+                                        buffer_bytes, layout);
+}
+}  // namespace
+
+bool
+imagebuf_get_pixels_span(const ImageBuf& imagebuf, const ROI& roi,
+                         TypeDesc format, rust::Slice<uint8_t> result)
+{
+    detail::PixelLayout layout;
+    if (!bounded_roi_layout(roi, format, result.size(), layout))
+        return false;
+    return imagebuf.get_pixels(roi, format, result.data(), layout.x_stride,
+                               layout.y_stride, layout.z_stride);
+}
+
+bool
+imagebuf_set_pixels_span(ImageBuf& imagebuf, const ROI& roi, TypeDesc format,
+                         rust::Slice<const uint8_t> data)
+{
+    detail::PixelLayout layout;
+    if (!bounded_roi_layout(roi, format, data.size(), layout))
+        return false;
+    return imagebuf.set_pixels(roi, format, data.data(), layout.x_stride,
+                               layout.y_stride, layout.z_stride);
+}
+
 bool
 imagebuf_initialized(const ImageBuf& imagebuf)
 {
@@ -308,16 +349,23 @@ imagebuf_clear_thumbnail(ImageBuf& imagebuf)
     imagebuf.clear_thumbnail();
 }
 
+// Both of these return a string_view. Handing that straight to rust::Str
+// selects its std::string constructor, which materialises a temporary and
+// leaves the returned Str pointing at freed memory. Constructing from the
+// view's own data and size keeps the pointer inside the ImageBuf, whose
+// lifetime the Rust signature already borrows.
 rust::Str
 imagebuf_name(const ImageBuf& imagebuf)
 {
-    return rust::Str(imagebuf.name());
+    const OIIO::string_view name = imagebuf.name();
+    return rust::Str(name.data(), name.size());
 }
 
 rust::Str
 imagebuf_file_format_name(const ImageBuf& imagebuf)
 {
-    return rust::Str(imagebuf.file_format_name());
+    const OIIO::string_view format = imagebuf.file_format_name();
+    return rust::Str(format.data(), format.size());
 }
 
 int

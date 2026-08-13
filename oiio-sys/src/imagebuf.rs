@@ -280,6 +280,22 @@ mod ffi {
             zstride: i64,
         ) -> bool;
 
+        /// Safety: the buffer must be writable for its full length.
+        pub unsafe fn imagebuf_get_pixels_span(
+            imagebuf: &ImageBuf,
+            roi: &ROI,
+            format: TypeDesc,
+            result: &mut [u8],
+        ) -> bool;
+
+        /// Safety: the buffer must hold initialized values of `format`.
+        pub unsafe fn imagebuf_set_pixels_span(
+            imagebuf: Pin<&mut ImageBuf>,
+            roi: &ROI,
+            format: TypeDesc,
+            data: &[u8],
+        ) -> bool;
+
         pub fn imagebuf_initialized(imagebuf: &ImageBuf) -> bool;
 
         pub fn imagebuf_storage(imagebuf: &ImageBuf) -> IBStorage;

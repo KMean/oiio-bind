@@ -40,6 +40,7 @@ use oiio_sys as sys;
 
 mod attribute;
 mod error;
+mod image_buf;
 mod image_cache;
 mod image_spec;
 mod imageio;
@@ -50,6 +51,7 @@ mod roi;
 pub use attribute::AttributeValue;
 pub use error::{Error, Result};
 pub use half::f16;
+pub use image_buf::{ImageBuf, Storage};
 pub use image_cache::{ImageCache, ImageCacheBuilder, ImageHandle, Perthread, TileGuard};
 pub use image_spec::ImageSpec;
 pub use imageio::{ImageInput, ImageOutput};

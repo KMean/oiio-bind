@@ -126,10 +126,14 @@ deepdata_ab_channel(const DeepData& deepdata)
     return deepdata.AB_channel();
 }
 
+// channelname() returns a string_view. Passing it directly to rust::Str picks
+// the std::string constructor, so the Str would point into a temporary that is
+// already destroyed; build it from the view's own data and size instead.
 rust::Str
 deepdata_channelname(const DeepData& deepdata, int c)
 {
-    return rust::Str(deepdata.channelname(c));
+    const OIIO::string_view name = deepdata.channelname(c);
+    return rust::Str(name.data(), name.size());
 }
 
 TypeDesc
