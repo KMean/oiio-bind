@@ -432,6 +432,43 @@ pub fn channels(
     finish(dst, "channel layout", succeeded)
 }
 
+/// Convert between colour spaces.
+///
+/// The names must be ones the active configuration knows; ask a
+/// [`ColorConfig`](crate::ColorConfig) rather than guessing, since they differ
+/// between configurations. A role such as `"scene_linear"` works wherever a
+/// space name does.
+///
+/// `unpremult` divides out alpha before converting and multiplies it back
+/// afterwards, which is what you want for images holding premultiplied
+/// colour: a colour transform is not linear, so applying it to premultiplied
+/// values darkens the edges of anything partly transparent.
+pub fn color_convert(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    from_space: &str,
+    to_space: &str,
+    unpremult: bool,
+    roi: Option<Roi>,
+) -> Result<()> {
+    if from_space.is_empty() || to_space.is_empty() {
+        return Err(Error::InvalidImageSpec(
+            "a colour conversion needs both a source and a destination space".to_owned(),
+        ));
+    }
+    let roi = region(roi);
+    let succeeded = sys::imagebufalgo::imagebufalgo_colorconvert(
+        dst.inner_mut(),
+        src.inner(),
+        from_space,
+        to_space,
+        unpremult,
+        &roi,
+        ALL_THREADS,
+    );
+    finish(dst, "colour convert", succeeded)
+}
+
 /// Compare two images numerically.
 ///
 /// `fail_threshold` and `warn_threshold` are per-channel absolute differences.

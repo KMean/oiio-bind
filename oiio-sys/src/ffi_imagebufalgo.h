@@ -90,6 +90,13 @@ CompareSummary
 imagebufalgo_compare(const ImageBuf& a, const ImageBuf& b, float failthresh,
                      float warnthresh, const ROI& roi, int nthreads);
 
+// Colour space conversion using the default configuration, which is whatever
+// $OCIO names or OpenImageIO's built-in one.
+bool
+imagebufalgo_colorconvert(ImageBuf& dst, const ImageBuf& src,
+                          const rust::Str fromspace, const rust::Str tospace,
+                          bool unpremult, const ROI& roi, int nthreads);
+
 // Resizing takes its filter through OpenImageIO's keyword arguments; the
 // options list is assembled here rather than exposed across the bridge. An
 // empty filter name asks OpenImageIO to choose one.

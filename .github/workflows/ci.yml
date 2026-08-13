@@ -166,6 +166,15 @@ jobs:
       # Keyed on the vcpkg commit and the manifest, so a change to either
       # rebuilds; otherwise the built packages are restored and the install
       # step only unpacks them.
+      # Restores before the install below, and saves in its post step, which is
+      # the only order actions/cache can work in: it cannot archive a
+      # directory until the job has filled it.
+      #
+      # Worth knowing when this misbehaves: a cache hit suppresses the save. An
+      # entry saved empty under the wanted key therefore perpetuates itself,
+      # since every later run restores nothing, rebuilds everything, and then
+      # declines to save because the key already matched. Deleting the entry,
+      # or changing the key, is the way out.
       - name: Cache built vcpkg packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -182,6 +191,20 @@ jobs:
           vcpkgGitCommitId: 9e593bb18ea69cc5095e012465dcd675a822ed0d
           runVcpkgInstall: true
           doNotCache: false
+
+      # Say plainly whether the binary cache did anything, so a run that spent
+      # a quarter of an hour rebuilding OpenImageIO is not mistaken for one
+      # that restored it.
+      - name: Report the vcpkg binary cache
+        shell: pwsh
+        run: |
+          $cache = $env:VCPKG_DEFAULT_BINARY_CACHE
+          $files = Get-ChildItem $cache -Recurse -File -ErrorAction SilentlyContinue
+          $megabytes = [math]::Round((($files | Measure-Object Length -Sum).Sum / 1MB), 1)
+          Write-Host "vcpkg binary cache: $($files.Count) packages, $megabytes MB"
+          if ($files.Count -eq 0) {
+            Write-Host "::warning::the vcpkg binary cache is empty, so every run rebuilds from source"
+          }
 
       - name: Configure OpenImageIO runtime
         shell: pwsh

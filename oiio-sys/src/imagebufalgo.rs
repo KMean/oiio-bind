@@ -161,6 +161,16 @@ mod ffi {
             nthreads: i32,
         ) -> CompareSummary;
 
+        pub fn imagebufalgo_colorconvert(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            fromspace: &str,
+            tospace: &str,
+            unpremult: bool,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
         pub fn imagebufalgo_resize(
             dst: Pin<&mut ImageBuf>,
             src: &ImageBuf,

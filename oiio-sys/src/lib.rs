@@ -5,6 +5,7 @@
 //! legacy APIs, and exposes raw pointers and caller-enforced safety contracts.
 //! Prefer `oiio` unless implementing or extending the high-level bindings.
 
+pub mod color;
 pub mod deepdata;
 pub mod filesystem;
 pub mod imagebuf;

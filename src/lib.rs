@@ -41,6 +41,7 @@ use oiio_sys as sys;
 pub mod algo;
 
 mod attribute;
+mod color;
 mod deep;
 mod error;
 mod image_buf;
@@ -52,6 +53,7 @@ mod pixel_format;
 mod roi;
 
 pub use attribute::AttributeValue;
+pub use color::ColorConfig;
 pub use deep::{DeepChannel, DeepImage};
 pub use error::{Error, Result};
 pub use half::f16;

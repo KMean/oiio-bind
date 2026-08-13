@@ -137,6 +137,17 @@ imagebufalgo_transpose(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
 }
 
 bool
+imagebufalgo_colorconvert(ImageBuf& dst, const ImageBuf& src,
+                          const rust::Str fromspace, const rust::Str tospace,
+                          bool unpremult, const ROI& roi, int nthreads)
+{
+    return OIIO::ImageBufAlgo::colorconvert(
+        dst, src, OIIO::string_view(fromspace.data(), fromspace.size()),
+        OIIO::string_view(tospace.data(), tospace.size()), unpremult, "", "",
+        nullptr, roi, nthreads);
+}
+
+bool
 imagebufalgo_resize(ImageBuf& dst, const ImageBuf& src,
                     const rust::Str filtername, float filterwidth,
                     const ROI& roi, int nthreads)

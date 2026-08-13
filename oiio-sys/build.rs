@@ -6,6 +6,7 @@ use std::{
 use anyhow::{bail, Context, Result};
 
 const NAMES: &[&str] = &[
+    "color",
     "deepdata",
     "filesystem",
     "imagebuf",
