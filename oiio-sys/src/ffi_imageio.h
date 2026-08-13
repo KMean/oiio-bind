@@ -78,6 +78,87 @@ roi_intersection(const ROI& roi, const ROI& other) noexcept;
 std::unique_ptr<ImageSpec>
 imagespec_from_resolution(int xres, int yres, int nchans);
 
+std::unique_ptr<ImageSpec>
+imagespec_new(int xres, int yres, int nchans, TypeDesc format);
+
+std::unique_ptr<ImageSpec>
+imagespec_copy(const ImageSpec& spec);
+
+TypeDesc
+imagespec_format(const ImageSpec& spec);
+
+void
+imagespec_set_format(ImageSpec& spec, TypeDesc format);
+
+void
+imagespec_set_origin(ImageSpec& spec, int x, int y, int z);
+
+void
+imagespec_set_dimensions(ImageSpec& spec, int width, int height, int depth);
+
+void
+imagespec_set_full(ImageSpec& spec, int full_x, int full_y, int full_z,
+                   int full_width, int full_height, int full_depth);
+
+void
+imagespec_set_tile_size(ImageSpec& spec, int width, int height, int depth);
+
+void
+imagespec_set_channel_names(ImageSpec& spec,
+                            const rust::Vec<rust::String>& names);
+
+void
+imagespec_set_alpha_channel(ImageSpec& spec, int index);
+
+void
+imagespec_set_z_channel(ImageSpec& spec, int index);
+
+void
+imagespec_set_deep(ImageSpec& spec, bool deep);
+
+void
+imagespec_attribute_int(ImageSpec& spec, const rust::Str name, int value);
+
+void
+imagespec_attribute_float(ImageSpec& spec, const rust::Str name, float value);
+
+void
+imagespec_attribute_string(ImageSpec& spec, const rust::Str name,
+                           const rust::Str value);
+
+bool
+imagespec_erase_attribute(ImageSpec& spec, const rust::Str name);
+
+bool
+imagespec_has_attribute(const ImageSpec& spec, const rust::Str name);
+
+TypeDesc
+imagespec_attribute_type(const ImageSpec& spec, const rust::Str name);
+
+int
+imagespec_get_int_attribute(const ImageSpec& spec, const rust::Str name,
+                            int defaultval);
+
+float
+imagespec_get_float_attribute(const ImageSpec& spec, const rust::Str name,
+                              float defaultval);
+
+rust::String
+imagespec_get_string_attribute(const ImageSpec& spec, const rust::Str name,
+                               const rust::Str defaultval);
+
+rust::String
+imagespec_attribute_to_string(const ImageSpec& spec, const rust::Str name);
+
+std::unique_ptr<std::vector<ImageSpec>>
+imagespec_vector_new();
+
+void
+imagespec_vector_push(std::vector<ImageSpec>& specs, const ImageSpec& spec);
+
+rust::Vec<rust::String>
+imagespec_attribute_names(const ImageSpec& spec);
+
 int
 imagespec_x(const ImageSpec& spec);
 
@@ -298,6 +379,12 @@ imageoutput_open_multi_subimage(ImageOutput& imageoutput,
                                 const rust::Str filename, int subimages,
                                 const ImageSpec* specs);
 
+// Open every subimage of a multi-part file at once. Formats such as OpenEXR
+// require all subimage specifications up front and reject `AppendSubimage`.
+bool
+imageoutput_open_specs(ImageOutput& imageoutput, const rust::Str filename,
+                       const std::vector<ImageSpec>& specs);
+
 const ImageSpec&
 imageoutput_spec(const ImageOutput& imageoutput);
 
@@ -336,6 +423,24 @@ bool
 imageoutput_write_image(ImageOutput& imageoutput, TypeDesc format,
                         const rust::Slice<uint8_t> data, int64_t xstride,
                         int64_t ystride, int64_t zstride);
+
+// Bounded, contiguous span writes. Each validates the buffer against the
+// currently open specification before entering OpenImageIO, and reports the
+// failure through the ImageOutput's own error channel.
+bool
+imageoutput_write_image_span(ImageOutput& imageoutput, TypeDesc format,
+                             const rust::Slice<const uint8_t> data);
+
+bool
+imageoutput_write_scanlines_span(ImageOutput& imageoutput, int ybegin, int yend,
+                                 TypeDesc format,
+                                 const rust::Slice<const uint8_t> data);
+
+bool
+imageoutput_write_tiles_span(ImageOutput& imageoutput, int xbegin, int xend,
+                             int ybegin, int yend, int zbegin, int zend,
+                             TypeDesc format,
+                             const rust::Slice<const uint8_t> data);
 
 bool
 imageoutput_write_deep_scanlines(ImageOutput& imageoutput, int ybegin, int yend,

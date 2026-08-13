@@ -4,6 +4,7 @@
 #include <OpenImageIO/imageio.h>
 #include <OpenImageIO/string_view.h>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <stdio.h>
@@ -237,6 +238,200 @@ imagespec_channel_names(const ImageSpec& spec)
         spec.channelnames);
     return std::unique_ptr<std::vector<std::string>>(channel_names);
 }
+
+namespace {
+inline OIIO::string_view
+to_string_view(const rust::Str text) noexcept
+{
+    return OIIO::string_view(text.data(), text.size());
+}
+}  // namespace
+
+std::unique_ptr<ImageSpec>
+imagespec_new(int xres, int yres, int nchans, TypeDesc format)
+{
+    return std::make_unique<ImageSpec>(xres, yres, nchans, format);
+}
+
+std::unique_ptr<ImageSpec>
+imagespec_copy(const ImageSpec& spec)
+{
+    return std::make_unique<ImageSpec>(spec);
+}
+
+TypeDesc
+imagespec_format(const ImageSpec& spec)
+{
+    return spec.format;
+}
+
+void
+imagespec_set_format(ImageSpec& spec, TypeDesc format)
+{
+    spec.set_format(format);
+}
+
+void
+imagespec_set_origin(ImageSpec& spec, int x, int y, int z)
+{
+    spec.x = x;
+    spec.y = y;
+    spec.z = z;
+}
+
+void
+imagespec_set_dimensions(ImageSpec& spec, int width, int height, int depth)
+{
+    spec.width  = width;
+    spec.height = height;
+    spec.depth  = depth;
+}
+
+void
+imagespec_set_full(ImageSpec& spec, int full_x, int full_y, int full_z,
+                   int full_width, int full_height, int full_depth)
+{
+    spec.full_x      = full_x;
+    spec.full_y      = full_y;
+    spec.full_z      = full_z;
+    spec.full_width  = full_width;
+    spec.full_height = full_height;
+    spec.full_depth  = full_depth;
+}
+
+void
+imagespec_set_tile_size(ImageSpec& spec, int width, int height, int depth)
+{
+    spec.tile_width  = width;
+    spec.tile_height = height;
+    spec.tile_depth  = depth;
+}
+
+void
+imagespec_set_channel_names(ImageSpec& spec,
+                            const rust::Vec<rust::String>& names)
+{
+    spec.channelnames.clear();
+    spec.channelnames.reserve(names.size());
+    for (const rust::String& name : names)
+        spec.channelnames.emplace_back(name.data(), name.size());
+}
+
+void
+imagespec_set_alpha_channel(ImageSpec& spec, int index)
+{
+    spec.alpha_channel = index;
+}
+
+void
+imagespec_set_z_channel(ImageSpec& spec, int index)
+{
+    spec.z_channel = index;
+}
+
+void
+imagespec_set_deep(ImageSpec& spec, bool deep)
+{
+    spec.deep = deep;
+}
+
+void
+imagespec_attribute_int(ImageSpec& spec, const rust::Str name, int value)
+{
+    spec.attribute(to_string_view(name), value);
+}
+
+void
+imagespec_attribute_float(ImageSpec& spec, const rust::Str name, float value)
+{
+    spec.attribute(to_string_view(name), value);
+}
+
+void
+imagespec_attribute_string(ImageSpec& spec, const rust::Str name,
+                           const rust::Str value)
+{
+    spec.attribute(to_string_view(name), to_string_view(value));
+}
+
+bool
+imagespec_erase_attribute(ImageSpec& spec, const rust::Str name)
+{
+    const std::size_t before = spec.extra_attribs.size();
+    spec.erase_attribute(std::string(name.data(), name.size()));
+    return spec.extra_attribs.size() != before;
+}
+
+bool
+imagespec_has_attribute(const ImageSpec& spec, const rust::Str name)
+{
+    return spec.find_attribute(to_string_view(name)) != nullptr;
+}
+
+TypeDesc
+imagespec_attribute_type(const ImageSpec& spec, const rust::Str name)
+{
+    return spec.getattributetype(to_string_view(name));
+}
+
+int
+imagespec_get_int_attribute(const ImageSpec& spec, const rust::Str name,
+                            int defaultval)
+{
+    return spec.get_int_attribute(to_string_view(name), defaultval);
+}
+
+float
+imagespec_get_float_attribute(const ImageSpec& spec, const rust::Str name,
+                              float defaultval)
+{
+    return spec.get_float_attribute(to_string_view(name), defaultval);
+}
+
+rust::String
+imagespec_get_string_attribute(const ImageSpec& spec, const rust::Str name,
+                               const rust::Str defaultval)
+{
+    const OIIO::string_view value
+        = spec.get_string_attribute(to_string_view(name),
+                                    to_string_view(defaultval));
+    // Metadata is arbitrary file content, so never assume it is valid UTF-8.
+    return rust::String::lossy(value.data(), value.size());
+}
+
+rust::String
+imagespec_attribute_to_string(const ImageSpec& spec, const rust::Str name)
+{
+    const OIIO::ParamValue* attribute = spec.find_attribute(
+        to_string_view(name));
+    if (attribute == nullptr)
+        return rust::String();
+    const std::string value = attribute->get_string();
+    return rust::String::lossy(value.data(), value.size());
+}
+
+std::unique_ptr<std::vector<ImageSpec>>
+imagespec_vector_new()
+{
+    return std::make_unique<std::vector<ImageSpec>>();
+}
+
+void
+imagespec_vector_push(std::vector<ImageSpec>& specs, const ImageSpec& spec)
+{
+    specs.push_back(spec);
+}
+
+rust::Vec<rust::String>
+imagespec_attribute_names(const ImageSpec& spec)
+{
+    rust::Vec<rust::String> names;
+    for (const OIIO::ParamValue& attribute : spec.extra_attribs) {
+        const OIIO::string_view name = attribute.name();
+        names.push_back(rust::String::lossy(name.data(), name.size()));
+    }
+    return names;
+}
 #pragma endregion
 
 #pragma region ImageInput
@@ -407,9 +602,19 @@ imageinput_read_image_span(ImageInput& imageinput, int subimage, int miplevel,
         return false;
     }
 
-    const auto output = detail::writable_byte_span(data, layout);
+    // The layout above is the safety contract: the buffer holds exactly one
+    // contiguous value per channel, pixel, row, and slice, and its byte size
+    // was checked against those dimensions.
+    //
+    // The strides are then passed explicitly instead of through OpenImageIO's
+    // `image_span` overload. Measured against OpenImageIO 3.1.12, that
+    // overload returns false without recording an error when a tiled image's
+    // width or height is not an exact multiple of the tile size, which no
+    // exactly sized destination buffer can satisfy. The explicit-stride
+    // overload reads the same images correctly.
     return imageinput.read_image(subimage, miplevel, chbegin, chend, format,
-                                 output);
+                                 data.data(), layout.x_stride, layout.y_stride,
+                                 layout.z_stride);
 }
 
 bool
@@ -568,6 +773,20 @@ imageoutput_open_multi_subimage(ImageOutput& imageoutput,
     return imageoutput.open(std::string(filename), subimages, specs);
 }
 
+bool
+imageoutput_open_specs(ImageOutput& imageoutput, const rust::Str filename,
+                       const std::vector<ImageSpec>& specs)
+{
+    if (specs.empty()
+        || specs.size() > static_cast<std::size_t>(
+               std::numeric_limits<int>::max())) {
+        imageoutput.errorfmt("invalid subimage count for a multi-part write");
+        return false;
+    }
+    return imageoutput.open(std::string(filename),
+                            static_cast<int>(specs.size()), specs.data());
+}
+
 const ImageSpec&
 imageoutput_spec(const ImageOutput& imageoutput)
 {
@@ -636,6 +855,84 @@ imageoutput_write_image(ImageOutput& imageoutput, TypeDesc format,
 {
     return imageoutput.write_image(format, data.data(), xstride, ystride,
                                    zstride);
+}
+
+bool
+imageoutput_write_image_span(ImageOutput& imageoutput, TypeDesc format,
+                             const rust::Slice<const uint8_t> data)
+{
+    const ImageSpec& spec = imageoutput.spec();
+
+    detail::PixelLayout layout;
+    if (!imagespec_valid(spec)
+        || !detail::bounded_pixel_layout(spec.nchannels, spec.width,
+                                         spec.height, spec.depth, format,
+                                         data.size(), layout)) {
+        imageoutput.errorfmt(
+            "invalid dimensions or source buffer for bounded image write");
+        return false;
+    }
+
+    // Explicit strides rather than OpenImageIO's `image_span` overload; see
+    // the note in imageinput_read_image_span.
+    return imageoutput.write_image(format, data.data(), layout.x_stride,
+                                   layout.y_stride, layout.z_stride);
+}
+
+bool
+imageoutput_write_scanlines_span(ImageOutput& imageoutput, int ybegin, int yend,
+                                 TypeDesc format,
+                                 const rust::Slice<const uint8_t> data)
+{
+    const ImageSpec& spec = imageoutput.spec();
+
+    detail::PixelLayout layout;
+    if (!imagespec_valid(spec) || ybegin < spec.y
+        || yend > static_cast<int64_t>(spec.y) + spec.height || ybegin >= yend
+        || !detail::bounded_pixel_layout(spec.nchannels, spec.width,
+                                         static_cast<int64_t>(yend) - ybegin, 1,
+                                         format, data.size(), layout)) {
+        imageoutput.errorfmt(
+            "invalid scanline range or source buffer for bounded write");
+        return false;
+    }
+
+    // Measured against OpenImageIO 3.1.12, the `image_span` overload of
+    // write_scanlines rejects ranges expressed in image coordinates when the
+    // data window origin is non-zero ("Invalid scanline range"), so the
+    // explicit-stride overload is used here as well.
+    return imageoutput.write_scanlines(ybegin, yend, spec.z, format,
+                                       data.data(), layout.x_stride,
+                                       layout.y_stride);
+}
+
+bool
+imageoutput_write_tiles_span(ImageOutput& imageoutput, int xbegin, int xend,
+                             int ybegin, int yend, int zbegin, int zend,
+                             TypeDesc format,
+                             const rust::Slice<const uint8_t> data)
+{
+    const ImageSpec& spec = imageoutput.spec();
+
+    detail::PixelLayout layout;
+    if (!imagespec_valid(spec) || spec.tile_width <= 0 || xbegin >= xend
+        || ybegin >= yend || zbegin >= zend || xbegin < spec.x
+        || xend > static_cast<int64_t>(spec.x) + spec.width || ybegin < spec.y
+        || yend > static_cast<int64_t>(spec.y) + spec.height || zbegin < spec.z
+        || zend > static_cast<int64_t>(spec.z) + spec.depth
+        || !detail::bounded_pixel_layout(spec.nchannels,
+                                         static_cast<int64_t>(xend) - xbegin,
+                                         static_cast<int64_t>(yend) - ybegin,
+                                         static_cast<int64_t>(zend) - zbegin,
+                                         format, data.size(), layout)) {
+        imageoutput.errorfmt(
+            "invalid tile range or source buffer for bounded write");
+        return false;
+    }
+
+    return imageoutput.write_tiles(xbegin, xend, ybegin, yend, zbegin, zend,
+                                   format, data.data(), layout.x_stride,
+                                   layout.y_stride, layout.z_stride);
 }
 
 bool

@@ -81,6 +81,58 @@ mod ffi {
 
         pub fn imagespec_from_resolution(xres: i32, yres: i32, nchans: i32)
             -> UniquePtr<ImageSpec>;
+        pub fn imagespec_new(
+            xres: i32,
+            yres: i32,
+            nchans: i32,
+            format: TypeDesc,
+        ) -> UniquePtr<ImageSpec>;
+        pub fn imagespec_copy(spec: &ImageSpec) -> UniquePtr<ImageSpec>;
+        pub fn imagespec_format(spec: &ImageSpec) -> TypeDesc;
+        pub fn imagespec_set_format(spec: Pin<&mut ImageSpec>, format: TypeDesc);
+        pub fn imagespec_set_origin(spec: Pin<&mut ImageSpec>, x: i32, y: i32, z: i32);
+        pub fn imagespec_set_dimensions(
+            spec: Pin<&mut ImageSpec>,
+            width: i32,
+            height: i32,
+            depth: i32,
+        );
+        pub fn imagespec_set_full(
+            spec: Pin<&mut ImageSpec>,
+            full_x: i32,
+            full_y: i32,
+            full_z: i32,
+            full_width: i32,
+            full_height: i32,
+            full_depth: i32,
+        );
+        pub fn imagespec_set_tile_size(
+            spec: Pin<&mut ImageSpec>,
+            width: i32,
+            height: i32,
+            depth: i32,
+        );
+        pub fn imagespec_set_channel_names(spec: Pin<&mut ImageSpec>, names: &Vec<String>);
+        pub fn imagespec_set_alpha_channel(spec: Pin<&mut ImageSpec>, index: i32);
+        pub fn imagespec_set_z_channel(spec: Pin<&mut ImageSpec>, index: i32);
+        pub fn imagespec_set_deep(spec: Pin<&mut ImageSpec>, deep: bool);
+        pub fn imagespec_attribute_int(spec: Pin<&mut ImageSpec>, name: &str, value: i32);
+        pub fn imagespec_attribute_float(spec: Pin<&mut ImageSpec>, name: &str, value: f32);
+        pub fn imagespec_attribute_string(spec: Pin<&mut ImageSpec>, name: &str, value: &str);
+        pub fn imagespec_erase_attribute(spec: Pin<&mut ImageSpec>, name: &str) -> bool;
+        pub fn imagespec_has_attribute(spec: &ImageSpec, name: &str) -> bool;
+        pub fn imagespec_attribute_type(spec: &ImageSpec, name: &str) -> TypeDesc;
+        pub fn imagespec_get_int_attribute(spec: &ImageSpec, name: &str, defaultval: i32) -> i32;
+        pub fn imagespec_get_float_attribute(spec: &ImageSpec, name: &str, defaultval: f32) -> f32;
+        pub fn imagespec_get_string_attribute(
+            spec: &ImageSpec,
+            name: &str,
+            defaultval: &str,
+        ) -> String;
+        pub fn imagespec_attribute_to_string(spec: &ImageSpec, name: &str) -> String;
+        pub fn imagespec_vector_new() -> UniquePtr<CxxVector<ImageSpec>>;
+        pub fn imagespec_vector_push(specs: Pin<&mut CxxVector<ImageSpec>>, spec: &ImageSpec);
+        pub fn imagespec_attribute_names(spec: &ImageSpec) -> Vec<String>;
         pub fn imagespec_x(spec: &ImageSpec) -> i32;
         pub fn imagespec_y(spec: &ImageSpec) -> i32;
         pub fn imagespec_z(spec: &ImageSpec) -> i32;
@@ -320,6 +372,12 @@ mod ffi {
             specs: *const ImageSpec,
         ) -> bool;
 
+        pub fn imageoutput_open_specs(
+            imageoutput: Pin<&mut ImageOutput>,
+            filename: &str,
+            specs: &CxxVector<ImageSpec>,
+        ) -> bool;
+
         pub fn imageoutput_spec(imageoutput: &ImageOutput) -> &ImageSpec;
 
         pub fn imageoutput_close(imageoutput: Pin<&mut ImageOutput>) -> bool;
@@ -393,6 +451,35 @@ mod ffi {
             xstride: i64,
             ystride: i64,
             zstride: i64,
+        ) -> bool;
+
+        /// Safety: the buffer must hold initialized values of `format`.
+        pub unsafe fn imageoutput_write_image_span(
+            imageoutput: Pin<&mut ImageOutput>,
+            format: TypeDesc,
+            data: &[u8],
+        ) -> bool;
+
+        /// Safety: the buffer must hold initialized values of `format`.
+        pub unsafe fn imageoutput_write_scanlines_span(
+            imageoutput: Pin<&mut ImageOutput>,
+            ybegin: i32,
+            yend: i32,
+            format: TypeDesc,
+            data: &[u8],
+        ) -> bool;
+
+        /// Safety: the buffer must hold initialized values of `format`.
+        pub unsafe fn imageoutput_write_tiles_span(
+            imageoutput: Pin<&mut ImageOutput>,
+            xbegin: i32,
+            xend: i32,
+            ybegin: i32,
+            yend: i32,
+            zbegin: i32,
+            zend: i32,
+            format: TypeDesc,
+            data: &[u8],
         ) -> bool;
 
         pub fn imageoutput_write_deep_scanlines(
