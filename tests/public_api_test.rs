@@ -8,9 +8,10 @@
 use oiio::algo::{self, ChannelSource, CompareSummary, FitMode};
 use oiio::{
     f16, make_texture, make_texture_from_buffer, AttributeValue, ColorConfig, DeepChannel,
-    DeepImage, Derivatives, Error, ImageBuf, ImageCache, ImageCacheBuilder, ImageHandle, ImageInput,
-    ImageOutput, ImageSpec, InterpolationMode, MipMode, Perthread, Pixel, PixelFormat, Result, Roi,
-    Storage, TextureConfig, TextureMode, TextureOptions, TextureSystem, TileGuard, WrapMode,
+    DeepImage, Derivatives, Error, ImageBuf, ImageCache, ImageCacheBuilder, ImageHandle,
+    ImageInput, ImageOutput, ImageSpec, InterpolationMode, MipMode, Perthread, Pixel, PixelFormat,
+    Result, Roi, Storage, TextureConfig, TextureMode, TextureOptions, TextureSystem, TileGuard,
+    WrapMode,
 };
 
 /// Types reachable only from a live file or cache still have to be nameable,
@@ -138,7 +139,14 @@ fn a_dependent_can_make_and_look_up_a_texture() -> Result<()> {
     assert!((rgb[0] - 0.4).abs() < 0.05, "unexpected lookup {rgb:?}");
 
     let mut point = [0.0_f32; 3];
-    textures.texture(&texture, &options, 0.5, 0.5, Derivatives::point(), &mut point)?;
+    textures.texture(
+        &texture,
+        &options,
+        0.5,
+        0.5,
+        Derivatives::point(),
+        &mut point,
+    )?;
     assert!(point.iter().all(|value| value.is_finite()));
 
     std::fs::remove_file(&source).ok();

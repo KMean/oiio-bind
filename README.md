@@ -121,8 +121,9 @@ OpenImageIO type descriptor, alignment, and buffer byte size consistent.
 `uint32` that the contiguous buffer API does not itself read or write.
 
 Deep images, where each pixel holds a list of samples rather than one value,
-are read separately, because a fixed number of values per pixel cannot
-describe them:
+have their own type, because a fixed number of values per pixel cannot
+describe them. `DeepImage` is both what a read returns and what a write
+takes:
 
 ```rust,no_run
 use oiio::ImageInput;
@@ -162,6 +163,47 @@ these operations are not written for. Pass `ImageBuf::empty()` when the
 operation should decide the result's shape — `transpose` swaps the dimensions
 and `copy` can change the pixel format, neither of which happens if you hand
 them a buffer you already sized.
+
+Textures are made and then looked up. `make_texture` writes the tiled,
+MIP-mapped file a renderer wants, and `TextureSystem` does the filtered
+lookups into it, choosing a mip level and filter width from the derivatives
+you supply:
+
+```rust,no_run
+use oiio::{
+    make_texture, Derivatives, TextureConfig, TextureMode, TextureOptions,
+    TextureSystem, WrapMode,
+};
+use std::path::Path;
+
+make_texture(
+    TextureMode::Texture,
+    Path::new("source.exr"),
+    Path::new("surface.tx"),
+    &TextureConfig::new()
+        .with_wrap_modes(WrapMode::Periodic, WrapMode::Periodic)
+        .with_filter("lanczos3"),
+)?;
+
+let textures = TextureSystem::new()?;
+let [width, _] = textures.resolution(Path::new("surface.tx"))?;
+
+let mut rgb = [0.0_f32; 3];
+textures.texture(
+    Path::new("surface.tx"),
+    &TextureOptions::default(),
+    0.5,
+    0.5,
+    // One screen pixel covers one texel, so this reads the finest level.
+    Derivatives::uniform(1.0 / width as f32),
+    &mut rgb,
+)?;
+# Ok::<(), oiio::Error>(())
+```
+
+Note that the output format has the last word on a texture's data format, and
+takes it silently: a `.tx` is a TIFF, which promotes a request for `half` to
+`float`, and OpenEXR demotes integer formats to `half`.
 
 Metadata is read as `AttributeValue`. Integers, floats, strings and string
 arrays are modelled directly; every other OpenImageIO type — `float2`,

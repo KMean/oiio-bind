@@ -299,4 +299,3 @@ fn the_last_value_for_an_attribute_wins() {
     let other = TextureConfig::new().with_compression("none");
     assert_eq!(config, other);
 }
-
