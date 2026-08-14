@@ -109,6 +109,15 @@ before the fork, but nothing was ever published under it, so starting both at
 - Tests against OpenImageIO's and OpenEXR's own image corpora, opt-in through
   `OIIO_BIND_TEST_IMAGES` and `OIIO_BIND_TEST_EXR_IMAGES`, including
   OpenEXR's `Damaged` directory of reader crash cases.
+- `ImageBuf::write_to`: write the whole current subimage through an
+  already-open [`ImageOutput`] — multi-part files, in-memory writers, and
+  open-time format conversion. OpenImageIO never compares the two
+  specifications on this path and walks the writer's window over the
+  buffer's memory, so the wrapper requires exact data-window and
+  channel-count equality, matching deepness, and an untouched subimage;
+  the writer is left open for `close` or `append_subimage`, and the
+  crate's scanline cursor is advanced so a later out-of-order
+  `write_scanlines` is refused with a clear message.
 - `ImageBuf::read_channels` and `read_channels_at`: read a channel subset of
   a file-backed buffer. The range is validated against the native spec of
   the subimage actually being read — upstream never checks `chbegin`,

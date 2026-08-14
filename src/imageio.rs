@@ -939,6 +939,28 @@ impl ImageOutput {
             .expect("ImageOutput invariant violated: null native pointer")
     }
 
+    /// The raw writer handle, for wrappers in other modules whose shim takes
+    /// the native pointer (`ImageBuf::write_to`). `pub(crate)` so the
+    /// pointer never crosses the crate boundary.
+    pub(crate) fn native_mut(&mut self) -> std::pin::Pin<&mut sys::imageio::ImageOutput> {
+        self.inner_mut()
+    }
+
+    /// Where the in-order scanline cursor stands; equals the data window's
+    /// top row while the current subimage is untouched.
+    pub(crate) fn scanline_cursor(&self) -> i32 {
+        self.next_scanline
+    }
+
+    /// Record that a whole-image path (`ImageBuf::write_to`) wrote every row
+    /// behind the crate's cursor, so a later in-order `write_scanlines` is
+    /// refused with a clear error instead of failing inside the format
+    /// writer.
+    pub(crate) fn mark_whole_subimage_written(&mut self) {
+        let end = i64::from(self.spec.origin()[1]) + i64::from(self.spec.dimensions()[1]);
+        self.next_scanline = end.min(i64::from(i32::MAX)) as i32;
+    }
+
     fn take_error(&mut self, operation: &'static str) -> Error {
         Error::operation(
             operation,

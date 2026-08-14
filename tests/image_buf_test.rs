@@ -3,7 +3,7 @@
 mod common;
 
 use common::{f16_ramp, f32_ramp, write_image, ScratchDir};
-use oiio::{f16, Error, ImageBuf, ImageSpec, PixelFormat, Storage};
+use oiio::{f16, Error, ImageBuf, ImageOutput, ImageSpec, PixelFormat, Storage};
 
 fn fixture(scratch: &ScratchDir, name: &str) -> (std::path::PathBuf, ImageSpec, Vec<f32>) {
     let path = scratch.file(name);
@@ -175,6 +175,124 @@ fn writes_in_a_chosen_pixel_format() {
 
     let read_back = ImageBuf::from_path(&path).unwrap();
     assert_eq!(read_back.spec().unwrap().format(), PixelFormat::F16);
+}
+
+#[test]
+fn write_to_round_trips_and_guards_every_mismatch() {
+    let scratch = ScratchDir::new("bufwriteto");
+    let spec = ImageSpec::new(8, 6, 3, PixelFormat::F32).unwrap();
+    let mut buffer = ImageBuf::new(&spec).unwrap();
+    let roi = spec.data_window().unwrap();
+    let values = f32_ramp(roi.element_count().unwrap());
+    buffer.set_pixels(roi, &values).unwrap();
+
+    // The round trip, leaving the writer open for the caller to close.
+    let path = scratch.file("roundtrip.exr");
+    let mut output = ImageOutput::create(&path, &spec).unwrap();
+    buffer.write_to(&mut output).unwrap();
+    output.close().unwrap();
+    let mut back = ImageBuf::from_path(&path).unwrap();
+    back.read().unwrap();
+    let mut pixels = vec![0.0_f32; roi.element_count().unwrap()];
+    back.get_pixels_into(roi, &mut pixels).unwrap();
+    assert_eq!(pixels, values);
+
+    // A larger writer window would read past the buffer; refused before the
+    // native call, and the writer still works afterwards.
+    let big = ImageSpec::new(16, 16, 3, PixelFormat::F32).unwrap();
+    let mut output = ImageOutput::create(&scratch.file("big.exr"), &big).unwrap();
+    assert!(matches!(
+        buffer.write_to(&mut output),
+        Err(Error::InvalidImageSpec(_))
+    ));
+    output.write_image(&vec![0.0_f32; 16 * 16 * 3]).unwrap();
+    output.close().unwrap();
+
+    // A channel-count mismatch is the per-pixel overrun; refused.
+    let wide = ImageSpec::new(8, 6, 4, PixelFormat::F32).unwrap();
+    let mut output = ImageOutput::create(&scratch.file("wide.exr"), &wide).unwrap();
+    assert!(matches!(
+        buffer.write_to(&mut output),
+        Err(Error::InvalidImageSpec(_))
+    ));
+
+    // A shifted data window would silently shift the pixels; refused, and
+    // the message names the origin.
+    let shifted_spec = ImageSpec::new(8, 6, 3, PixelFormat::F32)
+        .unwrap()
+        .with_origin([4, 4, 0]);
+    let mut shifted = ImageBuf::new(&shifted_spec).unwrap();
+    let mut output = ImageOutput::create(&scratch.file("shifted.exr"), &spec).unwrap();
+    let error = shifted.write_to(&mut output).unwrap_err();
+    assert!(error.to_string().contains("origin"), "{error}");
+
+    // Deep and flat cannot be mixed in either direction.
+    let deep_spec = ImageSpec::new(8, 6, 3, PixelFormat::F32)
+        .unwrap()
+        .with_channel_names(["R", "G", "Z"])
+        .unwrap()
+        .as_deep();
+    let mut deep_writer = ImageOutput::create(&scratch.file("deep.exr"), &deep_spec).unwrap();
+    let error = buffer.write_to(&mut deep_writer).unwrap_err();
+    assert!(error.to_string().contains("deep"), "{error}");
+    let mut deep_buffer = ImageBuf::new(&deep_spec).unwrap();
+    let mut flat_writer = ImageOutput::create(&scratch.file("flat.exr"), &spec).unwrap();
+    let error = deep_buffer.write_to(&mut flat_writer).unwrap_err();
+    assert!(error.to_string().contains("flat"), "{error}");
+
+    // The writer's opened format governs the file: an F32 buffer through a
+    // U8 writer converts, so formats are deliberately not compared.
+    let as_u8 = ImageSpec::new(8, 6, 3, PixelFormat::U8).unwrap();
+    let png = scratch.file("converted.png");
+    let mut output = ImageOutput::create(&png, &as_u8).unwrap();
+    let mut unit = ImageBuf::new(&spec).unwrap();
+    unit.set_pixels(roi, &vec![1.0_f32; roi.element_count().unwrap()])
+        .unwrap();
+    unit.write_to(&mut output).unwrap();
+    output.close().unwrap();
+    assert_eq!(
+        ImageBuf::from_path(&png).unwrap().spec().unwrap().format(),
+        PixelFormat::U8
+    );
+
+    // A partially written subimage cannot take a whole-image write.
+    let mut output = ImageOutput::create(&scratch.file("partial.exr"), &spec).unwrap();
+    output.write_scanlines(0..2, &f32_ramp(8 * 2 * 3)).unwrap();
+    let error = buffer.write_to(&mut output).unwrap_err();
+    assert!(error.to_string().contains("already written"), "{error}");
+
+    // An uninitialized buffer has nothing to write.
+    let mut nothing = ImageBuf::empty().unwrap();
+    let mut output = ImageOutput::create(&scratch.file("none.exr"), &spec).unwrap();
+    let error = nothing.write_to(&mut output).unwrap_err();
+    assert!(error.to_string().contains("no specification"), "{error}");
+}
+
+#[test]
+fn write_to_reaches_every_subimage_of_a_multipart_file() {
+    let scratch = ScratchDir::new("bufwritetomulti");
+    let spec = ImageSpec::new(4, 4, 1, PixelFormat::U8).unwrap();
+    let roi = spec.data_window().unwrap();
+
+    let mut first = ImageBuf::new(&spec).unwrap();
+    first.set_pixels(roi, &[10_u8; 16]).unwrap();
+    let mut second = ImageBuf::new(&spec).unwrap();
+    second.set_pixels(roi, &[200_u8; 16]).unwrap();
+
+    let path = scratch.file("multi.tif");
+    let mut output = ImageOutput::create(&path, &spec).unwrap();
+    first.write_to(&mut output).unwrap();
+    output.append_subimage(&spec).unwrap();
+    second.write_to(&mut output).unwrap();
+    output.close().unwrap();
+
+    for (index, expected) in [(0, 10_u8), (1, 200_u8)] {
+        let mut image = ImageBuf::from_path_at(&path, index, 0).unwrap();
+        image.read_at(index, 0, None).unwrap();
+        let mut pixels = vec![0_u8; 16];
+        image.get_pixels_into(roi, &mut pixels).unwrap();
+        assert!(pixels.iter().all(|&value| value == expected));
+    }
 }
 
 #[test]

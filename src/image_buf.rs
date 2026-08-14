@@ -464,6 +464,99 @@ impl ImageBuf {
         self.check("write image buffer", succeeded)
     }
 
+    /// Write the whole current subimage through an already-open writer.
+    ///
+    /// This is how a buffer reaches a multi-part file, an in-memory writer
+    /// ([`crate::ImageOutput::to_memory`]), or a format conversion chosen at
+    /// open time: the writer's own open specification governs everything
+    /// about the file — pixel format (the buffer's values are converted
+    /// automatically), tiling, and metadata.
+    ///
+    /// The writer's data window — origin included — and channel count must
+    /// exactly equal the buffer's, and both must be deep or both flat:
+    /// OpenImageIO trusts the two to agree and walks the writer's window
+    /// over the buffer's memory, so a larger window would read past the
+    /// buffer and a smaller or shifted one would silently crop or shift.
+    /// Nothing may have been written to the current subimage yet. The
+    /// writer is left open: finish it with [`crate::ImageOutput::close`] or
+    /// continue with [`crate::ImageOutput::append_subimage`].
+    pub fn write_to(&mut self, output: &mut crate::ImageOutput) -> Result<()> {
+        const OPERATION: &str = "write image buffer to output";
+        // An uninitialized buffer takes the cache-backed branch upstream,
+        // where a temporary sized by the buffer's zero byte count is walked
+        // by the writer's window.
+        if !self.is_initialized() {
+            return Err(Error::operation(
+                OPERATION,
+                "this buffer has no specification yet; nothing to write".to_owned(),
+            ));
+        }
+        let buf_spec = self.spec()?;
+        let out_spec = output.spec();
+        if self.is_deep() && !out_spec.is_deep() {
+            return Err(Error::operation(
+                OPERATION,
+                "the writer was opened for flat pixels but this buffer is deep; \
+                 open it with a spec from ImageSpec::as_deep"
+                    .to_owned(),
+            ));
+        }
+        if !self.is_deep() && out_spec.is_deep() {
+            return Err(Error::operation(
+                OPERATION,
+                "the writer was opened for deep samples but this buffer is flat".to_owned(),
+            ));
+        }
+        // ImageBuf::write(ImageOutput*) never compares the two specs: the
+        // in-memory path hands the buffer's pointer and strides to a write
+        // that walks the WRITER's width, height and channel count over that
+        // memory, and the deep path indexes the buffer's samples by the
+        // writer's window. A bigger writer window reads past the buffer's
+        // allocation; a smaller or shifted one silently crops or shifts. So:
+        // exact equality, origin included.
+        if buf_spec.origin() != out_spec.origin()
+            || buf_spec.dimensions() != out_spec.dimensions()
+            || buf_spec.channel_count() != out_spec.channel_count()
+        {
+            return Err(Error::InvalidImageSpec(format!(
+                "the buffer's data window (origin {:?}, size {:?}, {} channels) must \
+                 exactly equal the writer's (origin {:?}, size {:?}, {} channels); \
+                 rebuild the buffer or writer from the other's spec",
+                buf_spec.origin(),
+                buf_spec.dimensions(),
+                buf_spec.channel_count(),
+                out_spec.origin(),
+                out_spec.dimensions(),
+                out_spec.channel_count()
+            )));
+        }
+        // This path writes from the top of the data window at the C++ level,
+        // beneath the crate's in-order cursor; EXR's forward-only scanline
+        // writer makes a partial rewrite format-dependent.
+        let top = out_spec.origin()[1];
+        if output.scanline_cursor() != top {
+            return Err(Error::operation(
+                OPERATION,
+                format!(
+                    "rows {top}..{} of this subimage were already written through \
+                     write_scanlines; write_to needs an untouched subimage",
+                    output.scanline_cursor()
+                ),
+            ));
+        }
+        // SAFETY: the pointer comes from a live &mut ImageOutput, is
+        // consumed within this one call, and the pinned writer is not moved.
+        let succeeded = unsafe {
+            let out_ptr = output.native_mut().get_unchecked_mut() as *mut sys::imageio::ImageOutput;
+            sys::imagebuf::imagebuf_write_to_imageoutput(self.inner_mut(), out_ptr)
+        };
+        // ImageBuf::write transfers the writer's error into the buffer, so
+        // the buffer's error state carries the message.
+        self.check(OPERATION, succeeded)?;
+        output.mark_whole_subimage_written();
+        Ok(())
+    }
+
     /// Ensure the pixels are held locally and writable.
     ///
     /// A cache-backed buffer is read into its own storage; one that is already
