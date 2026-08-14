@@ -63,6 +63,12 @@ impl ImageSpec {
     }
 
     /// Set the origin of the pixel data window.
+    /// Move the data window's origin.
+    ///
+    /// This moves where the pixels sit, and leaves the display window where it
+    /// was — which is how overscan is expressed, and also how the two end up
+    /// disagreeing if that was not the intent. Use
+    /// [`with_full_window`](Self::with_full_window) to move both.
     pub fn with_origin(mut self, origin: [i32; 3]) -> Self {
         [self.x, self.y, self.z] = origin;
         self

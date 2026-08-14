@@ -1,24 +1,40 @@
 # Draft reports for OpenImageIO
 
-Three findings from building Rust bindings against OpenImageIO 3.1/3.2.
+Nine findings from building Rust bindings against OpenImageIO 3.1/3.2.
 
-Each has its own self-contained reproduction, so a maintainer running one is
-never shown a second unrelated API behaviour:
+Issues 1 and 2 have self-contained reproductions, so a maintainer running one
+is never shown a second unrelated API behaviour:
 
 - `contrib/span_tiled_read_repro.cpp` — issue 1
 - `contrib/span_scanline_origin_repro.cpp` — issue 2
 
 Both use only public OpenImageIO API — no Rust and no binding code — and exit
-non-zero when two overloads of the same call disagree about the same file.
+non-zero when two overloads of the same call disagree, given the same
+`ImageSpec` and the same buffer.
 
-File at <https://github.com/AcademySoftwareFoundation/OpenImageIO/issues>
-using the "Bug report" template. Their `CONTRIBUTING.md` asks for the version,
-platform, compiler, and a repro others can run; the title convention is a
-`bug:` prefix. Issues 1 and 2 are separate reports because they are different
-calls with different fixes. Issue 3 is a one-line change and is friendlier as
-a pull request than an issue.
+Issues 4–9 were found by reading the source while binding it, and are stated
+as code review rather than as runnable reproductions. Where a reproduction is
+cheap it is noted in the issue.
 
-Shared environment block for both issues:
+**Issues or pull requests.** The repository's `.github/ISSUE_TEMPLATE/bug_report.md`
+ends with: "IF YOU ALREADY HAVE A CODE FIX: There is no need to file a
+separate issue, please just go straight to making a pull request." Issues 3,
+4, 5, 7, 8 and 9 each name a one- or two-line fix, so they belong as pull
+requests, not issues. Issue 2 is genuinely a question about intended
+behaviour, so it is an issue. Issue 6 could be either.
+
+`CONTRIBUTING.md` asks for the version, platform, compiler, and a repro others
+can run. The `bug:` title prefix comes from the bug-report template's
+`title: "bug:"` prefill rather than from `CONTRIBUTING.md`, whose prefix list
+covers commits and pull requests — where it endorses a parenthesised
+subcategory, e.g. `fix(IBA):`, and names `IBA` for `ImageBufAlgo` explicitly.
+
+Issues 4–7 are out-of-bounds reads and writes. `SECURITY.md` invites judgement
+here, and each of those is an API-misuse hazard reachable only from a caller's
+own arguments rather than from untrusted file data, so a normal issue or pull
+request is the right channel.
+
+Shared environment block, applying to every issue below:
 
 ```
 OIIO 3.2.0.2dev | Windows/x86_64
@@ -137,9 +153,11 @@ data window origin y=5, writing scanlines 5..9
 
 ## Issue 3 — better as a pull request
 
-**Title:** `fix: parenthesise OIIO_VERSION_GREATER_EQUAL and friends`
+**Title:** `fix(oiioversion): parenthesise OIIO_VERSION_GREATER_EQUAL and OIIO_VERSION_LESS`
 
-`oiioversion.h` defines the version tests without wrapping the expression:
+`src/include/OpenImageIO/oiioversion.h.in` — the template from which the
+installed `oiioversion.h` is generated, and so the file a pull request must
+edit — defines the version tests without wrapping the expression:
 
 ```c
 #define OIIO_VERSION_GREATER_EQUAL(major,minor,patch) \
@@ -156,7 +174,7 @@ So the natural way to require a minimum version silently does nothing:
 
 expands to `!OIIO_VERSION >= OIIO_MAKE_VERSION(3, 1, 4)`, and `!` binds to
 `OIIO_VERSION` alone, giving `0 >= 30104` — false for every version, so the
-`#error` is unreachable. We shipped that guard believing it worked; it never
+`#error` is unreachable. We wrote that guard believing it worked; it never
 fired, and a genuinely too-old OpenImageIO instead failed later with a
 confusing C++ overload error.
 
@@ -168,50 +186,79 @@ correct use:
                         (OIIO_VERSION >= OIIO_MAKE_VERSION(major,minor,patch))
 ```
 
-`OIIO_VERSION_LESS` and any sibling macros want the same treatment.
+There is exactly one sibling, `OIIO_VERSION_LESS`, and it is identically
+affected, so the change is two lines. `OIIO_MAKE_VERSION` is already
+parenthesised and needs nothing.
+
+Unchanged in 3.1.9.0, 3.1.12.0 and on current `main`.
+
+For context, the macros came from #2261 and PR #2641; nothing in either
+discussion touches parenthesisation, and the idiom preferred there was the raw
+`#if OIIO_VERSION <= 20008`, which is presumably why this went unnoticed.
 
 ## Issue 4 — `ImageBufAlgo::max` widens the channel range where `min` narrows it
 
 **Title:** `ImageBufAlgo::max(dst, A, B)` reads and writes out of bounds when
-channel counts differ
+the destination has fewer channels than the inputs, or the inputs differ in
+channel count
 
-`imagebufalgo_pixelmath.cpp`, in the image-against-image branch of `max`:
+`src/libOpenImageIO/imagebufalgo_pixelmath.cpp:169`, in the image-against-image
+branch of `max`:
 
 ```c++
 roi.chend = std::max(roi.chend, std::max(A.nchannels(), B.nchannels()));
 ```
 
-`min`, twenty lines of otherwise identical code earlier in the same file, has:
+`min`, the immediately preceding function, has at line 72:
 
 ```c++
 roi.chend = std::min(roi.chend, std::min(A.nchannels(), B.nchannels()));
 ```
 
-The block immediately below the dispatch is the same in both, and in `max` it
-is unreachable: its guard is `roi.chend < origroi.chend`, which cannot hold
-after a `std::max` against `origroi`'s own bound. That block's
+and `absdiff`, the same pattern a third time, has `std::min` at line 323. Only
+`max` widens.
+
+The block immediately below the dispatch is the same in all three, and in `max`
+it is unreachable. Its guard, in full, is:
+
+```c++
+if (roi.chend < origroi.chend && A.nchannels() != B.nchannels()) {
+```
+
+The first conjunct alone can never hold after a `std::max` against `origroi`'s
+own bound, so the second never gets a say. That block's
 `OIIO_ASSERT(roi.chend <= dst.nchannels())` records the invariant the widening
 breaks.
 
-Two consequences, both after `IBAprep` has already clamped `roi` to what the
-buffers hold:
+Two consequences. `IBAprep` on this path clamps `roi.chend` to the *largest* of
+`dst`/`A`/`B` (`imagebufalgo.cpp:284`) and, when `dst` was already allocated,
+to `dst`'s own channel count (`imagebufalgo.cpp:109` and `:112`) — it
+deliberately does not narrow to the shorter input, which is exactly why `min`
+needs its own `std::min`:
 
-1. With `A.nchannels() != B.nchannels()`, the kernel evaluates `a[c]` or `b[c]`
-   for `c` beyond the shorter input. `ImageBuf::ConstIterator::operator[]`
-   constructs a proxy over the pixel's base pointer and indexes it with no
-   bounds check, so this reads adjacent pixel memory.
+1. `max` never narrows `roi.chend` to the channel count common to both inputs
+   the way `min` does, so with `A.nchannels() != B.nchannels()` the kernel
+   evaluates `a[c]` or `b[c]` for `c` beyond the shorter input.
+   `ImageBuf::ConstIterator::operator[]` constructs a `ConstDataArrayProxy`
+   over the pixel's base pointer, whose `operator[]` does no bounds check, so
+   this reads adjacent pixel memory.
 2. With `dst` pre-allocated narrower than the inputs — `max(dst=3ch, A=4ch,
-   B=4ch)` — `IBAprep` intersects `roi.chend` down to 3 and the widening puts
-   it back to 4, so the kernel *writes* `r[3]` past the end of each destination
-   pixel.
+   B=4ch)`, where the inputs do *not* differ — `IBAprep` brings `roi.chend`
+   down to 3 and the `std::max` puts it back to 4, so the kernel *writes*
+   `r[3]` past the end of each destination pixel.
 
-No ROI the caller supplies can prevent either, because the widening ignores the
-incoming value whenever it is smaller.
+A narrower ROI supplied by the caller does not prevent either, because the
+widening ignores the incoming value whenever it is smaller.
 
-Reproduced on 3.1.9 and on 3.2.0.2dev (`main`, August 2026); the line is
-unchanged between them.
+The constant-operand branch of `max` passes `IBAprep_CLAMP_MUTUAL_NCHANNELS`
+and is unaffected; this is specifically the image-against-image branch. The
+existing tests in `imagebufalgo_test.cpp` compare 4-channel against 4-channel
+only, which is presumably why this has never fired in CI.
 
-The fix is the one-word one, matching `min`:
+Unchanged from 3.1.9 through 3.1.16 and on current `main`; the whole file is
+byte-identical between v3.1.9.0 and `main`.
+
+The fix is the one-line one, matching `min` and `absdiff`:
 
 ```c++
 roi.chend = std::min(roi.chend, std::min(A.nchannels(), B.nchannels()));
@@ -238,19 +285,48 @@ for (int c = roi.chbegin; c < roi.chend; ++c)
 ```
 
 The vector holds `roi.chend - roi.chbegin` entries but is indexed by absolute
-channel number. With `chbegin = 1, chend = 3` it has two entries and
-`constval[2]` is written past the end. The public wrapper clamps `chend` to the
-image's channel count but never touches `chbegin`, so nothing upstream prevents
-it.
+channel number. With a 4-channel image and `chbegin = 1, chend = 4` it has
+three entries and `constval[3]` is written past the end. The public wrapper
+clamps `chend` to the image's channel count but never touches `chbegin`, so
+nothing upstream prevents it.
 
-The second-pixel early-out a few lines below reads the same out-of-range
-element.
+Whether that write is visible depends on allocator slack, so a release build
+may show nothing; ASan or MSVC's debug STL reports it immediately.
 
-Either size the vector `roi.chend` entries, or index it `constval[c -
-roi.chbegin]`.
+There are three matching out-of-range *reads*, not one: the two-pixel early-out
+at `:410`, and both parallel kernels at `:425` and `:439`. `parallel_image`
+copies `chbegin`/`chend` verbatim into each sub-ROI, so all three are reachable
+with the same ROI.
+
+Sizing the vector `roi.chend` entries fixes all four sites at once. Indexing it
+`constval[c - roi.chbegin]` also works but must be applied at every one of the
+four, or the comparisons silently read the wrong channel.
+
+`chbegin > 0` is intended usage rather than an undocumented corner:
+`imagebufalgo.h` documents comparing channels `[roi.chbegin..roi.chend-1]`, the
+very next declaration (`isConstantChannel`) says its own `chbegin`/`chend` are
+ignored — a deliberate contrast — and the colour write-back later in this same
+function already zero-fills `color[0..roi.chbegin)`, which only makes sense if
+`chbegin > 0` was meant to work.
 
 `nonzero_region` reaches this too: it trims by calling `isConstantColor` on
-strips, and `roi_intersection` preserves the caller's `chbegin`.
+strips, and `roi_intersection` (`src/include/OpenImageIO/imageio.h`) preserves
+the caller's `chbegin`. `oiiotool` is not affected — its only `nonzero_region`
+call uses a default ROI — so this needs a caller-supplied `chbegin > 0`.
+
+No C++ is needed to reach it; the Python bindings pass the ROI straight
+through:
+
+```python
+ImageBufAlgo.isConstantColor(buf, 0.0, ROI(0, w, 0, h, 0, 1, 1, 4))
+```
+
+`src/libOpenImageIO/imagebufalgo_compare.cpp` is byte-identical between
+v3.1.9.0 and current `main`, and the same code is at the same lines in
+3.1.12.0.
+
+The two-pixel early-out came in with PR #3383; it is not the origin of the
+indexing, but it is where the second read site appeared.
 
 ## Issue 6 — `histogram` does not clamp its channel range
 
