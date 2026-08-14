@@ -199,6 +199,8 @@ mod ffi {
             b: &ImageBuf,
             failthresh: f32,
             warnthresh: f32,
+            failrelative: f32,
+            warnrelative: f32,
             roi: &ROI,
             nthreads: i32,
             error: &mut String,

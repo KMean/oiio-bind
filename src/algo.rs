@@ -2578,6 +2578,25 @@ pub fn compare(
     warn_threshold: f32,
     roi: Option<Roi>,
 ) -> Result<CompareSummary> {
+    compare_with_relative(a, b, fail_threshold, warn_threshold, 0.0, 0.0, roi)
+}
+
+/// [`compare`] with relative thresholds alongside the absolute ones.
+///
+/// A value fails when its difference exceeds `fail_threshold` **and** exceeds
+/// `fail_relative` times the mean magnitude of the two values being compared;
+/// zeros here make this identical to [`compare`]. Relative thresholds are how
+/// a comparison tolerates the low bits of bright values without ignoring the
+/// same absolute error in shadows.
+pub fn compare_with_relative(
+    a: &ImageBuf,
+    b: &ImageBuf,
+    fail_threshold: f32,
+    warn_threshold: f32,
+    fail_relative: f32,
+    warn_relative: f32,
+    roi: Option<Roi>,
+) -> Result<CompareSummary> {
     let roi = region_in(roi, a)?;
     let mut message = String::new();
     let summary = unsafe {
@@ -2586,6 +2605,8 @@ pub fn compare(
             b.inner(),
             fail_threshold,
             warn_threshold,
+            fail_relative,
+            warn_relative,
             &roi,
             ALL_THREADS,
             &mut message,

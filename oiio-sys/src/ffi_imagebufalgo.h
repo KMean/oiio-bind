@@ -155,8 +155,8 @@ imagebufalgo_transpose(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
 // uninitialised.
 CompareSummary
 imagebufalgo_compare(const ImageBuf& a, const ImageBuf& b, float failthresh,
-                     float warnthresh, const ROI& roi, int nthreads,
-                     rust::String& error);
+                     float warnthresh, float failrelative, float warnrelative,
+                     const ROI& roi, int nthreads, rust::String& error);
 
 // Colour space conversion using the default configuration, which is whatever
 // $OCIO names or OpenImageIO's built-in one.

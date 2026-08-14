@@ -1239,8 +1239,8 @@ imagebufalgo_channels(ImageBuf& dst, const ImageBuf& src, int nchannels,
 
 CompareSummary
 imagebufalgo_compare(const ImageBuf& a, const ImageBuf& b, float failthresh,
-                     float warnthresh, const ROI& roi, int nthreads,
-                     rust::String& error)
+                     float warnthresh, float failrelative, float warnrelative,
+                     const ROI& roi, int nthreads, rust::String& error)
 {
     CompareSummary refused {};
     if (a.deep() != b.deep()) {
@@ -1259,7 +1259,8 @@ imagebufalgo_compare(const ImageBuf& a, const ImageBuf& b, float failthresh,
 
     a.geterror(true);
     const OIIO::ImageBufAlgo::CompareResults results
-        = OIIO::ImageBufAlgo::compare(a, b, failthresh, warnthresh, roi,
+        = OIIO::ImageBufAlgo::compare(a, b, failthresh, warnthresh,
+                                      failrelative, warnrelative, roi,
                                       nthreads);
     if (results.error && results.nfail == 0) {
         // `error` means "some values exceeded the fail threshold" on the
