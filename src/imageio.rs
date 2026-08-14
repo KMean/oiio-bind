@@ -668,8 +668,10 @@ impl ImageOutput {
     /// starting at the top of the data window and only ever advancing. Ask it
     /// to write rows 512..1024 first and it reads 512 scanlines *before* the
     /// buffer. `supports("random_access")` is how OpenImageIO publishes the
-    /// difference, and it is true only for tiled EXRs with a random line
-    /// order.
+    /// difference. For EXR it is true only for tiled files with a random
+    /// line order; several formats that buffer the whole image before
+    /// writing — DPX, FITS, GIF, RLA and WebP among them — advertise it
+    /// unconditionally, and genuinely accept rows in any order.
     pub fn write_scanlines<T: Pixel>(&mut self, y: Range<i32>, pixels: &[T]) -> Result<()> {
         self.reject_deep()?;
         if !self.supports("random_access") && y.start != self.next_scanline {

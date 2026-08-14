@@ -101,9 +101,13 @@ pub enum Error {
         value: String,
     },
 
-    /// A cached tile was asked for as a type it does not hold. Tiles keep the
-    /// file's native format and are never converted.
-    #[error("tile holds {actual} pixels, not {requested}; cached tiles are never converted")]
+    /// A cached tile was asked for as a type it does not hold. A tile keeps
+    /// the format the cache stores — the file's own for `uint8`, `uint16`
+    /// and `half`, and `f32` for everything else — and is not converted on
+    /// the way out; `TileGuard::format` reports which it is.
+    #[error(
+        "tile holds {actual} pixels, not {requested}; ask for the format TileGuard::format reports"
+    )]
     TilePixelFormat {
         /// The type the caller asked for.
         requested: crate::PixelFormat,

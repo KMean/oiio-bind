@@ -13,11 +13,13 @@
 //!
 //! # Which region, whose
 //!
-//! A region normally names part of the **destination**. Six operations read it
-//! as part of the **source** instead: [`paste`], the three right-angle
+//! A region normally names part of the **destination**. Seven operations read
+//! it as part of the **source** instead: [`paste`], the three right-angle
 //! rotations, and [`flip`], [`flop`] and [`transpose`], each of which derives
-//! where the result lands from where the region sat. Their parameter is named
-//! `src_roi` where the distinction is theirs to make.
+//! where the result lands from where the region sat. This list is the
+//! authority — the parameter is spelled `src_roi` on `paste` and the
+//! rotations, while `flip`, `flop` and `transpose` inherited OpenImageIO's
+//! plain `roi` name and read it as source all the same.
 //!
 //! ```no_run
 //! use oiio::{algo, ImageBuf, ImageSpec, PixelFormat};
@@ -613,8 +615,12 @@ pub fn flatten(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<(
 
 /// Turn a flat image into a deep one, with at most one sample per pixel.
 ///
-/// A pixel gets a sample when any channel other than depth is non-zero. Its
-/// depth comes from the source's own `Z` channel if it has one — in which case
+/// A pixel gets a sample when any channel other than depth — `Z` and `Zback`
+/// both count as depth here — is non-zero. When the source has its own `Z`
+/// channel, a pixel whose only non-zero channel is that depth also gets a
+/// sample, provided the depth is below OpenImageIO's 1e30 "infinitely far"
+/// cutoff; a source without a `Z` channel gets no such consideration. Depth
+/// comes from the source's own `Z` channel if it has one — in which case
 /// `z_value` is ignored — and from `z_value` otherwise, with a `Z` channel
 /// appended to hold it.
 ///
@@ -1267,8 +1273,11 @@ pub fn histogram(
 /// source, with channels outside the region zeroed.
 ///
 /// A `threshold` of zero compares the stored values exactly, in the image's
-/// own format, without converting each to `f32` first. That is faster; it is
-/// not a different answer, since conversion from a narrower format is exact.
+/// own format, without converting each to `f32` first. For the formats
+/// narrower than `f32` that conversion is exact, so the answer matches; for
+/// a wider format — `f64`, `u32`, `i32` — the native comparison is the
+/// stricter one, and distinguishes values a conversion to `f32` would
+/// collapse, such as `u32` values past the 24-bit mantissa.
 ///
 /// The region must begin at channel zero. OpenImageIO sizes its reference
 /// buffer to the region's channel count but fills it by absolute channel
@@ -1416,7 +1425,7 @@ pub fn pixel_hash_sha1(src: &ImageBuf, extra_info: &str, roi: Option<Roi>) -> Re
 /// Rotate a quarter turn clockwise.
 ///
 /// The region selects part of the **source**, not of the destination; the
-/// module documentation lists the six operations that do, `flip`, `flop` and
+/// module documentation lists the seven operations that do, `flip`, `flop` and
 /// `transpose` among them. Prefer an empty destination: OpenImageIO installs the rotated
 /// display window only when it allocates one itself, and reads a pre-allocated
 /// destination's display window while writing, so one that disagrees with the

@@ -290,6 +290,35 @@ fn deep_writing_is_refused_when_the_writer_disagrees() {
     ));
 }
 
+/// What `set_sample_count` documents: shrinking keeps the room the dropped
+/// samples occupied, and regrowing within it brings their old values back
+/// rather than zeroes. Pinned so the documentation stays honest about
+/// OpenImageIO leaving holes for speed.
+#[test]
+fn regrown_samples_return_their_old_values_not_zeroes() {
+    let spec = ImageSpec::new(1, 1, 1, PixelFormat::F32)
+        .unwrap()
+        .with_channel_names(["Z"])
+        .unwrap()
+        .as_deep();
+    let mut deep = DeepImage::new(&spec).unwrap();
+
+    deep.set_sample_count(0, 0, 2).unwrap();
+    deep.set_value(0, 0, 0, 0, 1.0).unwrap();
+    deep.set_value(0, 0, 0, 1, 7.0).unwrap();
+
+    deep.set_sample_count(0, 0, 1).unwrap();
+    assert_eq!(deep.sample_count(0, 0).unwrap(), 1);
+
+    deep.set_sample_count(0, 0, 2).unwrap();
+    assert_eq!(
+        deep.value(0, 0, 0, 1).unwrap(),
+        7.0,
+        "the regrown sample returns its old value, as documented"
+    );
+    assert_eq!(deep.value(0, 0, 0, 0).unwrap(), 1.0);
+}
+
 #[test]
 fn a_deep_image_needs_a_deep_specification() {
     let flat = ImageSpec::new(4, 4, 3, PixelFormat::F32).unwrap();

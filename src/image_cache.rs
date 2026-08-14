@@ -194,8 +194,10 @@ impl ImageCache {
     /// Borrow one tile, held until the returned guard is dropped.
     ///
     /// `origin` is any pixel coordinate inside the wanted tile; OpenImageIO
-    /// resolves it to the tile that contains it. The tile holds the file's
-    /// native pixel format, and an edge tile may extend past the data window.
+    /// resolves it to the tile that contains it. The tile holds the format
+    /// the cache stores, which is the file's own for `uint8`, `uint16` and
+    /// `half` files and `f32` for everything else; [`TileGuard::format`]
+    /// reports which. An edge tile may extend past the data window.
     ///
     /// The coordinate must lie inside the data window. OpenImageIO itself
     /// returns a tile for coordinates far outside the image — for a 32x32
