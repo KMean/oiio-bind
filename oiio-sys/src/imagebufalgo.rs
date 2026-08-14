@@ -405,6 +405,23 @@ mod ffi {
             nthreads: i32,
         ) -> bool;
 
+        pub unsafe fn imagebufalgo_normalize(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            in_center: f32,
+            out_center: f32,
+            scale: f32,
+            roi: &ROI,
+            nthreads: i32,
+            error: &mut String,
+        ) -> bool;
+
+        pub unsafe fn imagebufalgo_fillholes_pushpull(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            nthreads: i32,
+        ) -> bool;
+
         pub unsafe fn imagebufalgo_color_range_check(
             src: &ImageBuf,
             low: &[f32],

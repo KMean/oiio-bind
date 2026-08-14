@@ -2582,6 +2582,64 @@ pub fn compare(
     compare_with_relative(a, b, fail_threshold, warn_threshold, 0.0, 0.0, roi)
 }
 
+/// Normalize the vectors a 3- or 4-channel image encodes, pixel by pixel.
+///
+/// Each pixel is read as a vector around `in_center` — 0.5 for the usual
+/// unsigned normal-map encoding, 0.0 for signed data — normalized to unit
+/// length, scaled, and re-encoded around `out_center`. A fourth channel is
+/// passed through untouched. The source must have exactly three or four
+/// channels, and a pre-allocated destination must share the source's pixel
+/// format, since OpenImageIO reads the source through an iterator of the
+/// destination's type.
+pub fn normalize(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    in_center: f32,
+    out_center: f32,
+    scale: f32,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region_in(roi, dst)?;
+    let mut message = String::new();
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_normalize(
+            dst.inner_mut(),
+            src.inner(),
+            in_center,
+            out_center,
+            scale,
+            &roi,
+            ALL_THREADS,
+            &mut message,
+        )
+    };
+    if succeeded {
+        Ok(())
+    } else {
+        Err(Error::operation("normalize", message))
+    }
+}
+
+/// Fill the transparent holes of an image from blurred copies of its
+/// neighbourhood — the push-pull technique texture pipelines use before
+/// mip-mapping alpha-masked colour.
+///
+/// The source needs an alpha channel; pixels with zero alpha are filled,
+/// and everything else passes through. The whole image is always processed —
+/// OpenImageIO ignores a region here, so this takes none — and a failure
+/// part way down the internal pyramid is reported rather than returned as a
+/// silently black result.
+pub fn fillholes_pushpull(dst: &mut ImageBuf, src: &ImageBuf) -> Result<()> {
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_fillholes_pushpull(
+            dst.inner_mut(),
+            src.inner(),
+            ALL_THREADS,
+        )
+    };
+    finish(dst, "fillholes", succeeded)
+}
+
 /// Count how many values sit below, above, and inside a per-channel range.
 ///
 /// `low` and `high` give per-channel bounds; short slices are padded by

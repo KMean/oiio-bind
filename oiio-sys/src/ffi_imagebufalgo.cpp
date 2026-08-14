@@ -1185,6 +1185,73 @@ imagebufalgo_minchan(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
 }
 
 bool
+imagebufalgo_normalize(ImageBuf& dst, const ImageBuf& src, float in_center,
+                       float out_center, float scale, const ROI& roi,
+                       int nthreads, rust::String& error)
+{
+    error = rust::String();
+    if (refuse_empty_region(dst, src, roi, "normalize"))
+        return false;
+    // The kernel reads the source through an iterator of the destination's
+    // type, so a pre-allocated destination of a different width walks the
+    // source at the wrong stride.
+    if (dst.initialized() && !dst.deep()
+        && dst.spec().format != src.spec().format) {
+        dst.errorfmt("normalize: the destination is allocated as {} and the "
+                     "source is {}; use an empty destination or matching "
+                     "formats",
+                     dst.spec().format, src.spec().format);
+        return false;
+    }
+    // The 3/4-channel refusal is recorded on the SOURCE, not the
+    // destination, so both must be drained to say why the call failed.
+    src.geterror(true);
+    if (OIIO::ImageBufAlgo::normalize(dst, src, in_center, out_center, scale,
+                                      roi, nthreads))
+        return true;
+    std::string recorded = dst.geterror(true);
+    if (recorded.empty())
+        recorded = src.geterror(true);
+    if (recorded.empty())
+        recorded = "OpenImageIO could not normalize the image";
+    error = rust::String::lossy(recorded);
+    return false;
+}
+
+bool
+imagebufalgo_fillholes_pushpull(ImageBuf& dst, const ImageBuf& src,
+                                int nthreads)
+{
+    // The push-pull pyramid always processes the whole source — a caller's
+    // region would be quietly ignored, so the shim does not take one. Its
+    // internal paste/resize/over returns are discarded upstream, which turns
+    // an allocation failure part way down into a silently black result under
+    // a success return; the error state check catches what the return does
+    // not, and the try/catch covers the pyramid's own float allocations
+    // (roughly twice the image again) escaping through this noexcept shim.
+    if (src.deep() || dst.deep()) {
+        dst.errorfmt("fillholes_pushpull: deep images are not supported");
+        return false;
+    }
+    try {
+        dst.geterror(true);
+        const bool ok = OIIO::ImageBufAlgo::fillholes_pushpull(dst, src, {},
+                                                               nthreads);
+        if (!ok)
+            return false;
+        if (dst.has_error())
+            return false;
+        return true;
+    } catch (const std::exception& exception) {
+        const std::string recorded = exception.what();
+        dst.errorfmt("fillholes_pushpull: {}",
+                     recorded.empty() ? "the pyramid could not be allocated"
+                                      : recorded.c_str());
+        return false;
+    }
+}
+
+bool
 imagebufalgo_color_range_check(const ImageBuf& src,
                                rust::Slice<const float> low,
                                rust::Slice<const float> high,

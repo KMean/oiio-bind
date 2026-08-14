@@ -273,6 +273,15 @@ imagebufalgo_minchan(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
                      int nthreads);
 
 bool
+imagebufalgo_normalize(ImageBuf& dst, const ImageBuf& src, float in_center,
+                       float out_center, float scale, const ROI& roi,
+                       int nthreads, rust::String& error);
+
+bool
+imagebufalgo_fillholes_pushpull(ImageBuf& dst, const ImageBuf& src,
+                                int nthreads);
+
+bool
 imagebufalgo_color_range_check(const ImageBuf& src,
                                rust::Slice<const float> low,
                                rust::Slice<const float> high,

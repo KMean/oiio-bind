@@ -31,6 +31,38 @@ fn fix_non_finite_counts_and_error_mode_refuses() {
 }
 
 #[test]
+fn normalize_makes_unit_vectors_and_names_its_requirements() {
+    // A signed vector (3, 0, 4) has length 5; normalized it is (0.6, 0, 0.8).
+    let vectors = flat(2, 2, &[3.0, 0.0, 4.0]);
+    let mut unit = ImageBuf::empty().unwrap();
+    algo::normalize(&mut unit, &vectors, 0.0, 0.0, 1.0, None).unwrap();
+    close(&pixel(&unit, 0, 0), &[0.6, 0.0, 0.8]);
+
+    // The wrong channel count is an error whose message survives, even
+    // though OpenImageIO records it on the source rather than the result.
+    let two_channels = flat(2, 2, &[1.0, 0.0]);
+    let mut result = ImageBuf::empty().unwrap();
+    let error = algo::normalize(&mut result, &two_channels, 0.0, 0.0, 1.0, None).unwrap_err();
+    assert!(error.to_string().contains("channel"), "{error}");
+}
+
+#[test]
+fn fillholes_pushpull_fills_zero_alpha_pixels() {
+    // RGBA: opaque red everywhere except a transparent hole.
+    let mut source = flat(8, 8, &[1.0, 0.0, 0.0, 1.0]);
+    let hole = Roi::new(3..5, 3..5, 0..1, 0..4).unwrap();
+    source.set_pixels(hole, &[0.0_f32; 2 * 2 * 4]).unwrap();
+
+    let mut filled = ImageBuf::empty().unwrap();
+    algo::fillholes_pushpull(&mut filled, &source).unwrap();
+    let centre = pixel(&filled, 4, 4);
+    assert!(
+        centre[3] > 0.0 && centre[0] > 0.0,
+        "the hole should be filled from its red surroundings: {centre:?}"
+    );
+}
+
+#[test]
 fn rangecompress_and_expand_round_trip_highlights() {
     let hot = flat(4, 4, &[8.0, 0.5, 0.1]);
 
