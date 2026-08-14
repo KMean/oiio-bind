@@ -748,6 +748,36 @@ fn an_attribute_that_cannot_be_written_says_so() {
     assert!(buffer.spec().unwrap().attribute("exact").is_some());
 }
 
+/// An empty string-array attribute was dropped between the spec and the file.
+///
+/// The `Strings` arm writes its values as `string[len]`, and `"string[0]"`
+/// does not name an array: `TypeDesc::fromstring` parses it to a scalar string
+/// whose element count is one, so the shim's length check fails and it
+/// declines to store anything. That refusal came back as a bool the write arm
+/// discarded, so an empty `multiView` vanished with nothing said — the same
+/// shape the `Other` arm was already guarded against.
+#[test]
+fn an_empty_string_array_attribute_is_an_error_not_a_silent_drop() {
+    let spec = ImageSpec::new(4, 4, 3, PixelFormat::U8)
+        .unwrap()
+        .with_attribute("multiView", oiio::AttributeValue::Strings(Vec::new()));
+    assert!(
+        ImageBuf::new(&spec).is_err(),
+        "an empty string array cannot be carried and that has to be said"
+    );
+
+    // A non-empty array still arrives whole.
+    let views = vec!["left".to_owned(), "right".to_owned()];
+    let spec = ImageSpec::new(4, 4, 3, PixelFormat::U8)
+        .unwrap()
+        .with_attribute("multiView", oiio::AttributeValue::Strings(views.clone()));
+    let buffer = ImageBuf::new(&spec).unwrap();
+    match buffer.spec().unwrap().attribute("multiView") {
+        Some(oiio::AttributeValue::Strings(back)) => assert_eq!(*back, views),
+        other => panic!("a two-string array should read back as Strings, not {other:?}"),
+    }
+}
+
 /// `mad` with two image sources of different channel counts.
 ///
 /// The destination is sized from the wider source, and `IBAprep` allocates it

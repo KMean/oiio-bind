@@ -120,12 +120,22 @@ impl AttributeValue {
             Self::String(value) => sys::imageio::imagespec_attribute_string(spec, name, value),
             Self::Strings(values) => {
                 let type_name = format!("string[{}]", values.len());
-                sys::imageio::imagespec_attribute_set_strings(
+                // The shim reports whether it stored the array, and an empty
+                // one it cannot: "string[0]" parses to a scalar string whose
+                // element count is one, not zero, so the length check fails.
+                // Discarding the bool, as the Other arm used to, would drop the
+                // attribute with nothing said.
+                if !sys::imageio::imagespec_attribute_set_strings(
                     spec.as_mut(),
                     name,
                     &type_name,
                     values,
-                );
+                ) {
+                    return Err(Error::InvalidImageSpec(format!(
+                        "attribute {name:?} could not be written as {type_name:?}; \
+                         a string attribute needs at least one value"
+                    )));
+                }
             }
             Self::Other {
                 type_name, bytes, ..
