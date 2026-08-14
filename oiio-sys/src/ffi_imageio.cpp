@@ -239,6 +239,17 @@ imagespec_channel_names(const ImageSpec& spec)
     return std::unique_ptr<std::vector<std::string>>(channel_names);
 }
 
+rust::Slice<const TypeDesc>
+imagespec_channelformats(const ImageSpec& spec)
+{
+    // An empty vector's data pointer may be null, which rust::Slice must not
+    // carry; hand back a default slice instead, as the deep shims do.
+    if (spec.channelformats.empty())
+        return rust::Slice<const TypeDesc>();
+    return rust::Slice<const TypeDesc>(spec.channelformats.data(),
+                                       spec.channelformats.size());
+}
+
 namespace {
 inline OIIO::string_view
 to_string_view(const rust::Str text) noexcept
@@ -315,6 +326,15 @@ imagespec_set_channel_names(ImageSpec& spec,
     spec.channelnames.reserve(names.size());
     for (const rust::String& name : names)
         spec.channelnames.emplace_back(name.data(), name.size());
+}
+
+void
+imagespec_set_channelformats(ImageSpec& spec,
+                             rust::Slice<const TypeDesc> formats)
+{
+    // Assign the field directly, and never route through or after
+    // ImageSpec::set_format, which clears channelformats.
+    spec.channelformats.assign(formats.begin(), formats.end());
 }
 
 void

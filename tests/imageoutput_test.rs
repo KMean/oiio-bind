@@ -14,6 +14,53 @@ fn ramp<T: Pixel + From<u8>>(count: usize) -> Vec<T> {
         .collect()
 }
 
+/// Mixed per-channel formats — the half/float layout multi-AOV EXRs use —
+/// survive the round trip, and their invariants hold at both ends.
+#[test]
+fn mixed_channel_formats_round_trip_through_an_exr() -> Result<()> {
+    let scratch = ScratchDir::new("chanfmt");
+    let spec = ImageSpec::new(4, 4, 3, PixelFormat::F32)?.with_channel_formats(Some(vec![
+        PixelFormat::F16,
+        PixelFormat::F32,
+        PixelFormat::F16,
+    ]))?;
+    assert_eq!(spec.channel_format(0), Some(PixelFormat::F16));
+    assert_eq!(spec.channel_format(1), Some(PixelFormat::F32));
+    assert_eq!(spec.channel_format(3), None, "past the channels is None");
+
+    let path = scratch.file("mixed.exr");
+    let mut output = ImageOutput::create(&path, &spec)?;
+    output.write_image(&f32_ramp(4 * 4 * 3))?;
+    output.close()?;
+
+    let input = ImageInput::from_path(&path)?;
+    let read = input.image_spec()?;
+    assert_eq!(
+        read.channel_formats(),
+        Some(&[PixelFormat::F16, PixelFormat::F32, PixelFormat::F16][..]),
+        "the mixed layout survives the file"
+    );
+
+    // The invariants: a list of the wrong length is refused at both entries,
+    // and a format the crate cannot size never reaches a writer.
+    assert!(ImageSpec::new(4, 4, 3, PixelFormat::F32)?
+        .with_channel_formats(Some(vec![PixelFormat::F16]))
+        .is_err());
+    let unwritable =
+        ImageSpec::new(4, 4, 3, PixelFormat::F32)?.with_channel_formats(Some(vec![
+            PixelFormat::F16,
+            PixelFormat::Other,
+            PixelFormat::F16,
+        ]))?;
+    assert!(ImageOutput::create(&scratch.file("bad.exr"), &unwritable).is_err());
+
+    // with_format clears the per-channel list, as OpenImageIO's own
+    // set_format does, so the two can never silently disagree.
+    let cleared = spec.with_format(PixelFormat::F32);
+    assert_eq!(cleared.channel_formats(), None);
+    Ok(())
+}
+
 fn read_back<T: Pixel>(path: &Path) -> Result<(ImageSpec, Vec<T>)> {
     let mut input = ImageInput::from_path(path)?;
     let spec = input.image_spec()?;

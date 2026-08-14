@@ -109,6 +109,15 @@ before the fork, but nothing was ever published under it, so starting both at
 - Tests against OpenImageIO's and OpenEXR's own image corpora, opt-in through
   `OIIO_BIND_TEST_IMAGES` and `OIIO_BIND_TEST_EXR_IMAGES`, including
   OpenEXR's `Damaged` directory of reader crash cases.
+- `ImageSpec` carries per-channel pixel formats — the mixed `half`/`float`
+  layout most multi-AOV EXRs use — as `channel_formats`, with
+  `with_channel_formats`, `channel_format` and a full write/read round trip.
+  A list must hold exactly one format per channel, checked at every entry
+  and both FFI crossings, because OpenImageIO indexes its per-channel vector
+  for every channel with no length check of its own — the byte-size helpers
+  and the writer's per-channel conversion loop alike. `PixelFormat::Other`
+  entries are carried for inspection but refuse to be written, and
+  `with_format` clears the list as OpenImageIO's own `set_format` does.
 - `algo::demosaic`, decoding a camera mosaic with a typed `MosaicPattern`.
   The destination must be empty (OpenImageIO ignores its own preparation
   verdict on a pre-allocated one), the source's data window must not start

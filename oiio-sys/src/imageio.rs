@@ -113,6 +113,7 @@ mod ffi {
             depth: i32,
         );
         pub fn imagespec_set_channel_names(spec: Pin<&mut ImageSpec>, names: &Vec<String>);
+        pub fn imagespec_set_channelformats(spec: Pin<&mut ImageSpec>, formats: &[TypeDesc]);
         pub fn imagespec_set_alpha_channel(spec: Pin<&mut ImageSpec>, index: i32);
         pub fn imagespec_set_z_channel(spec: Pin<&mut ImageSpec>, index: i32);
         pub fn imagespec_set_deep(spec: Pin<&mut ImageSpec>, deep: bool);
@@ -170,6 +171,7 @@ mod ffi {
         pub fn imagespec_deep(spec: &ImageSpec) -> bool;
         pub fn imagespec_valid(spec: &ImageSpec) -> bool;
         pub fn imagespec_channel_names(spec: &ImageSpec) -> UniquePtr<CxxVector<CxxString>>;
+        pub fn imagespec_channelformats(spec: &ImageSpec) -> &[TypeDesc];
 
         // ImageInput
         pub type ImageInput;

@@ -28,6 +28,7 @@ pub struct ImageSpec {
     z_channel: Option<u32>,
     deep: bool,
     format: PixelFormat,
+    channel_formats: Option<Vec<PixelFormat>>,
     attributes: Vec<(String, AttributeValue)>,
 }
 
@@ -57,9 +58,40 @@ impl ImageSpec {
     }
 
     /// Set the pixel data type.
+    ///
+    /// This also clears any per-channel formats, mirroring OpenImageIO's own
+    /// `set_format`, so the two fields cannot silently disagree; set the
+    /// overall format first and the per-channel list after.
     pub fn with_format(mut self, format: PixelFormat) -> Self {
         self.format = format;
+        self.channel_formats = None;
         self
+    }
+
+    /// Give each channel its own storage format, or `None` to store every
+    /// channel as [`ImageSpec::format`] — the mixed `half`/`float` layout
+    /// most multi-AOV EXRs use.
+    ///
+    /// A list must hold exactly one format per channel: OpenImageIO indexes
+    /// its per-channel vector for every channel with no length check of its
+    /// own — the byte-size helpers and the writer's per-channel conversion
+    /// loop alike — so a wrong length is refused here, before it can reach
+    /// C++. Entries of [`PixelFormat::Other`] are carried for inspection but
+    /// make the spec unwritable, the same split as the overall format. At
+    /// open time, a writer without the `channelformats` capability fails,
+    /// and one whose list all equals the overall format has it cleared.
+    pub fn with_channel_formats(mut self, formats: Option<Vec<PixelFormat>>) -> Result<Self> {
+        if let Some(formats) = &formats {
+            if formats.len() != self.channels as usize {
+                return Err(Error::InvalidImageSpec(format!(
+                    "expected {} per-channel formats, got {}",
+                    self.channels,
+                    formats.len()
+                )));
+            }
+        }
+        self.channel_formats = formats;
+        Ok(self)
     }
 
     /// Set the origin of the pixel data window.
@@ -255,6 +287,25 @@ impl ImageSpec {
         &self.channel_names
     }
 
+    /// Per-channel pixel formats, when they differ; `None` means every
+    /// channel is stored as [`ImageSpec::format`].
+    pub fn channel_formats(&self) -> Option<&[PixelFormat]> {
+        self.channel_formats.as_deref()
+    }
+
+    /// One channel's storage format, or `None` for a channel the image does
+    /// not have. Falls back to [`ImageSpec::format`] when no per-channel
+    /// formats are set.
+    pub fn channel_format(&self, index: u32) -> Option<PixelFormat> {
+        if index >= self.channels {
+            return None;
+        }
+        Some(match &self.channel_formats {
+            Some(formats) => formats[index as usize],
+            None => self.format,
+        })
+    }
+
     /// Index of the alpha channel when one is designated.
     pub fn alpha_channel(&self) -> Option<u32> {
         self.alpha_channel
@@ -289,6 +340,30 @@ impl ImageSpec {
             })
             .collect();
 
+        // OpenImageIO indexes the per-channel format vector for every channel
+        // with no length check of its own — the byte-size helpers and the
+        // writer's per-channel conversion loop alike — so a spec whose vector
+        // disagrees with its channel count must not be carried. Exotic
+        // per-channel types map to PixelFormat::Other, which is safe to hold
+        // because to_sys refuses to write it.
+        let native_channel_formats = sys::imageio::imagespec_channelformats(spec);
+        let channel_formats = if native_channel_formats.is_empty() {
+            None
+        } else if native_channel_formats.len() != channels as usize {
+            return Err(Error::InvalidImageSpec(format!(
+                "the image reports {} per-channel formats for {} channels",
+                native_channel_formats.len(),
+                channels
+            )));
+        } else {
+            Some(
+                native_channel_formats
+                    .iter()
+                    .map(PixelFormat::from_sys)
+                    .collect(),
+            )
+        };
+
         Ok(Self {
             x: sys::imageio::imagespec_x(spec),
             y: sys::imageio::imagespec_y(spec),
@@ -311,6 +386,7 @@ impl ImageSpec {
             z_channel: channel_index(sys::imageio::imagespec_z_channel(spec), channels),
             deep: sys::imageio::imagespec_deep(spec),
             format: PixelFormat::from_sys(&sys::imageio::imagespec_format(spec)),
+            channel_formats,
             attributes,
         })
     }
@@ -337,6 +413,23 @@ impl ImageSpec {
                 self.channels,
                 self.channel_names.len()
             )));
+        }
+        if let Some(formats) = &self.channel_formats {
+            if formats.len() != self.channels as usize {
+                return Err(Error::InvalidImageSpec(format!(
+                    "expected {} per-channel formats, got {}",
+                    self.channels,
+                    formats.len()
+                )));
+            }
+            // An Other entry would cross as an unknown TypeDesc whose size is
+            // zero, collapsing the writer's per-channel byte offsets into
+            // overlapping writes.
+            if formats.contains(&PixelFormat::Other) {
+                return Err(Error::InvalidImageSpec(
+                    "a writable specification needs concrete per-channel formats".to_owned(),
+                ));
+            }
         }
 
         let mut spec = sys::imageio::imagespec_new(
@@ -374,6 +467,13 @@ impl ImageSpec {
             dimension("tile depth", self.tile_depth)?,
         );
         sys::imageio::imagespec_set_channel_names(pinned.as_mut(), &self.channel_names);
+        if let Some(formats) = &self.channel_formats {
+            // The overall format was fixed by the constructor call above and
+            // nothing later calls set_format, which is what would clear this.
+            let native: Vec<sys::typedesc::TypeDesc> =
+                formats.iter().map(|format| format.to_sys()).collect();
+            sys::imageio::imagespec_set_channelformats(pinned.as_mut(), &native);
+        }
         sys::imageio::imagespec_set_alpha_channel(
             pinned.as_mut(),
             optional_channel_index(self.alpha_channel)?,

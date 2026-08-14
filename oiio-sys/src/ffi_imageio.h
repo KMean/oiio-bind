@@ -108,6 +108,10 @@ imagespec_set_channel_names(ImageSpec& spec,
                             const rust::Vec<rust::String>& names);
 
 void
+imagespec_set_channelformats(ImageSpec& spec,
+                             rust::Slice<const TypeDesc> formats);
+
+void
 imagespec_set_alpha_channel(ImageSpec& spec, int index);
 
 void
@@ -245,6 +249,9 @@ imagespec_valid(const ImageSpec& spec);
 
 std::unique_ptr<std::vector<std::string>>
 imagespec_channel_names(const ImageSpec& spec);
+
+rust::Slice<const TypeDesc>
+imagespec_channelformats(const ImageSpec& spec);
 #pragma endregion
 
 #pragma region ImageInput
