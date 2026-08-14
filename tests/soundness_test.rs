@@ -623,3 +623,36 @@ fn an_attribute_with_an_unsized_array_type_is_refused() {
     let buffer = ImageBuf::new(&spec).unwrap();
     assert!(buffer.spec().unwrap().attribute("good").is_some());
 }
+
+/// A channel range starting past the destination's last channel killed six
+/// `algo` operations outright.
+///
+/// `IBAprep` begins every operation with
+/// `roi = roi_intersection(roi, get_roi(dst->spec()))`, and `roi_intersection`
+/// takes the larger begin and the smaller end. So 5..8 against 0..3 comes back
+/// inverted, chbegin 5 and chend 3, and `ROI::nchannels()` is -2. The kernels
+/// turn that into an unsigned length: `zero` reaches
+/// `memcpy(.., nchannels * sizeof(T))` with `(size_t)-8` from an address
+/// already five floats into a three float pixel.
+#[test]
+fn an_algo_region_cannot_start_past_the_destination() {
+    let source = flat(4, 4, 3);
+    let bad = Roi::new(0..4, 0..4, 0..1, 5..8).unwrap();
+
+    let mut dst = ImageBuf::new(&ImageSpec::new(4, 4, 3, PixelFormat::F32).unwrap()).unwrap();
+    assert!(algo::zero(&mut dst, Some(bad)).is_err());
+    assert!(algo::fill(&mut dst, &[1.0, 2.0, 3.0], Some(bad)).is_err());
+    assert!(algo::copy(&mut dst, &source, None, Some(bad)).is_err());
+    assert!(algo::crop(&mut dst, &source, Some(bad)).is_err());
+    assert!(algo::premult(&mut dst, &source, Some(bad)).is_err());
+    assert!(algo::unpremult(&mut dst, &source, Some(bad)).is_err());
+
+    // The same range against a destination that has those channels is fine.
+    let mut wide = ImageBuf::new(&ImageSpec::new(4, 4, 8, PixelFormat::F32).unwrap()).unwrap();
+    algo::zero(&mut wide, Some(bad)).unwrap();
+
+    // And the whole-image default is untouched.
+    let mut dst = ImageBuf::empty().unwrap();
+    algo::copy(&mut dst, &source, None, None).unwrap();
+    assert_eq!(dst.channel_count(), 3);
+}

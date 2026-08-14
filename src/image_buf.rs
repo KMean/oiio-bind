@@ -456,7 +456,7 @@ impl ImageBuf {
         // collected it.
         let recorded = sys::imagebuf::imagebuf_geterror(self.inner(), true);
         let mut message =
-            "the pixels were never read; the deferred read failed and left the allocation              untouched"
+            "the pixels were never read; the deferred read failed and left the allocation untouched"
                 .to_owned();
         if !recorded.is_empty() {
             message.push_str(" (");

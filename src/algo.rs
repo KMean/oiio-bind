@@ -46,6 +46,42 @@ fn region(roi: Option<Roi>) -> sys::imageio::ROI {
     roi.map_or_else(sys::imageio::roi_default, Roi::to_sys)
 }
 
+/// A region validated against the image the operation will write into.
+///
+/// `IBAprep` starts every operation with
+/// `roi = roi_intersection(roi, get_roi(dst->spec()))`, and `roi_intersection`
+/// takes the larger begin and the smaller end. A channel range that starts past
+/// the destination's last channel therefore comes back INVERTED -- 5..8 against
+/// 0..3 gives chbegin 5, chend 3 -- and `ROI::nchannels()` is then -2. The
+/// kernels turn that straight into an unsigned length: `zero` reaches
+/// `memcpy(.., nchannels * sizeof(T))` with `(size_t)-8`, from an address
+/// already five floats into a three float pixel.
+///
+/// The rule is the one that cannot invert: the channel range must exist in the
+/// destination when the destination is already allocated, and must start at
+/// channel zero when it is not, since `IBAprep` then builds the destination
+/// from this very region and intersects against what it just built.
+fn region_in(roi: Option<Roi>, dst: &ImageBuf) -> Result<sys::imageio::ROI> {
+    if let Some(roi) = roi {
+        let channels = roi.channels();
+        let available = dst.channel_count();
+        if dst.is_initialized() && available >= 0 {
+            if channels.start >= available.unsigned_abs() {
+                return Err(Error::InvalidRoi(format!(
+                    "the region starts at channel {} and the destination has {available}",
+                    channels.start
+                )));
+            }
+        } else if channels.start != 0 {
+            return Err(Error::InvalidRoi(format!(
+                "the region starts at channel {}; a destination that is not                  allocated yet is built from the region itself, so the region                  must begin at channel zero",
+                channels.start
+            )));
+        }
+    }
+    Ok(region(roi))
+}
+
 fn finish(dst: &mut ImageBuf, operation: &'static str, succeeded: bool) -> Result<()> {
     if succeeded {
         Ok(())
@@ -56,7 +92,7 @@ fn finish(dst: &mut ImageBuf, operation: &'static str, succeeded: bool) -> Resul
 
 /// Set every channel in the region to zero.
 pub fn zero(dst: &mut ImageBuf, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_zero(dst.inner_mut(), &roi, ALL_THREADS);
     finish(dst, "zero", succeeded)
 }
@@ -73,7 +109,7 @@ pub fn fill(dst: &mut ImageBuf, values: &[f32], roi: Option<Roi>) -> Result<()> 
             "fill needs at least one channel value".to_owned(),
         ));
     }
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded =
         sys::imagebufalgo::imagebufalgo_fill(dst.inner_mut(), values, &roi, ALL_THREADS);
     finish(dst, "fill", succeeded)
@@ -88,7 +124,7 @@ macro_rules! binary_operation {
             b: &ImageBuf,
             roi: Option<Roi>,
         ) -> Result<()> {
-            let roi = region(roi);
+            let roi = region_in(roi, dst)?;
             let succeeded = $images(dst.inner_mut(), a.inner(), b.inner(), &roi, ALL_THREADS);
             finish(dst, $label, succeeded)
         }
@@ -105,7 +141,7 @@ macro_rules! binary_operation {
                     "this operation needs at least one channel value".to_owned(),
                 ));
             }
-            let roi = region(roi);
+            let roi = region_in(roi, dst)?;
             let succeeded = $constants(dst.inner_mut(), a.inner(), values, &roi, ALL_THREADS);
             finish(dst, $label, succeeded)
         }
@@ -152,7 +188,7 @@ pub fn fill_gradient(
     bottom: &[f32],
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_fill_vertical(
         dst.inner_mut(),
         top,
@@ -172,7 +208,7 @@ pub fn fill_corners(
     bottom_right: &[f32],
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_fill_corners(
         dst.inner_mut(),
         top_left,
@@ -202,7 +238,7 @@ pub fn checker(
         i32::try_from(value)
             .map_err(|_| Error::InvalidImageSpec(format!("checker {name} exceeds i32::MAX")))
     };
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_checker(
         dst.inner_mut(),
         dimension("width", size[0])?,
@@ -287,7 +323,7 @@ pub fn noise(
     roi: Option<Roi>,
 ) -> Result<()> {
     let (name, a, b) = kind.parts();
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_noise(
         dst.inner_mut(),
         name,
@@ -312,7 +348,7 @@ pub fn render_point(
     color: &[f32],
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_render_point(
         dst.inner_mut(),
         x,
@@ -341,7 +377,7 @@ pub fn render_line(
     skip_first_point: bool,
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_render_line(
         dst.inner_mut(),
         from[0],
@@ -369,7 +405,7 @@ pub fn render_box(
     fill: bool,
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_render_box(
         dst.inner_mut(),
         corner[0],
@@ -461,7 +497,7 @@ pub fn render_text(
     roi: Option<Roi>,
 ) -> Result<()> {
     let (size, shadow) = text_metrics(options.size, options.shadow)?;
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_render_text(
         dst.inner_mut(),
         position[0],
@@ -538,7 +574,7 @@ fn text_metrics(size: u32, shadow: u32) -> Result<(i32, i32)> {
 /// OpenImageIO says so itself, in a comment on the code; a file that does not
 /// satisfy that gives a wrong answer rather than an error.
 pub fn flatten(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded =
         sys::imagebufalgo::imagebufalgo_flatten(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
     finish(dst, "flatten", succeeded)
@@ -555,7 +591,7 @@ pub fn flatten(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<(
 /// specification this builds. OpenImageIO would otherwise keep a pre-allocated
 /// destination's shape and silently drop the writes that do not fit.
 pub fn deepen(dst: &mut ImageBuf, src: &ImageBuf, z_value: f32, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_deepen(
         dst.inner_mut(),
         src.inner(),
@@ -585,7 +621,7 @@ pub fn deep_merge(
     occlusion_cull: bool,
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_deep_merge(
         dst.inner_mut(),
         a.inner(),
@@ -614,7 +650,7 @@ pub fn deep_holdout(
     holdout: &ImageBuf,
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_deep_holdout(
         dst.inner_mut(),
         src.inner(),
@@ -668,7 +704,7 @@ pub fn convolve(
     normalize: bool,
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_convolve(
         dst.inner_mut(),
         src.inner(),
@@ -686,7 +722,7 @@ pub fn convolve(
 /// negative values. Give it a floating-point destination; an integer one clamps
 /// everything below zero away.
 pub fn laplacian(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded =
         sys::imagebufalgo::imagebufalgo_laplacian(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
     finish(dst, "laplacian", succeeded)
@@ -712,7 +748,7 @@ pub fn unsharp_mask(
     threshold: f32,
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_unsharp_mask(
         dst.inner_mut(),
         src.inner(),
@@ -742,7 +778,7 @@ pub fn median_filter(
     roi: Option<Roi>,
 ) -> Result<()> {
     let (width, height) = window("median filter", width, height)?;
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_median_filter(
         dst.inner_mut(),
         src.inner(),
@@ -766,7 +802,7 @@ pub fn dilate(
     roi: Option<Roi>,
 ) -> Result<()> {
     let (width, height) = window("dilate", width, height)?;
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_dilate(
         dst.inner_mut(),
         src.inner(),
@@ -791,7 +827,7 @@ pub fn erode(
     roi: Option<Roi>,
 ) -> Result<()> {
     let (width, height) = window("erode", width, height)?;
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_erode(
         dst.inner_mut(),
         src.inner(),
@@ -824,7 +860,7 @@ fn window(operation: &str, width: u32, height: Option<u32>) -> Result<(i32, i32)
 /// than to the data window alone, so an image whose pixels are smaller than its
 /// display window is transformed with the difference zero-padded.
 pub fn fft(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded =
         sys::imagebufalgo::imagebufalgo_fft(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
     finish(dst, "fft", succeeded)
@@ -837,7 +873,7 @@ pub fn fft(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
 /// address, and OpenImageIO would dereference the null it gets back. Call
 /// [`ImageBuf::read`](crate::ImageBuf::read) first if in doubt.
 pub fn ifft(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded =
         sys::imagebufalgo::imagebufalgo_ifft(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
     finish(dst, "ifft", succeeded)
@@ -851,7 +887,7 @@ pub fn ifft(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> 
 /// (OpenImageIO's header describes this the other way round. The name is right
 /// and the prose is wrong; this converts *from* polar.)
 pub fn polar_to_complex(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_polar_to_complex(
         dst.inner_mut(),
         src.inner(),
@@ -866,7 +902,7 @@ pub fn polar_to_complex(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) ->
 /// Both images need exactly two channels. The phase comes back in `0..2π`,
 /// not `-π..π`.
 pub fn complex_to_polar(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_complex_to_polar(
         dst.inner_mut(),
         src.inner(),
@@ -931,7 +967,7 @@ pub fn color_matrix_transform(
     unpremult: bool,
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_colormatrixtransform(
         dst.inner_mut(),
         src.inner(),
@@ -960,7 +996,7 @@ pub fn ocio_look(
     options: &OcioOptions<'_>,
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_ociolook(
         dst.inner_mut(),
         src.inner(),
@@ -996,7 +1032,7 @@ pub fn ocio_display(
     options: &OcioOptions<'_>,
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_ociodisplay(
         dst.inner_mut(),
         src.inner(),
@@ -1030,7 +1066,7 @@ pub fn ocio_file_transform(
     roi: Option<Roi>,
 ) -> Result<()> {
     let name = crate::path_to_utf8(transform_path)?;
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_ociofiletransform(
         dst.inner_mut(),
         src.inner(),
@@ -1051,7 +1087,7 @@ pub fn ocio_named_transform(
     options: &OcioOptions<'_>,
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_ocionamedtransform(
         dst.inner_mut(),
         src.inner(),
@@ -1101,7 +1137,7 @@ pub struct PixelStats {
 /// Deep images are refused: their samples are not one value per pixel, so a
 /// per-pixel mean would not mean anything.
 pub fn pixel_stats(src: &ImageBuf, roi: Option<Roi>) -> Result<PixelStats> {
-    let roi = region(roi);
+    let roi = region_in(roi, src)?;
     let stats = sys::imagebufalgo::imagebufalgo_pixel_stats(src.inner(), &roi, ALL_THREADS);
     if !stats.ok {
         return Err(Error::operation("pixel statistics", stats.error));
@@ -1137,7 +1173,7 @@ pub fn histogram(
         .map_err(|_| Error::InvalidImageSpec("channel exceeds i32::MAX".to_owned()))?;
     let bins = i32::try_from(bins)
         .map_err(|_| Error::InvalidImageSpec("bin count exceeds i32::MAX".to_owned()))?;
-    let roi = region(roi);
+    let roi = region_in(roi, src)?;
     let mut message = String::new();
     let counts = sys::imagebufalgo::imagebufalgo_histogram(
         src.inner(),
@@ -1175,7 +1211,7 @@ pub fn constant_color(
 ) -> Result<Option<Vec<f32>>> {
     let channels = src.spec()?.channel_count() as usize;
     let mut color = vec![0.0_f32; channels];
-    let roi = region(roi);
+    let roi = region_in(roi, src)?;
     let mut message = String::new();
     let constant = sys::imagebufalgo::imagebufalgo_is_constant_color(
         src.inner(),
@@ -1209,7 +1245,7 @@ pub fn is_constant_channel(
 ) -> Result<bool> {
     let channel = i32::try_from(channel)
         .map_err(|_| Error::InvalidImageSpec("channel exceeds i32::MAX".to_owned()))?;
-    let roi = region(roi);
+    let roi = region_in(roi, src)?;
     let mut message = String::new();
     let constant = sys::imagebufalgo::imagebufalgo_is_constant_channel(
         src.inner(),
@@ -1233,7 +1269,7 @@ pub fn is_constant_channel(
 /// channels, or an opaque grey image reports false because alpha is 1 where
 /// the colours are not.
 pub fn is_monochrome(src: &ImageBuf, threshold: f32, roi: Option<Roi>) -> Result<bool> {
-    let roi = region(roi);
+    let roi = region_in(roi, src)?;
     let mut message = String::new();
     let monochrome = sys::imagebufalgo::imagebufalgo_is_monochrome(
         src.inner(),
@@ -1261,7 +1297,7 @@ pub fn is_monochrome(src: &ImageBuf, threshold: f32, roi: Option<Roi>) -> Result
 /// The region must begin at channel zero, for the reason
 /// [`constant_color`] gives: this is built on it.
 pub fn nonzero_region(src: &ImageBuf, roi: Option<Roi>) -> Result<Option<Roi>> {
-    let roi = region(roi);
+    let roi = region_in(roi, src)?;
     let mut message = String::new();
     let found = sys::imagebufalgo::imagebufalgo_nonzero_region(
         src.inner(),
@@ -1288,7 +1324,7 @@ pub fn nonzero_region(src: &ImageBuf, roi: Option<Roi>) -> Result<Option<Roi>> {
 /// A region narrower than the image gives an answer that depends on how the
 /// buffer was loaded, so prefer a full-width region or none at all.
 pub fn pixel_hash_sha1(src: &ImageBuf, extra_info: &str, roi: Option<Roi>) -> Result<String> {
-    let roi = region(roi);
+    let roi = region_in(roi, src)?;
     let mut message = String::new();
     let digest = sys::imagebufalgo::imagebufalgo_pixel_hash_sha1(
         src.inner(),
@@ -1393,11 +1429,11 @@ pub fn rotate(
 ) -> Result<()> {
     if options.wrap.is_some() || options.edge_clamp {
         return Err(Error::InvalidImageSpec(
-            "rotate always leaves black outside the source; use warp with a              rotation matrix to choose a wrap mode or edge clamping"
+            "rotate always leaves black outside the source; use warp with a rotation matrix to choose a wrap mode or edge clamping"
                 .to_owned(),
         ));
     }
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let [center_x, center_y] = center.unwrap_or([0.0, 0.0]);
     let succeeded = sys::imagebufalgo::imagebufalgo_rotate(
         dst.inner_mut(),
@@ -1427,7 +1463,7 @@ pub fn warp(
     options: &WarpOptions<'_>,
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_warp(
         dst.inner_mut(),
         src.inner(),
@@ -1469,7 +1505,7 @@ pub fn st_warp(
         i32::try_from(value)
             .map_err(|_| Error::InvalidImageSpec(format!("{name} exceeds i32::MAX")))
     };
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_st_warp(
         dst.inner_mut(),
         src.inner(),
@@ -1532,7 +1568,7 @@ pub fn mad(
     c: Operand<'_>,
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = match (b, c) {
         (Operand::Image(b), Operand::Image(c)) => sys::imagebufalgo::imagebufalgo_mad_iii(
             dst.inner_mut(),
@@ -1577,7 +1613,7 @@ pub fn mad(
 /// premultiplied images, [`unpremult`] then `invert` then [`premult`] is the
 /// usual sequence.
 pub fn invert(dst: &mut ImageBuf, a: &ImageBuf, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded =
         sys::imagebufalgo::imagebufalgo_invert(dst.inner_mut(), a.inner(), &roi, ALL_THREADS);
     finish(dst, "invert", succeeded)
@@ -1590,7 +1626,7 @@ pub fn invert(dst: &mut ImageBuf, a: &ImageBuf, roi: Option<Roi>) -> Result<()> 
 /// oversight. A negative value raised to a fractional power is `NaN`, not
 /// zero.
 pub fn pow(dst: &mut ImageBuf, a: &ImageBuf, exponents: &[f32], roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_pow(
         dst.inner_mut(),
         a.inner(),
@@ -1618,7 +1654,7 @@ pub fn clamp(
     clamp_alpha_to_unit: bool,
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_clamp(
         dst.inner_mut(),
         src.inner(),
@@ -1635,7 +1671,7 @@ pub fn clamp(
 ///
 /// Channels present in only one of two images are copied through unchanged.
 pub fn min(dst: &mut ImageBuf, a: &ImageBuf, b: Operand<'_>, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = match b {
         Operand::Image(b) => sys::imagebufalgo::imagebufalgo_min_images(
             dst.inner_mut(),
@@ -1667,7 +1703,7 @@ pub fn min(dst: &mut ImageBuf, a: &ImageBuf, b: Operand<'_>, roi: Option<Roi>) -
 /// bug is in OpenImageIO 3.1 and still in 3.2, so the restriction stands until
 /// it is fixed there.
 pub fn max(dst: &mut ImageBuf, a: &ImageBuf, b: Operand<'_>, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = match b {
         Operand::Image(b) => sys::imagebufalgo::imagebufalgo_max_images(
             dst.inner_mut(),
@@ -1724,7 +1760,7 @@ pub fn contrast_remap(
     remap: &ContrastRemap<'_>,
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_contrast_remap(
         dst.inner_mut(),
         src.inner(),
@@ -1758,7 +1794,7 @@ pub fn saturate(
 ) -> Result<()> {
     let first_channel = i32::try_from(first_channel)
         .map_err(|_| Error::InvalidImageSpec("first channel exceeds i32::MAX".to_owned()))?;
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_saturate(
         dst.inner_mut(),
         src.inner(),
@@ -1819,7 +1855,7 @@ pub fn paste(
 /// the result keeps the source's channel count with the others blacked out.
 /// Use [`channels`] to actually drop channels. Deep images are supported.
 pub fn cut(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded =
         sys::imagebufalgo::imagebufalgo_cut(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
     finish(dst, "cut", succeeded)
@@ -1827,7 +1863,7 @@ pub fn cut(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
 
 /// Take the absolute value of every channel.
 pub fn abs(dst: &mut ImageBuf, a: &ImageBuf, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded =
         sys::imagebufalgo::imagebufalgo_abs(dst.inner_mut(), a.inner(), &roi, ALL_THREADS);
     finish(dst, "absolute value", succeeded)
@@ -1835,7 +1871,7 @@ pub fn abs(dst: &mut ImageBuf, a: &ImageBuf, roi: Option<Roi>) -> Result<()> {
 
 /// Compute the absolute difference between two images.
 pub fn absdiff(dst: &mut ImageBuf, a: &ImageBuf, b: &ImageBuf, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_absdiff_images(
         dst.inner_mut(),
         a.inner(),
@@ -1853,7 +1889,7 @@ pub fn copy(
     convert_to: Option<crate::PixelFormat>,
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let convert = convert_to.unwrap_or(crate::PixelFormat::Other).to_sys();
     let succeeded = sys::imagebufalgo::imagebufalgo_copy(
         dst.inner_mut(),
@@ -1871,7 +1907,7 @@ pub fn copy(
 /// be pre-allocated to choose the result's pixel format; the result takes the
 /// source's. [`cut`] additionally moves the result to the origin.
 pub fn crop(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded =
         sys::imagebufalgo::imagebufalgo_crop(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
     finish(dst, "crop", succeeded)
@@ -1879,7 +1915,7 @@ pub fn crop(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> 
 
 /// Mirror vertically, top to bottom.
 pub fn flip(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded =
         sys::imagebufalgo::imagebufalgo_flip(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
     finish(dst, "flip", succeeded)
@@ -1887,7 +1923,7 @@ pub fn flip(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> 
 
 /// Mirror horizontally, left to right.
 pub fn flop(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded =
         sys::imagebufalgo::imagebufalgo_flop(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
     finish(dst, "flop", succeeded)
@@ -1895,7 +1931,7 @@ pub fn flop(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> 
 
 /// Transpose, exchanging rows and columns.
 pub fn transpose(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded =
         sys::imagebufalgo::imagebufalgo_transpose(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
     finish(dst, "transpose", succeeded)
@@ -1946,7 +1982,7 @@ pub fn resize(
     filter_width: Option<f32>,
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_resize(
         dst.inner_mut(),
         src.inner(),
@@ -1968,7 +2004,7 @@ pub fn fit(
     exact: bool,
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_fit(
         dst.inner_mut(),
         src.inner(),
@@ -1992,7 +2028,7 @@ pub fn resample(
     interpolate: bool,
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_resample(
         dst.inner_mut(),
         src.inner(),
@@ -2007,7 +2043,7 @@ pub fn resample(
 ///
 /// Both images must have an alpha channel and hold premultiplied values.
 pub fn over(dst: &mut ImageBuf, a: &ImageBuf, b: &ImageBuf, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_over(
         dst.inner_mut(),
         a.inner(),
@@ -2020,7 +2056,7 @@ pub fn over(dst: &mut ImageBuf, a: &ImageBuf, b: &ImageBuf, roi: Option<Roi>) ->
 
 /// Multiply the colour channels by alpha.
 pub fn premult(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded =
         sys::imagebufalgo::imagebufalgo_premult(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
     finish(dst, "premultiply", succeeded)
@@ -2028,7 +2064,7 @@ pub fn premult(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<(
 
 /// Divide the colour channels by alpha, undoing [`premult`].
 pub fn unpremult(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded =
         sys::imagebufalgo::imagebufalgo_unpremult(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
     finish(dst, "unpremultiply", succeeded)
@@ -2046,7 +2082,7 @@ pub fn channel_sum(
     weights: &[f32],
     roi: Option<Roi>,
 ) -> Result<()> {
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_channel_sum(
         dst.inner_mut(),
         src.inner(),
@@ -2166,7 +2202,7 @@ pub fn color_convert(
             "a colour conversion needs both a source and a destination space".to_owned(),
         ));
     }
-    let roi = region(roi);
+    let roi = region_in(roi, dst)?;
     let succeeded = sys::imagebufalgo::imagebufalgo_colorconvert(
         dst.inner_mut(),
         src.inner(),
@@ -2196,7 +2232,7 @@ pub fn compare(
     warn_threshold: f32,
     roi: Option<Roi>,
 ) -> Result<CompareSummary> {
-    let roi = region(roi);
+    let roi = region_in(roi, a)?;
     let mut message = String::new();
     let summary = sys::imagebufalgo::imagebufalgo_compare(
         a.inner(),
