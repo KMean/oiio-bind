@@ -39,6 +39,7 @@
 use crate::{sys, Error, ImageBuf, Result, Roi};
 
 pub use sys::imagebufalgo::CompareSummary;
+pub use sys::imagebufalgo::RangeCheckCounts;
 
 /// Use every thread OpenImageIO is configured for.
 const ALL_THREADS: i32 = 0;
@@ -2579,6 +2580,114 @@ pub fn compare(
     roi: Option<Roi>,
 ) -> Result<CompareSummary> {
     compare_with_relative(a, b, fail_threshold, warn_threshold, 0.0, 0.0, roi)
+}
+
+/// Count how many values sit below, above, and inside a per-channel range.
+///
+/// `low` and `high` give per-channel bounds; short slices are padded by
+/// OpenImageIO with "no bound" sentinels, so an empty slice on either side
+/// counts nothing against it. Deep images are not supported, and a channel
+/// range naming no channel of the source is an error rather than a report of
+/// zero everything.
+pub fn color_range_check(
+    src: &ImageBuf,
+    low: &[f32],
+    high: &[f32],
+    roi: Option<Roi>,
+) -> Result<RangeCheckCounts> {
+    let roi = region_in(roi, src)?;
+    let mut counts = RangeCheckCounts {
+        low: 0,
+        high: 0,
+        in_range: 0,
+    };
+    let mut message = String::new();
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_color_range_check(
+            src.inner(),
+            low,
+            high,
+            &mut counts,
+            &roi,
+            ALL_THREADS,
+            &mut message,
+        )
+    };
+    if succeeded {
+        Ok(counts)
+    } else {
+        Err(Error::operation("color range check", message))
+    }
+}
+
+/// Remap a single channel through a colour map given as interpolation knots.
+///
+/// `source_channel` selects which channel drives the map, or `None` for
+/// luminance computed from the first three. `knots` holds `knot_count`
+/// entries of `channels` values each, laid out knot-major, and the product
+/// must equal the slice length exactly — OpenImageIO's own length check
+/// multiplies in `int`, where a large pair overflows into an out-of-bounds
+/// read, so the bridge checks it wide first.
+pub fn color_map(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    source_channel: Option<u32>,
+    knot_count: u32,
+    channels: u32,
+    knots: &[f32],
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region_in(roi, dst)?;
+    let source_channel = match source_channel {
+        None => -1,
+        Some(index) => i32::try_from(index)
+            .map_err(|_| Error::InvalidRoi("source channel exceeds i32::MAX".to_owned()))?,
+    };
+    let knot_count = i32::try_from(knot_count)
+        .map_err(|_| Error::InvalidRoi("knot count exceeds i32::MAX".to_owned()))?;
+    let channels = i32::try_from(channels)
+        .map_err(|_| Error::InvalidRoi("channel count exceeds i32::MAX".to_owned()))?;
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_color_map(
+            dst.inner_mut(),
+            src.inner(),
+            source_channel,
+            knot_count,
+            channels,
+            knots,
+            &roi,
+            ALL_THREADS,
+        )
+    };
+    finish(dst, "color map", succeeded)
+}
+
+/// Remap a single channel through one of OpenImageIO's named colour maps,
+/// such as `"inferno"`, `"viridis"`, `"turbo"` or `"blue-red"`.
+pub fn color_map_named(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    source_channel: Option<u32>,
+    map_name: &str,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region_in(roi, dst)?;
+    let source_channel = match source_channel {
+        None => -1,
+        Some(index) => i32::try_from(index)
+            .map_err(|_| Error::InvalidRoi("source channel exceeds i32::MAX".to_owned()))?,
+    };
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_color_map_named(
+            dst.inner_mut(),
+            src.inner(),
+            source_channel,
+            map_name,
+            &roi,
+            ALL_THREADS,
+        )
+    };
+    finish(dst, "color map", succeeded)
 }
 
 /// [`compare`] with relative thresholds alongside the absolute ones.

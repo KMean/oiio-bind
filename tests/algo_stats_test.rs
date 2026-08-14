@@ -17,6 +17,28 @@ fn flat(width: u32, height: u32, values: &[f32]) -> ImageBuf {
 }
 
 #[test]
+fn color_range_check_counts_and_refuses_bad_ranges() {
+    // 4x4, one channel: every pixel holds 0.5.
+    let image = flat(4, 4, &[0.5]);
+
+    let counts = algo::color_range_check(&image, &[0.0], &[1.0], None).unwrap();
+    assert_eq!(counts.in_range, 16);
+    assert_eq!(counts.low + counts.high, 0);
+
+    // Bounds that exclude the value: everything is high.
+    let counts = algo::color_range_check(&image, &[0.0], &[0.25], None).unwrap();
+    assert_eq!(counts.high, 16);
+
+    // Empty bound slices mean no bound on that side.
+    let counts = algo::color_range_check(&image, &[], &[], None).unwrap();
+    assert_eq!(counts.in_range, 16);
+
+    // A channel range naming no channel is an error, not zeroes-and-success.
+    let bad = Roi::new(0..4, 0..4, 0..1, 5..8).unwrap();
+    assert!(algo::color_range_check(&image, &[0.0], &[1.0], Some(bad)).is_err());
+}
+
+#[test]
 fn pixel_stats_reports_range_mean_and_spread() {
     // A ramp from 0 to 1 across 100 pixels, in one channel.
     let spec = ImageSpec::new(100, 1, 1, PixelFormat::F32).unwrap();

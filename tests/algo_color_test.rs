@@ -18,6 +18,44 @@ fn flat(width: u32, height: u32, values: &[f32]) -> ImageBuf {
     image
 }
 
+#[test]
+fn color_map_interpolates_knots_and_validates_their_count() {
+    // One channel ramping 0 or 1; a two-knot map from black to red.
+    let dark = flat(2, 2, &[0.0]);
+    let bright = flat(2, 2, &[1.0]);
+    let knots = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+
+    let mut mapped = ImageBuf::empty().unwrap();
+    algo::color_map(&mut mapped, &dark, Some(0), 2, 3, &knots, None).unwrap();
+    assert_eq!(mapped.channel_count(), 3);
+    assert!(pixel(&mapped, 0, 0)[0] < 1e-5, "0 maps to the first knot");
+
+    let mut mapped = ImageBuf::empty().unwrap();
+    algo::color_map(&mut mapped, &bright, Some(0), 2, 3, &knots, None).unwrap();
+    let hot = pixel(&mapped, 0, 0);
+    assert!(
+        (hot[0] - 1.0).abs() < 1e-5,
+        "1 maps to the last knot: {hot:?}"
+    );
+
+    // A knot count that does not measure the slice is refused — including
+    // the pair whose int product would overflow upstream's own check.
+    let mut result = ImageBuf::empty().unwrap();
+    assert!(algo::color_map(&mut result, &dark, Some(0), 2, 2, &knots, None).is_err());
+    assert!(algo::color_map(&mut result, &dark, Some(0), 1_000_000, 4_295, &knots, None).is_err());
+
+    // A named map works, and an unknown name is reported.
+    let mut named = ImageBuf::empty().unwrap();
+    algo::color_map_named(&mut named, &bright, Some(0), "inferno", None).unwrap();
+    assert_eq!(named.channel_count(), 3);
+    let mut result = ImageBuf::empty().unwrap();
+    assert!(algo::color_map_named(&mut result, &bright, Some(0), "not-a-map", None).is_err());
+
+    // A source channel the image does not have is refused.
+    let mut result = ImageBuf::empty().unwrap();
+    assert!(algo::color_map(&mut result, &dark, Some(7), 2, 3, &knots, None).is_err());
+}
+
 fn pixel(image: &ImageBuf, x: i32, y: i32) -> Vec<f32> {
     let channels = image.spec().unwrap().channel_count();
     let roi = Roi::new(x..x + 1, y..y + 1, 0..1, 0..channels).unwrap();

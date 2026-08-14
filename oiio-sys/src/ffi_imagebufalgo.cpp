@@ -1185,6 +1185,107 @@ imagebufalgo_minchan(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
 }
 
 bool
+imagebufalgo_color_range_check(const ImageBuf& src,
+                               rust::Slice<const float> low,
+                               rust::Slice<const float> high,
+                               RangeCheckCounts& counts, const ROI& roi,
+                               int nthreads, rust::String& error)
+{
+    error = rust::String();
+    // The kernel iterates flat pixels; a deep source has none, and this
+    // measurement is never IBAprep'd against one.
+    if (src.deep()) {
+        error = rust::String::lossy(
+            "color_range_check: deep images are not supported");
+        return false;
+    }
+    // chend is clamped to the source but chbegin is not, so a channel range
+    // starting past the last channel loops over nothing and reports every
+    // counter as zero under a success return. Refuse it instead.
+    if (roi.defined()
+        && (roi.chbegin >= src.nchannels() || roi.chend <= roi.chbegin)) {
+        error = rust::String::lossy(
+            "color_range_check: the channel range names no channel of the "
+            "source");
+        return false;
+    }
+    OIIO::imagesize_t lowcount = 0, highcount = 0, inrange = 0;
+    src.geterror(true);
+    const bool ok = OIIO::ImageBufAlgo::color_range_check(
+        src, &lowcount, &highcount, &inrange, to_cspan(low), to_cspan(high),
+        roi, nthreads);
+    if (!ok) {
+        std::string recorded = src.geterror(true);
+        if (recorded.empty())
+            recorded = "OpenImageIO could not check the range";
+        error = rust::String::lossy(recorded);
+        return false;
+    }
+    counts.low      = lowcount;
+    counts.high     = highcount;
+    counts.in_range = inrange;
+    return true;
+}
+
+bool
+imagebufalgo_color_map(ImageBuf& dst, const ImageBuf& src, int srcchannel,
+                       int nknots, int channels, rust::Slice<const float> knots,
+                       const ROI& roi, int nthreads)
+{
+    if (src.deep()) {
+        dst.errorfmt("color_map: deep images are not supported");
+        return false;
+    }
+    // The room check upstream multiplies nknots * channels as int, so a pair
+    // whose product overflows passes it and the interpolation reads the knot
+    // span far out of bounds. Do the multiply wide and against the actual
+    // slice length here.
+    if (nknots < 2 || channels < 1) {
+        dst.errorfmt("color_map: at least two knots and one channel are "
+                     "needed, got {} and {}",
+                     nknots, channels);
+        return false;
+    }
+    const uint64_t needed = uint64_t(nknots) * uint64_t(channels);
+    if (needed != uint64_t(knots.size())) {
+        dst.errorfmt("color_map: {} knots of {} channels need {} values, got "
+                     "{}",
+                     nknots, channels, needed, knots.size());
+        return false;
+    }
+    if (srcchannel < -1 || srcchannel >= src.nchannels()) {
+        dst.errorfmt("color_map: source channel {} is not -1 (luminance) or "
+                     "a channel of a {}-channel image",
+                     srcchannel, src.nchannels());
+        return false;
+    }
+    return OIIO::ImageBufAlgo::color_map(dst, src, srcchannel, nknots,
+                                         channels, to_cspan(knots), roi,
+                                         nthreads);
+}
+
+bool
+imagebufalgo_color_map_named(ImageBuf& dst, const ImageBuf& src,
+                             int srcchannel, rust::Str mapname, const ROI& roi,
+                             int nthreads)
+{
+    if (src.deep()) {
+        dst.errorfmt("color_map: deep images are not supported");
+        return false;
+    }
+    if (srcchannel < -1 || srcchannel >= src.nchannels()) {
+        dst.errorfmt("color_map: source channel {} is not -1 (luminance) or "
+                     "a channel of a {}-channel image",
+                     srcchannel, src.nchannels());
+        return false;
+    }
+    return OIIO::ImageBufAlgo::color_map(dst, src, srcchannel,
+                                         OIIO::string_view(mapname.data(),
+                                                           mapname.size()),
+                                         roi, nthreads);
+}
+
+bool
 imagebufalgo_channel_sum(ImageBuf& dst, const ImageBuf& src,
                          rust::Slice<const float> weights, const ROI& roi,
                          int nthreads)

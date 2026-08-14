@@ -30,6 +30,15 @@ pub use ffi::*;
 #[allow(clippy::missing_safety_doc)]
 #[cxx::bridge(namespace = oiio)]
 mod ffi {
+    /// How many values `color_range_check` found below, above, and inside
+    /// the range.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct RangeCheckCounts {
+        low: u64,
+        high: u64,
+        in_range: u64,
+    }
+
     /// Everything `ImageBufAlgo::compare` measured, flattened for the bridge.
     #[derive(Debug, Clone, Copy, PartialEq)]
     struct CompareSummary {
@@ -392,6 +401,36 @@ mod ffi {
         pub unsafe fn imagebufalgo_minchan(
             dst: Pin<&mut ImageBuf>,
             src: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub unsafe fn imagebufalgo_color_range_check(
+            src: &ImageBuf,
+            low: &[f32],
+            high: &[f32],
+            counts: &mut RangeCheckCounts,
+            roi: &ROI,
+            nthreads: i32,
+            error: &mut String,
+        ) -> bool;
+
+        pub unsafe fn imagebufalgo_color_map(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            srcchannel: i32,
+            nknots: i32,
+            channels: i32,
+            knots: &[f32],
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub unsafe fn imagebufalgo_color_map_named(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            srcchannel: i32,
+            mapname: &str,
             roi: &ROI,
             nthreads: i32,
         ) -> bool;

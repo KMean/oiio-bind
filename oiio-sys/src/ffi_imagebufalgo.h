@@ -13,6 +13,7 @@ using ROI       = OIIO::ROI;
 using TypeDesc  = OIIO::TypeDesc;
 
 struct CompareSummary;
+struct RangeCheckCounts;
 struct PixelStatistics;
 
 // The measurements. None of these fills a destination buffer, so there is no
@@ -270,6 +271,23 @@ imagebufalgo_maxchan(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
 bool
 imagebufalgo_minchan(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
                      int nthreads);
+
+bool
+imagebufalgo_color_range_check(const ImageBuf& src,
+                               rust::Slice<const float> low,
+                               rust::Slice<const float> high,
+                               RangeCheckCounts& counts, const ROI& roi,
+                               int nthreads, rust::String& error);
+
+bool
+imagebufalgo_color_map(ImageBuf& dst, const ImageBuf& src, int srcchannel,
+                       int nknots, int channels, rust::Slice<const float> knots,
+                       const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_color_map_named(ImageBuf& dst, const ImageBuf& src,
+                             int srcchannel, rust::Str mapname, const ROI& roi,
+                             int nthreads);
 
 bool
 imagebufalgo_channel_sum(ImageBuf& dst, const ImageBuf& src,
