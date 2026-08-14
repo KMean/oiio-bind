@@ -331,25 +331,51 @@ indexing, but it is where the second read site appeared.
 ## Issue 6 — `histogram` does not clamp its channel range
 
 **Title:** `ImageBufAlgo::histogram` reads out of bounds with `ignore_empty`
-and a default-constructed ROI
+and an ROI constructed without an explicit channel range
 
-`ImageBufAlgo::histogram` validates the channel, the bin count and the range,
-but a defined `roi` is passed to `histogram_impl` verbatim — only an *undefined*
-one is replaced by `get_roi(src.spec())`. The kernel then does:
+`ImageBufAlgo::histogram` validates the channel count, the channel, the bin
+count and the range, but a *defined* `roi` is passed to `histogram_impl`
+verbatim — only an undefined one is replaced by `get_roi(src.spec())`. The
+kernel then does:
 
 ```c++
 if (ignore_empty) {
     bool allblack = true;
     for (int c = roi.chbegin; c < roi.chend; ++c)
         allblack &= (a[c] == 0.0f);
+    if (allblack)
+        continue;
+}
 ```
 
 `ROI`'s four-argument constructor defaults `chend` to 10000, so the natural
-`ROI(x0, x1, y0, y1)` makes this read 10000 channels out of every pixel.
-`ConstDataArrayProxy::operator[]` does no bounds check.
+`ROI(x0, x1, y0, y1)` makes this read 10000 channels out of every pixel. `a[c]`
+is `ImageBuf::ConstIterator::operator[]`, which builds a `ConstDataArrayProxy`
+over the pixel and forwards to *its* `operator[]`; neither bounds-checks.
 
-Every other statistic in this file clamps `roi.chend` to `src.nchannels()`;
-`histogram` appears to be the one that was missed.
+Note this is not the default-constructed `ROI()`, which is undefined and is
+precisely the case the wrapper replaces — it is any ROI built with explicit
+bounds but no channel range.
+
+Every other function in this file that iterates `[roi.chbegin, roi.chend)`
+clamps `roi.chend` first — `computePixelStats`, `isConstantColor`,
+`isMonochrome`, `color_count` and `color_range_check` to `src.nchannels()`,
+`compare` to `max(A.nchannels(), B.nchannels())`. `histogram` appears to be the
+one that was missed.
+
+`IBAprep`, which does this clamping for every function with a destination
+image, is not called here because `histogram` has no destination — so the
+clamp has to be by hand.
+
+The Python bindings forward the ROI verbatim and `ROI(int,int,int,int)`
+inherits the same `chend = 10000`, so this reproduces in one line under ASan:
+
+```python
+ImageBufAlgo.histogram(buf, 0, 256, 0.0, 1.0, True, ROI(0, w, 0, h))
+```
+
+`src/libOpenImageIO/imagebufalgo_compare.cpp` is byte-identical between
+v3.1.9.0, 3.1.12.0 and current `main`.
 
 ## Issue 7 — `computePixelHashSHA1` indexes its block results by the wrong origin
 

@@ -1,2 +1,6 @@
 target/
 .vscode/
+
+# proptest records failing inputs here; they are machine-local findings, not
+# fixtures — a real one becomes a named test in tests/soundness_test.rs.
+*.proptest-regressions

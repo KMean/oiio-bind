@@ -1,9 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc ad42cb80898590a62b4adff35e4c56ae8d33afdc2110795b61fbd4ee34553815 # shrinks to shape = Shape { width: 5, height: 3, channels: 3, format: F16, origin: [100000, 100000, 0], overscan: true, deep: false }, region = Some(Roi { x_begin: 0, x_end: 4, y_begin: 0, y_end: 4, z_begin: 0, z_end: 1, channel_begin: 0, channel_end: 2 })
-cc e1feb66fac8124a41c62be13644ee2cf0b99203632ba2d2d5c9e27d1d8f4718b # shrinks to shape = Shape { width: 9, height: 1, channels: 3, format: F32, origin: [5, 7, 0], overscan: false, deep: false }, region = None
-cc c121f50215165c99f5c5a04cb2cf489305517cb92ce81fb3b1069eb8fbc78149 # shrinks to a = Shape { width: 4, height: 1, channels: 2, format: F32, origin: [5, 7, 0], overscan: true, deep: false }, b = Shape { width: 2, height: 3, channels: 6, format: U8, origin: [100000, 100000, 0], overscan: true, deep: false }, region = Some(Roi { x_begin: 0, x_end: 8, y_begin: 0, y_end: 8, z_begin: 0, z_end: 1, channel_begin: 0, channel_end: 10000 })
