@@ -319,6 +319,74 @@ fn regrown_samples_return_their_old_values_not_zeroes() {
     assert_eq!(deep.value(0, 0, 0, 0).unwrap(), 1.0);
 }
 
+/// The per-pixel deep operations: sort, merge, opacity, and their stated
+/// requirements — a missing role channel is an error here, not OpenImageIO's
+/// silent return.
+#[test]
+fn per_pixel_deep_operations_sort_merge_and_cull() {
+    let spec = |names: &[&str]| {
+        let mut spec = ImageSpec::new(1, 1, names.len() as u32, PixelFormat::F32)
+            .unwrap()
+            .with_channel_names(names.to_vec())
+            .unwrap()
+            .as_deep();
+        if let Some(alpha) = names.iter().position(|&n| n == "A") {
+            spec = spec.with_alpha_channel(Some(alpha as u32)).unwrap();
+        }
+        if let Some(z) = names.iter().position(|&n| n == "Z") {
+            spec = spec.with_z_channel(Some(z as u32)).unwrap();
+        }
+        spec
+    };
+
+    // Two samples out of depth order.
+    let mut deep = DeepImage::new(&spec(&["A", "Z"])).unwrap();
+    deep.set_sample_count(0, 0, 2).unwrap();
+    deep.set_value(0, 0, 0, 0, 1.0).unwrap(); // opaque...
+    deep.set_value(0, 0, 1, 0, 9.0).unwrap(); // ...at depth 9
+    deep.set_value(0, 0, 0, 1, 0.5).unwrap(); // half...
+    deep.set_value(0, 0, 1, 1, 2.0).unwrap(); // ...at depth 2
+
+    deep.sort_samples(0, 0).unwrap();
+    assert_eq!(deep.value(0, 0, 1, 0).unwrap(), 2.0, "front first");
+
+    assert_eq!(
+        deep.opaque_depth(0, 0).unwrap(),
+        Some(9.0),
+        "opacity is reached at the far sample"
+    );
+
+    // Culling drops nothing here (opacity is last), then everything behind
+    // an opaque front sample once we make one.
+    deep.set_value(0, 0, 0, 0, 1.0).unwrap();
+    deep.occlusion_cull_samples(0, 0).unwrap();
+    assert_eq!(deep.sample_count(0, 0).unwrap(), 1);
+
+    // Merging a pixel from a like image combines and re-sorts.
+    let mut other = DeepImage::new(&spec(&["A", "Z"])).unwrap();
+    other.set_sample_count(0, 0, 1).unwrap();
+    other.set_value(0, 0, 0, 0, 0.25).unwrap();
+    other.set_value(0, 0, 1, 0, 1.0).unwrap();
+    deep.merge_pixel_from(0, 0, &other, 0, 0).unwrap();
+    assert!(deep.sample_count(0, 0).unwrap() >= 2);
+    assert_eq!(deep.value(0, 0, 1, 0).unwrap(), 1.0, "nearest after merge");
+
+    // The stated requirements, refused rather than silently skipped.
+    let mut no_z = DeepImage::new(&spec(&["A", "B"])).unwrap();
+    assert!(no_z.sort_samples(0, 0).is_err());
+    assert!(no_z.merge_overlap_samples(0, 0).is_err());
+    let mut no_alpha = DeepImage::new(&spec(&["R", "Z"])).unwrap();
+    assert!(no_alpha.occlusion_cull_samples(0, 0).is_err());
+
+    // A channel-layout mismatch cannot be merged.
+    let mut wide = DeepImage::new(&spec(&["R", "A", "Z"])).unwrap();
+    assert!(wide.merge_pixel_from(0, 0, &other, 0, 0).is_err());
+
+    // No samples and no opacity is None, not f32::MAX.
+    let empty = DeepImage::new(&spec(&["A", "Z"])).unwrap();
+    assert_eq!(empty.opaque_depth(0, 0).unwrap(), None);
+}
+
 #[test]
 fn a_deep_image_needs_a_deep_specification() {
     let flat = ImageSpec::new(4, 4, 3, PixelFormat::F32).unwrap();

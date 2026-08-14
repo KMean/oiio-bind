@@ -201,6 +201,150 @@ impl DeepImage {
         Ok(())
     }
 
+    /// Sort one pixel's samples by depth, front to back.
+    ///
+    /// Needs a `Z` channel, and refuses a pixel whose samples exceed
+    /// OpenImageIO's per-call stack scratch — the sort copies the whole pixel
+    /// through `alloca`, which no error path can survive.
+    pub fn sort_samples(&mut self, x: i32, y: i32) -> Result<()> {
+        let pixel = self.pixel_index(x, y)?;
+        self.require_z("sort deep samples")?;
+        self.require_stack_scratch("sort deep samples", self.samples_at(pixel))?;
+        sys::deepdata::deepdata_sort(self.inner_mut(), pixel);
+        Ok(())
+    }
+
+    /// Merge one pixel's exactly-overlapping samples, per the OpenEXR rules.
+    ///
+    /// Needs a `Z` channel; OpenImageIO would otherwise return silently
+    /// having merged nothing.
+    pub fn merge_overlap_samples(&mut self, x: i32, y: i32) -> Result<()> {
+        let pixel = self.pixel_index(x, y)?;
+        self.require_z("merge overlapping samples")?;
+        sys::deepdata::deepdata_merge_overlaps(self.inner_mut(), pixel);
+        Ok(())
+    }
+
+    /// Merge another image's pixel into one of this image's, splitting and
+    /// combining samples by depth.
+    ///
+    /// The two images must share a channel layout, both need their `Z`
+    /// channels, and the combined sample count must fit the same stack
+    /// scratch [`DeepImage::sort_samples`] documents, since the merge sorts
+    /// the combined pixel.
+    pub fn merge_pixel_from(
+        &mut self,
+        x: i32,
+        y: i32,
+        src: &DeepImage,
+        src_x: i32,
+        src_y: i32,
+    ) -> Result<()> {
+        let pixel = self.pixel_index(x, y)?;
+        let src_pixel = src.pixel_index(src_x, src_y)?;
+        self.require_z("merge deep pixels")?;
+        if src.z_channel().is_none() {
+            return Err(Error::operation(
+                "merge deep pixels",
+                "the source has no Z channel".to_owned(),
+            ));
+        }
+        if !sys::deepdata::deepdata_same_channeltypes(self.inner(), src.inner()) {
+            return Err(Error::operation(
+                "merge deep pixels",
+                "the images disagree on channel types; merging reads the source's \
+                 samples with this image's layout"
+                    .to_owned(),
+            ));
+        }
+        // The merge concatenates both pixels, splits at every boundary, and
+        // sorts — so the scratch requirement covers the combined pixel with
+        // room for the splits.
+        let combined = self
+            .samples_at(pixel)
+            .saturating_add(src.samples_at(src_pixel))
+            .saturating_mul(2);
+        self.require_stack_scratch("merge deep pixels", combined)?;
+        // The 3.1 series takes the source pixel as an int (widened to
+        // int64 upstream only after 3.1); the crate's pixel cap keeps every
+        // index within it.
+        let src_pixel = i32::try_from(src_pixel)
+            .map_err(|_| Error::InvalidRoi("source pixel index exceeds i32::MAX".to_owned()))?;
+        sys::deepdata::deepdata_merge_deep_pixels(self.inner_mut(), pixel, src.inner(), src_pixel);
+        Ok(())
+    }
+
+    /// The depth at which one pixel becomes fully opaque, or `None` when it
+    /// never does — no samples, no depth channel, or alpha never reaching
+    /// one. OpenImageIO spells that absence `f32::MAX`.
+    pub fn opaque_depth(&self, x: i32, y: i32) -> Result<Option<f32>> {
+        let pixel = self.pixel_index(x, y)?;
+        let depth = sys::deepdata::deepdata_opaque_z(self.inner(), pixel);
+        Ok((depth != f32::MAX).then_some(depth))
+    }
+
+    /// Drop every sample behind the first fully opaque one in a pixel.
+    ///
+    /// Needs an alpha channel; OpenImageIO would otherwise return silently
+    /// having culled nothing.
+    pub fn occlusion_cull_samples(&mut self, x: i32, y: i32) -> Result<()> {
+        let pixel = self.pixel_index(x, y)?;
+        if sys::deepdata::deepdata_a_channel(self.inner()) < 0 {
+            return Err(Error::operation(
+                "occlusion cull",
+                "the image has no alpha channel to test opacity with".to_owned(),
+            ));
+        }
+        sys::deepdata::deepdata_occlusion_cull(self.inner_mut(), pixel);
+        Ok(())
+    }
+
+    /// Split every sample of one pixel that spans `depth` into two, with the
+    /// colour redistributed per the OpenEXR deep-merging rules. Returns
+    /// whether anything was split; an image without both `Z` and `Zback`
+    /// channels has no sample extents to split, and reports `false`.
+    pub fn split_samples(&mut self, x: i32, y: i32, depth: f32) -> Result<bool> {
+        let pixel = self.pixel_index(x, y)?;
+        Ok(sys::deepdata::deepdata_split(
+            self.inner_mut(),
+            pixel,
+            depth,
+        ))
+    }
+
+    fn samples_at(&self, pixel: i64) -> u64 {
+        sys::deepdata::deepdata_samples(self.inner(), pixel).max(0) as u64
+    }
+
+    fn require_z(&self, operation: &'static str) -> Result<()> {
+        if self.z_channel().is_none() {
+            return Err(Error::operation(
+                operation,
+                "the image has no Z channel".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// The per-pixel operations copy the pixel through OpenImageIO's stack
+    /// frame with `alloca`, sized by samples times sample bytes; past the
+    /// stack there is no error, only a crash, so the bound lives here.
+    fn require_stack_scratch(&self, operation: &'static str, samples: u64) -> Result<()> {
+        let sample_bytes = sys::deepdata::deepdata_samplesize(self.inner()).max(1) as u64;
+        let bytes = samples.saturating_mul(sample_bytes.saturating_add(4));
+        const SCRATCH_LIMIT: u64 = 256 * 1024;
+        if bytes > SCRATCH_LIMIT {
+            return Err(Error::operation(
+                operation,
+                format!(
+                    "this pixel's samples need {bytes} bytes of per-call stack \
+                     scratch, over the {SCRATCH_LIMIT}-byte bound"
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     pub(crate) fn native(&self) -> &sys::deepdata::DeepData {
         self.inner()
     }

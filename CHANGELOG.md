@@ -109,6 +109,14 @@ before the fork, but nothing was ever published under it, so starting both at
 - Tests against OpenImageIO's and OpenEXR's own image corpora, opt-in through
   `OIIO_BIND_TEST_IMAGES` and `OIIO_BIND_TEST_EXR_IMAGES`, including
   OpenEXR's `Damaged` directory of reader crash cases.
+- `DeepImage` per-pixel operations from the binding gap map: `sort_samples`,
+  `merge_overlap_samples`, `merge_pixel_from`, `split_samples`,
+  `opaque_depth` (an `Option`, where OpenImageIO spells absence `f32::MAX`)
+  and `occlusion_cull_samples`. A missing `Z` or alpha channel is an error
+  rather than upstream's silent return; merging requires matching channel
+  layouts; and the sort-based operations bound the pixel's samples against
+  the stack scratch OpenImageIO `alloca`s them into, which no error path
+  survives overflowing.
 - `ImageBuf` point access from the binding gap map: `channel_at`,
   `pixel_at_into`, `set_pixel_at` (a write outside the data window is an
   error, where OpenImageIO skips it silently), and the four interpolators,
