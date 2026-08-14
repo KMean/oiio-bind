@@ -210,12 +210,21 @@ deepdata_capacity(const DeepData& deepdata, int64_t pixel)
 void
 deepdata_insert_samples(DeepData& deepdata, int64_t pixel, int samplepos, int n)
 {
+    // Unlike samples()/capacity()/data_ptr()/deep_value(), which range-check
+    // the pixel index and return 0/NULL, insert_samples and erase_samples index
+    // m_nsamples[pixel] and m_capacity[pixel] with no check of their own, so an
+    // out-of-range pixel is a heap read and write past those vectors. Bound it
+    // here, which keeps these two callable safely like their guarded siblings.
+    if (pixel < 0 || pixel >= deepdata.pixels())
+        return;
     deepdata.insert_samples(pixel, samplepos, n);
 }
 
 void
 deepdata_erase_samples(DeepData& deepdata, int64_t pixel, int samplepos, int n)
 {
+    if (pixel < 0 || pixel >= deepdata.pixels())
+        return;
     deepdata.erase_samples(pixel, samplepos, n);
 }
 
