@@ -447,6 +447,14 @@ mod ffi {
             check_range: bool,
         ) -> i32;
 
+        pub fn imagebuf_merge_metadata(
+            imagebuf: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            override_existing: bool,
+            pattern: &str,
+            error: &mut String,
+        ) -> bool;
+
         pub fn imagebuf_threads(imagebuf: &ImageBuf) -> i32;
 
         pub fn imagebuf_set_threads(imagebuf: Pin<&mut ImageBuf>, count: i32);

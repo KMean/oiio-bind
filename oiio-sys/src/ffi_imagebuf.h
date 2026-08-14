@@ -342,6 +342,11 @@ int
 imagebuf_pixelindex(const ImageBuf& imagebuf, int x, int y, int z,
                     bool check_range);
 
+bool
+imagebuf_merge_metadata(ImageBuf& imagebuf, const ImageBuf& src,
+                        bool override_existing, rust::Str pattern,
+                        rust::String& error);
+
 int
 imagebuf_threads(const ImageBuf& imagebuf);
 

@@ -178,6 +178,53 @@ fn writes_in_a_chosen_pixel_format() {
 }
 
 #[test]
+fn metadata_setters_move_windows_and_merge_attributes() {
+    let spec = ImageSpec::new(4, 4, 3, PixelFormat::F32).unwrap();
+    let mut buffer = ImageBuf::new(&spec).unwrap();
+
+    // Move the data window; the display window follows the setter.
+    buffer.set_origin([10, 20, 0]);
+    assert_eq!(buffer.spec().unwrap().origin(), [10, 20, 0]);
+
+    buffer.set_full_window([0, 0, 0], [64, 32, 1]).unwrap();
+    assert_eq!(buffer.spec().unwrap().full_dimensions(), [64, 32, 1]);
+
+    // A zero-sized display window is refused before OpenImageIO stores it.
+    assert!(buffer.set_full_window([0, 0, 0], [0, 32, 1]).is_err());
+
+    let display = oiio::Roi::new(0..128, 0..64, 0..1, 0..3).unwrap();
+    buffer.set_display_window(display);
+    assert_eq!(buffer.spec().unwrap().full_dimensions(), [128, 64, 1]);
+
+    buffer.set_orientation(6).unwrap();
+    assert!(buffer.set_orientation(9).is_err(), "EXIF stops at 8");
+
+    // Metadata copies and merges between buffers.
+    let mut tagged = ImageBuf::new(&spec).unwrap();
+    let source = ImageBuf::new(
+        &spec
+            .clone()
+            .with_attribute("Software", "oiio-bind")
+            .with_attribute("Artist", "Kim"),
+    )
+    .unwrap();
+    tagged.copy_metadata(&source);
+    assert!(tagged.spec().unwrap().attribute("Software").is_some());
+
+    let mut merged = ImageBuf::new(&spec).unwrap();
+    merged.merge_metadata(&source, false, "^Artist$").unwrap();
+    let spec_after = merged.spec().unwrap();
+    assert!(spec_after.attribute("Artist").is_some());
+    assert!(
+        spec_after.attribute("Software").is_none(),
+        "the pattern selected only Artist"
+    );
+
+    // An invalid pattern is an error, not a regex_error abort.
+    assert!(merged.merge_metadata(&source, false, "[unclosed").is_err());
+}
+
+#[test]
 fn buffer_state_reports_subimage_mip_and_threads() {
     let mut buffer = ImageBuf::new(&ImageSpec::new(4, 4, 3, PixelFormat::F32).unwrap()).unwrap();
     assert_eq!(buffer.subimage(), 0, "a spec-built buffer is subimage 0");

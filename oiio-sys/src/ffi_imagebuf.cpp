@@ -739,6 +739,29 @@ imagebuf_pixelindex(const ImageBuf& imagebuf, int x, int y, int z,
     return imagebuf.pixelindex(x, y, z, check_range);
 }
 
+bool
+imagebuf_merge_metadata(ImageBuf& imagebuf, const ImageBuf& src,
+                        bool override_existing, rust::Str pattern,
+                        rust::String& error)
+{
+    // The pattern is handed to std::regex, whose constructor throws
+    // regex_error on an invalid expression — std::terminate through this
+    // noexcept boundary. Catch and report instead.
+    error = rust::String();
+    try {
+        imagebuf.merge_metadata(src, override_existing,
+                                OIIO::string_view(pattern.data(),
+                                                  pattern.size()));
+        return true;
+    } catch (const std::exception& exception) {
+        const std::string recorded = exception.what();
+        error = rust::String::lossy(
+            recorded.empty() ? "the metadata pattern is not a valid regex"
+                             : recorded.c_str());
+        return false;
+    }
+}
+
 int
 imagebuf_threads(const ImageBuf& imagebuf)
 {

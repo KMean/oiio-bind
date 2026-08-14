@@ -109,6 +109,13 @@ before the fork, but nothing was ever published under it, so starting both at
 - Tests against OpenImageIO's and OpenEXR's own image corpora, opt-in through
   `OIIO_BIND_TEST_IMAGES` and `OIIO_BIND_TEST_EXR_IMAGES`, including
   OpenEXR's `Damaged` directory of reader crash cases.
+- `ImageBuf` metadata mutation from the binding gap map: `set_origin`,
+  `set_full_window` (validated positive and overflow-checked before
+  OpenImageIO stores a window that would later divide the wrap modes and
+  NDC mappings by zero), `set_display_window`, `set_orientation` (EXIF's
+  1..=8 enforced), `copy_metadata`, and `merge_metadata` — whose selection
+  pattern reaches `std::regex`, so an invalid pattern is an error here
+  rather than a `regex_error` ending the process.
 - `oiio::algo` quality control and texture preparation from the binding gap
   map: `color_range_check` returning its three counters as a struct (and
   refusing the channel range OpenImageIO would answer with zeroes under a

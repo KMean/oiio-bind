@@ -627,6 +627,97 @@ impl ImageBuf {
         Ok(())
     }
 
+    /// Move the data window's origin, carrying the pixels with it.
+    ///
+    /// Exclusive because OpenImageIO documents spec mutation as not
+    /// thread-safe, as are the other metadata setters here.
+    pub fn set_origin(&mut self, origin: [i32; 3]) {
+        sys::imagebuf::imagebuf_set_origin(self.inner_mut(), origin[0], origin[1], origin[2]);
+    }
+
+    /// Set the display (full) window from an origin and a size.
+    ///
+    /// The size must be positive on every axis: OpenImageIO stores whatever
+    /// it is given, and a zero or negative display window later divides the
+    /// periodic and mirror wrap modes and the NDC mappings by it.
+    pub fn set_full_window(&mut self, origin: [i32; 3], size: [u32; 3]) -> Result<()> {
+        let mut end = [0_i32; 3];
+        for axis in 0..3 {
+            if size[axis] == 0 {
+                return Err(Error::InvalidImageSpec(
+                    "the display window needs a positive size on every axis".to_owned(),
+                ));
+            }
+            let extent = i32::try_from(size[axis])
+                .map_err(|_| Error::InvalidImageSpec("display window too large".to_owned()))?;
+            end[axis] = origin[axis].checked_add(extent).ok_or_else(|| {
+                Error::InvalidImageSpec("the display window overflows i32".to_owned())
+            })?;
+        }
+        sys::imagebuf::imagebuf_set_full(
+            self.inner_mut(),
+            origin[0],
+            end[0],
+            origin[1],
+            end[1],
+            origin[2],
+            end[2],
+        );
+        Ok(())
+    }
+
+    /// Set the display window from a region.
+    ///
+    /// The crate's [`Roi`] is always defined and non-empty, which is what
+    /// keeps OpenImageIO's undefined-region arithmetic out of reach here.
+    pub fn set_display_window(&mut self, roi: Roi) {
+        let sys_roi = roi.to_sys();
+        sys::imagebuf::imagebuf_set_roi_full(self.inner_mut(), &sys_roi);
+    }
+
+    /// Record the EXIF-style orientation, 1 through 8.
+    pub fn set_orientation(&mut self, orientation: u32) -> Result<()> {
+        if !(1..=8).contains(&orientation) {
+            return Err(Error::InvalidImageSpec(format!(
+                "orientation is EXIF's 1..=8, got {orientation}"
+            )));
+        }
+        sys::imagebuf::imagebuf_set_orientation(self.inner_mut(), orientation as i32);
+        Ok(())
+    }
+
+    /// Replace this buffer's metadata with a copy of another's, keeping the
+    /// pixels and the geometry.
+    pub fn copy_metadata(&mut self, src: &ImageBuf) {
+        sys::imagebuf::imagebuf_copy_metadata(self.inner_mut(), src.inner());
+    }
+
+    /// Merge another buffer's metadata into this one's.
+    ///
+    /// With `override_existing`, attributes both images carry take the other
+    /// image's value; otherwise existing attributes win. A non-empty
+    /// `pattern` is a regular expression selecting which attribute names are
+    /// merged, and an invalid pattern is an error — OpenImageIO would
+    /// otherwise let the regex constructor take the process down.
+    pub fn merge_metadata(
+        &mut self,
+        src: &ImageBuf,
+        override_existing: bool,
+        pattern: &str,
+    ) -> Result<()> {
+        let mut error = String::new();
+        if !sys::imagebuf::imagebuf_merge_metadata(
+            self.inner_mut(),
+            src.inner(),
+            override_existing,
+            pattern,
+            &mut error,
+        ) {
+            return Err(Error::operation("merge metadata", error));
+        }
+        Ok(())
+    }
+
     /// Copy this buffer, reporting failure instead of handing back a copy
     /// that cannot serve pixels.
     ///
