@@ -897,7 +897,14 @@ imageinput_geterror(ImageInput& imageinput)
 void
 imageinput_seterror(ImageInput& imageinput, const rust::Str message)
 {
-    imageinput.errorfmt(message.data());
+    // Two things are wrong with passing message.data() here. A rust::Str is a
+    // pointer and a length over a Rust &str and carries no NUL, so errorfmt
+    // scans past the end of any string that is a prefix of a larger one. And
+    // errorfmt with no arguments is still a runtime format call, so a "{}"
+    // anywhere in the caller's text throws fmt::format_error out of a shim
+    // that cxx declares noexcept, which is std::terminate. Passing the text as
+    // an argument to a fixed format string settles both.
+    imageinput.errorfmt("{}", to_string_view(message));
 }
 
 void
@@ -1173,7 +1180,8 @@ imageoutput_geterror(const ImageOutput& imageoutput, bool clear)
 void
 imageoutput_seterror(ImageOutput& imageoutput, const rust::Str message)
 {
-    imageoutput.errorfmt(message.data());
+    // See imageinput_seterror.
+    imageoutput.errorfmt("{}", to_string_view(message));
 }
 
 void
@@ -1471,7 +1479,9 @@ wrap_mirror(int& coord, int origin, int width)
 void
 debug(const rust::Str message)
 {
-    OIIO::debug(message.data());
+    // See imageinput_seterror: OIIO::debug takes a string_view but the
+    // const char* conversion would scan for a NUL that is not there.
+    OIIO::debug(to_string_view(message));
 }
 #pragma endregion
 }  // namespace oiio

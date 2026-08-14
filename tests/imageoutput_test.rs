@@ -538,3 +538,78 @@ fn refuses_to_write_a_deep_specification_through_the_contiguous_api() {
     output.write_image(&f32_ramp(16)).unwrap();
     output.close().unwrap();
 }
+
+/// Scanlines out of order used to read megabytes before the caller's buffer.
+///
+/// OpenEXR's scanline writer computes a "virtual framebuffer" base by biasing
+/// the caller's pointer backwards by the row it was asked for, then hands it to
+/// `Imf::OutputFile::writePixels`, which writes at its own cursor starting at
+/// the top of the data window and only ever advancing. Ask for rows 512..1024
+/// first and it reads at `data - 512 * scanline_bytes`. OpenImageIO publishes
+/// the difference through `supports("random_access")`, which is true only for
+/// tiled EXRs with a random line order, and `write_scanlines` never asked.
+#[test]
+fn scanlines_must_be_written_in_order() {
+    let scratch = ScratchDir::new("scanorder");
+    let path = scratch.file("half.exr");
+
+    let spec = ImageSpec::new(256, 128, 4, PixelFormat::F32).unwrap();
+    let mut output = ImageOutput::create(&path, &spec).unwrap();
+    assert!(!output.supports("random_access"));
+
+    let rows = vec![0.5_f32; 256 * 64 * 4];
+
+    // Starting half way down is exactly the shape that read before the buffer.
+    let error = output
+        .write_scanlines(64..128, &rows)
+        .expect_err("a scanline EXR cannot start half way down");
+    assert!(
+        matches!(error, Error::InvalidRegion { axis: "y", .. }),
+        "{error}"
+    );
+
+    // In order works, and the cursor follows.
+    output.write_scanlines(0..64, &rows).unwrap();
+    assert!(
+        output.write_scanlines(0..64, &rows).is_err(),
+        "writing the same rows twice reads one scanline past the end"
+    );
+    output.write_scanlines(64..128, &rows).unwrap();
+    output.close().unwrap();
+
+    let (_, read): (ImageSpec, Vec<f32>) = read_back(&path).unwrap();
+    assert_eq!(read.len(), 256 * 128 * 4);
+    assert!(read.iter().all(|value| (*value - 0.5).abs() < 1e-6));
+}
+
+/// `spec()` is documented as the specification the file is open with, and used
+/// to return a clone of the caller's. `ImageOutput::check_open` rewrites it: it
+/// zeroes the origin for any format that does not report `origin`, fills the
+/// display window in from the data window, and raises a zero depth to one. A
+/// caller who set an origin the format cannot carry could not tell.
+#[test]
+fn the_reported_spec_is_the_one_the_file_was_opened_with() {
+    let scratch = ScratchDir::new("openspec");
+
+    // EXR carries an arbitrary origin, so it comes back unchanged.
+    let spec = ImageSpec::new(6, 4, 3, PixelFormat::F16)
+        .unwrap()
+        .with_origin([12, -7, 0])
+        .with_full_window([0, 0, 0], [32, 32, 1])
+        .unwrap();
+    let exr = ImageOutput::create(&scratch.file("kept.exr"), &spec).unwrap();
+    assert!(exr.supports("origin"));
+    assert_eq!(exr.spec().origin(), [12, -7, 0]);
+
+    // PNG does not, so the origin is gone and saying so is the point.
+    let png_spec = ImageSpec::new(6, 4, 3, PixelFormat::U8)
+        .unwrap()
+        .with_origin([12, 7, 0]);
+    let png = ImageOutput::create(&scratch.file("dropped.png"), &png_spec).unwrap();
+    assert!(!png.supports("origin"));
+    assert_eq!(
+        png.spec().origin(),
+        [0, 0, 0],
+        "the writer dropped the origin and spec() should show it"
+    );
+}

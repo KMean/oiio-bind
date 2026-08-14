@@ -436,8 +436,7 @@ fn error_message_with_invalid_utf8_is_an_error_not_an_abort() {
     bytes.extend_from_slice(b"\xff\xfe\xfd\0chlist\0");
 
     let error = ImageInput::from_memory("invalid-utf8.exr", bytes)
-        .err()
-        .expect("a 19-byte truncated header is not a readable image");
+        .expect_err("a 19-byte truncated header is not a readable image");
 
     // The point is that we got here at all. That the replacement character
     // survives into the message confirms the lossy path ran rather than the

@@ -429,12 +429,32 @@ pub struct ImageOutput {
     inner: cxx::UniquePtr<sys::imageio::ImageOutput>,
     path: PathBuf,
     spec: ImageSpec,
+    /// The next row [`ImageOutput::write_scanlines`] will accept, for formats
+    /// that will only take them in order. See that method.
+    next_scanline: i32,
     /// Present only for in-memory writers. Declared last so it drops after
     /// the writer that fills it.
     proxy: Option<cxx::UniquePtr<sys::filesystem::IOProxy>>,
 }
 
 impl ImageOutput {
+    /// Record the specification the file was actually opened with.
+    ///
+    /// Not the caller's: `ImageOutput::check_open` rewrites it during open. It
+    /// zeroes the origin for any format that does not report `origin`, fills
+    /// the display window in from the data window, raises a zero depth to one,
+    /// and drops per-channel formats that match the overall one. A caller who
+    /// set an origin a PNG cannot carry should be able to see that it is gone,
+    /// and the range checks here have to agree with the ones the shim makes
+    /// against this same spec.
+    fn adopt_open_spec(&mut self, fallback: &ImageSpec) {
+        self.spec = ImageSpec::from_sys(sys::imageio::imageoutput_spec(self.inner()))
+            .unwrap_or_else(|_| fallback.clone());
+        // A fresh image, so the scanline cursor goes back to the top of its
+        // data window.
+        self.next_scanline = self.spec.origin()[1];
+    }
+
     /// Create and open an image file described by `spec`.
     ///
     /// The output plugin is chosen from the file name's extension. The file is
@@ -454,7 +474,7 @@ impl ImageOutput {
         })?;
 
         output.path = image_path.to_path_buf();
-        output.spec = spec.clone();
+        output.adopt_open_spec(spec);
         Ok(output)
     }
 
@@ -501,7 +521,7 @@ impl ImageOutput {
         }
 
         output.path = image_path.to_path_buf();
-        output.spec = first.clone();
+        output.adopt_open_spec(first);
         Ok(output)
     }
 
@@ -539,6 +559,7 @@ impl ImageOutput {
             inner,
             path: PathBuf::from(name_hint),
             spec: spec.clone(),
+            next_scanline: spec.origin()[1],
             proxy: Some(proxy),
         };
         if !output.supports("ioproxy") {
@@ -559,6 +580,7 @@ impl ImageOutput {
             path: PathBuf::from(name_hint),
             message,
         })?;
+        output.adopt_open_spec(spec);
         Ok(output)
     }
 
@@ -636,8 +658,29 @@ impl ImageOutput {
     ///
     /// The buffer length must exactly equal
     /// `width * rows * channels`, where `rows` is the length of `y`.
+    ///
+    /// Unless the format reports the `random_access` feature, rows must be
+    /// written in order: the first call starts at the top of the data window
+    /// and each one continues where the last ended. This is not a limitation of
+    /// this crate but of the formats. OpenEXR's scanline writer computes a
+    /// "virtual framebuffer" base by biasing the caller's pointer backwards by
+    /// the requested row, then hands it to a writer that keeps its own cursor
+    /// starting at the top of the data window and only ever advancing. Ask it
+    /// to write rows 512..1024 first and it reads 512 scanlines *before* the
+    /// buffer. `supports("random_access")` is how OpenImageIO publishes the
+    /// difference, and it is true only for tiled EXRs with a random line
+    /// order.
     pub fn write_scanlines<T: Pixel>(&mut self, y: Range<i32>, pixels: &[T]) -> Result<()> {
         self.reject_deep()?;
+        if !self.supports("random_access") && y.start != self.next_scanline {
+            return Err(Error::InvalidRegion {
+                axis: "y",
+                message: format!(
+                    "this format writes scanlines in order: the next row is {}, not {}",
+                    self.next_scanline, y.start
+                ),
+            });
+        }
         if self.spec.dimensions()[2] != 1 {
             return Err(Error::InvalidImageSpec(
                 "scanline writes require a two-dimensional image".to_owned(),
@@ -657,7 +700,9 @@ impl ImageOutput {
                 pixel::as_bytes(pixels),
             )
         };
-        self.check("write scanlines", succeeded)
+        self.check("write scanlines", succeeded)?;
+        self.next_scanline = y.end;
+        Ok(())
     }
 
     /// Write a rectangular block of whole tiles.
@@ -796,6 +841,7 @@ impl ImageOutput {
             inner,
             path: image_path.to_path_buf(),
             spec: ImageSpec::new(1, 1, 1, crate::PixelFormat::U8)?,
+            next_scanline: 0,
             proxy: None,
         })
     }
@@ -827,7 +873,7 @@ impl ImageOutput {
         let opened = Self::open_native(self.inner_mut(), &path, &native_spec, mode);
         match opened {
             Ok(()) => {
-                self.spec = spec.clone();
+                self.adopt_open_spec(spec);
                 Ok(())
             }
             Err(message) if message.is_empty() => Err(self.take_error(operation)),
