@@ -6,7 +6,13 @@ version differences, and ownership details stay inside `oiio-sys`.
 
 The current compatibility baseline is OpenImageIO 3.1.4 or newer 3.1.x. Its patch releases
 are expected to retain ABI compatibility, while support for a new OIIO minor
-line is established and tested deliberately.
+line is established and tested deliberately. The baseline is compile-checked,
+not only declared: the `oiio-sys` shims — the crate's entire OIIO-facing
+surface — compile without error or warning against the v3.1.4.0-beta headers
+verbatim (checked 2026-08-14, MSVC, compile-only; the builds that also link
+and run use 3.1.12 locally and 3.1.14 in CI, which is where the one known
+behavioural difference between patch releases was found — see `mad` in
+`contrib/upstream-issues.md`).
 
 ## 0. Modern OIIO baseline
 
