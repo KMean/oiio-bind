@@ -579,7 +579,10 @@ pub struct TextureSystem {
 // `ImageCacheFile::invalidate`, which clears the file's subimage and dimension
 // pools, while `TextureSystemImpl::texture` is holding a `const SubimageInfo&`
 // and a `const ImageSpec&` straight into that vector; the two paths do not
-// share a lock. So invalidation and the attribute setters take `&mut self`, and
+// share a lock. Statistics gathering is on the same bad footing: `getstats`
+// merges per-thread counters that lookups update with no lock, and its
+// embedded cache report walks the same subimage vectors a first open resizes.
+// So invalidation, the attribute setters and `stats` take `&mut self`, and
 // `Sync` is only ever claiming the lookup paths. A caller who wants both across
 // threads writes `Arc<RwLock<TextureSystem>>`, which is exactly the contract.
 unsafe impl Send for TextureSystem {}
@@ -729,7 +732,14 @@ impl TextureSystem {
     }
 
     /// Statistics suitable for diagnostics.
-    pub fn stats(&self) -> String {
+    ///
+    /// Exclusive for the reason invalidation is: OpenImageIO gathers these
+    /// with no lock. The merge reads per-thread counters that concurrent
+    /// lookups update, and the embedded cache report walks every file's
+    /// subimage vector while a first open on another thread may be resizing
+    /// it — the same free-under-read invalidation can cause, reached by a
+    /// read-only path.
+    pub fn stats(&mut self) -> String {
         let inner = self.inner.clone();
         let Some(system) = inner.as_ref() else {
             return String::new();

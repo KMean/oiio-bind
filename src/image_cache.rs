@@ -18,11 +18,14 @@ pub struct ImageCache {
 // for thread-safe non-const C++ methods; no Rust reference to the C++ object
 // escapes a call.
 //
-// Invalidation is the exception and is not thread-safe: `invalidate_all` clears
-// each file's subimage and dimension pools while another thread may be reading
-// through them. That is why `invalidate` and `invalidate_all` take `&mut self`.
-// A `&mut` borrow cannot be shared across threads, so `Sync` is only ever
-// claiming the read paths, which is what OpenImageIO actually guarantees. It is
+// Invalidation and statistics are the exceptions and are not thread-safe:
+// `invalidate_all` clears each file's subimage and dimension pools while
+// another thread may be reading through them, and `getstats`/`reset_stats`
+// walk those same pools and the per-thread counters with no lock at all. That
+// is why `invalidate`, `invalidate_all`, `stats` and `reset_stats` take
+// `&mut self`. A `&mut` borrow cannot be shared across threads, so `Sync` is
+// only ever claiming the read paths, which is what OpenImageIO actually
+// guarantees. It is
 // also why the builder does not offer OpenImageIO's process-wide shared cache:
 // two Rust values over one C++ cache would let `&mut` on one alias `&` on the
 // other, and every borrow-based guarantee in this module is expressed against a
@@ -321,12 +324,22 @@ impl ImageCache {
     }
 
     /// Return basic cache statistics suitable for diagnostics.
-    pub fn stats(&self) -> String {
+    ///
+    /// Exclusive for the same reason as [`ImageCache::invalidate`]:
+    /// OpenImageIO's statistics gathering is the other operation it does not
+    /// synchronize. It walks every file's subimage vector with no lock — a
+    /// vector a concurrent first open on another thread is resizing — and it
+    /// merges per-thread counters their owner threads update with no lock, so
+    /// reading statistics during reads is a data race, not a snapshot.
+    pub fn stats(&mut self) -> String {
         self.with_cache(|cache| sys::imagecache::imagecache_getstats(cache, 1))
     }
 
     /// Reset accumulated cache statistics.
-    pub fn reset_stats(&self) {
+    ///
+    /// Exclusive for the reasons given on [`ImageCache::stats`] — this one
+    /// writes into every thread's live counters.
+    pub fn reset_stats(&mut self) {
         self.with_cache(sys::imagecache::imagecache_reset_stats);
     }
 
