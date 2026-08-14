@@ -178,6 +178,19 @@ fn writes_in_a_chosen_pixel_format() {
 }
 
 #[test]
+fn buffer_state_reports_subimage_mip_and_threads() {
+    let mut buffer = ImageBuf::new(&ImageSpec::new(4, 4, 3, PixelFormat::F32).unwrap()).unwrap();
+    assert_eq!(buffer.subimage(), 0, "a spec-built buffer is subimage 0");
+    assert_eq!(buffer.mip_level(), 0);
+
+    assert_eq!(buffer.threads(), 0, "zero means the global default");
+    buffer.set_threads(2).unwrap();
+    assert_eq!(buffer.threads(), 2);
+    buffer.set_threads(0).unwrap();
+    assert_eq!(buffer.threads(), 0);
+}
+
+#[test]
 fn cloning_copies_the_pixels() {
     let spec = ImageSpec::new(4, 4, 3, PixelFormat::F32).unwrap();
     let mut original = ImageBuf::new(&spec).unwrap();

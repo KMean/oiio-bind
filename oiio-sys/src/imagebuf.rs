@@ -447,9 +447,9 @@ mod ffi {
             check_range: bool,
         ) -> i32;
 
-        pub fn imagebuf_set_threads(imagebuf: &ImageBuf, n: i32);
-
         pub fn imagebuf_threads(imagebuf: &ImageBuf) -> i32;
+
+        pub fn imagebuf_set_threads(imagebuf: Pin<&mut ImageBuf>, count: i32);
 
         pub fn imagebuf_error(imagebuf: &ImageBuf, message: &str);
 

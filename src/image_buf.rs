@@ -598,6 +598,35 @@ impl ImageBuf {
         }
     }
 
+    /// Which subimage this buffer currently represents.
+    ///
+    /// Meaningful for a buffer attached to a file; a buffer built from a
+    /// specification reports zero, and several operations that rewrite the
+    /// buffer reset it to zero.
+    pub fn subimage(&self) -> u32 {
+        sys::imagebuf::imagebuf_subimage(self.inner()).max(0) as u32
+    }
+
+    /// Which mip level this buffer currently represents.
+    pub fn mip_level(&self) -> u32 {
+        sys::imagebuf::imagebuf_miplevel(self.inner()).max(0) as u32
+    }
+
+    /// How many threads operations on this buffer may use; zero means
+    /// OpenImageIO's global default.
+    pub fn threads(&self) -> u32 {
+        sys::imagebuf::imagebuf_threads(self.inner()).max(0) as u32
+    }
+
+    /// Set the thread count for operations on this buffer; zero restores
+    /// OpenImageIO's global default.
+    pub fn set_threads(&mut self, count: u32) -> Result<()> {
+        let count = i32::try_from(count)
+            .map_err(|_| Error::InvalidImageSpec("thread count exceeds i32::MAX".to_owned()))?;
+        sys::imagebuf::imagebuf_set_threads(self.inner_mut(), count);
+        Ok(())
+    }
+
     /// Copy this buffer, reporting failure instead of handing back a copy
     /// that cannot serve pixels.
     ///

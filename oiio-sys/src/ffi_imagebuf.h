@@ -342,11 +342,11 @@ int
 imagebuf_pixelindex(const ImageBuf& imagebuf, int x, int y, int z,
                     bool check_range);
 
-void
-imagebuf_set_threads(const ImageBuf& imagebuf, int n);
-
 int
 imagebuf_threads(const ImageBuf& imagebuf);
+
+void
+imagebuf_set_threads(ImageBuf& imagebuf, int count);
 
 void
 imagebuf_error(const ImageBuf& imagebuf, rust::Str message);

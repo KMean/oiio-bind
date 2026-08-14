@@ -739,16 +739,20 @@ imagebuf_pixelindex(const ImageBuf& imagebuf, int x, int y, int z,
     return imagebuf.pixelindex(x, y, z, check_range);
 }
 
-void
-imagebuf_set_threads(const ImageBuf& imagebuf, int n)
-{
-    imagebuf.threads(n);
-}
-
 int
 imagebuf_threads(const ImageBuf& imagebuf)
 {
     return imagebuf.threads();
+}
+
+// OpenImageIO declares threads(int) const over a plain mutable int, so the
+// setter compiles against a const reference too; the bridge requires the
+// exclusive borrow instead, which is what makes the unsynchronized int sound
+// from Rust.
+void
+imagebuf_set_threads(ImageBuf& imagebuf, int count)
+{
+    imagebuf.threads(count);
 }
 
 void
