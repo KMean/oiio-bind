@@ -1,6 +1,6 @@
 # Draft reports for OpenImageIO
 
-Eleven issues from building Rust bindings against OpenImageIO 3.1/3.2, plus
+Twelve issues from building Rust bindings against OpenImageIO 3.1/3.2, plus
 one open observation not yet settled enough to report.
 
 Issues 1 and 2 have self-contained reproductions, so a maintainer running one
@@ -15,8 +15,8 @@ non-zero when two overloads of the same call disagree, given the same
 they understate the problem; issue 1 carries a separate table of measured
 pixel values.
 
-Issues 4–9 and 11 were found by reading the source while binding it, and are
-stated as code review rather than as runnable reproductions. Where a
+Issues 4–9, 11 and 12 were found by reading the source while binding it, and
+are stated as code review rather than as runnable reproductions. Where a
 reproduction is cheap it is noted in the issue.
 
 **Issues or pull requests.** The repository's `.github/ISSUE_TEMPLATE/bug_report.md`
@@ -828,6 +828,66 @@ Both function bodies are identical at 3.1.9.0 and 3.1.12.0 (`:591`/`:617`),
 Found while binding `DeepData` for Rust. The binding's shims bound `pixel`
 themselves, and its `DeepImage` checks coordinates before computing an index,
 so it cannot reach either method out of range.
+
+---
+
+## Issue 12 — `getstats`, `mergestats` and `reset_stats` race with concurrent cache use
+
+**Title:** `ImageCache statistics calls are not synchronized against concurrent
+lookups, contradicting the documented thread-safety`
+
+`imagecache.rst:29` states: "The ImageCache is completely thread-safe; if
+multiple threads are ..." — statistics gathering does not meet that claim.
+Line numbers below are identical on `main` and in 3.1.16.0
+(`src/libtexture/imagecache.cpp` unless noted).
+
+Three separate races, all reachable by calling a statistics function on one
+thread while another thread reads pixels through the same cache:
+
+1. **A use-after-free read in the file walk.** `ImageCacheImpl::getstats`
+   (`:2126`) iterates `m_files` and, per file, reads `file->timesopened()`,
+   `tilesread()`, `bytesread()`, `iotime()` and `file->subimageinfo(s)` with
+   no per-file lock. `find_file` inserts a new `ImageCacheFile` into
+   `m_files` *before* opening it ("No such entry in the file cache. Add it,
+   but don't open yet", `:1547`), and `ImageCacheFile::open` (`:722`) —
+   holding only that file's `m_input_mutex`, which `getstats` never takes —
+   clears and repeatedly resizes `m_subimages`. `subimages()` and
+   `subimageinfo()` (`imagecache_pvt.h:174`, `:425`) index that vector behind
+   an `OIIO_DASSERT` that release builds compile out, so the statistics walk
+   can read the vector mid-reallocation: a dangling data pointer.
+
+2. **Unsynchronized counter reads in the merge.** `mergestats` (`:2027`)
+   reads every per-thread `ImageCacheStatistics` under
+   `m_perthread_info_mutex` — but the owning threads update those fields
+   (e.g. `thread_info->m_stats.bytes_read += b` at `:1138`, `:1323`,
+   `:1364`) without holding it, and the struct (`imagecache_pvt.h:63`) is
+   plain non-atomic scalars. The per-file counters read by the file walk
+   (`imagecache_pvt.h:519-524`) are plain `size_t`/`imagesize_t`/`double`
+   too. Formally a data race, i.e. undefined behaviour under the C++ memory
+   model, whatever it happens to produce today.
+
+3. **Concurrent writes from the reset.** `reset_stats` (`:2452`) writes
+   `init()` into every registered thread's live statistics block and zeroes
+   the per-file counters while their owners may be mid-update — a
+   write-write race on the same plain fields.
+
+`TextureSystem` statistics inherit all three: `TextureSystemImpl::getstats`
+(`texturesys.cpp:779` in 3.1.16.0) calls `m_imagecache->mergestats` (`:785`)
+and, with its default `icstats = true`, appends `m_imagecache->getstats`,
+while lookups update per-thread counters like `++stats.texture_queries`
+(`:1589`) with no lock.
+
+The cheap reproduction for leg 1 under TSan or ASan: thread A loops
+`ImageCache::get_image_info`/`get_pixels` over files not yet opened, thread B
+loops `getstats(1)`.
+
+Possible directions, from least to most invasive: document statistics calls
+as needing external synchronization (an exception to the blanket
+thread-safety claim); take each file's `m_input_mutex` in the walk and make
+the counters atomics; or snapshot per-thread stats under a lock the writers
+also take. Found while binding the cache for Rust; the binding now requires
+an exclusive borrow for `stats()`/`reset_stats()`, so its callers cannot
+overlap them with reads.
 
 ---
 

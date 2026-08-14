@@ -109,6 +109,10 @@ before the fork, but nothing was ever published under it, so starting both at
 - Tests against OpenImageIO's and OpenEXR's own image corpora, opt-in through
   `OIIO_BIND_TEST_IMAGES` and `OIIO_BIND_TEST_EXR_IMAGES`, including
   OpenEXR's `Damaged` directory of reader crash cases.
+- `ImageBuf::try_clone`, the copy with the failure reportable: `Clone` still
+  works and panics with the reason when the copy's pixels cannot be
+  allocated, where OpenImageIO's own copy constructor would have handed back
+  a broken copy that crashed on its first read.
 - `ImageBuf::pixels_valid`, which says whether the pixels in memory were ever
   filled in. OpenImageIO allocates before it opens the file, so a failed read
   leaves the allocation behind untouched, and nothing exposed the difference.
@@ -120,6 +124,66 @@ before the fork, but nothing was ever published under it, so starting both at
   cargo-fuzz.
 
 ### Fixed
+
+- A fourth review — six property lenses rather than another per-module pass:
+  concurrency claims, unsafe contracts, panic and drop paths, FFI
+  conversions, discarded results and documentation contracts, every finding
+  adversarially verified against the OpenImageIO source — found fourteen
+  more, and none was refuted. The prior rounds hardened the operations; what
+  remained was the properties around them.
+
+  Statistics are exclusive now. `ImageCache::stats`, `reset_stats` and
+  `TextureSystem::stats` took `&self`, but OpenImageIO gathers statistics
+  with no lock: the merge reads per-thread counters that concurrent lookups
+  update, and the file walk reads each file's subimage vector while a first
+  open on another thread resizes it — the same free-under-read invalidation
+  can cause, reached by a diagnostic call. All three take `&mut self` now,
+  matching `invalidate`. Recorded for upstream as issue 12 in
+  `contrib/upstream-issues.md`, since it contradicts the manual's claim that
+  the cache is completely thread-safe.
+
+  Reading a deep file with one high byte in a channel name no longer aborts
+  the process. OpenEXR checks channel names only for termination and length
+  — never encoding — and the shim built a borrowed `rust::Str` from those
+  file bytes, a throwing constructor inside a `noexcept` wrapper. A borrowed
+  string has no lossy form, so the name now comes back owned and lossy, like
+  the error strings before it; a regression test binary-patches a channel
+  name to `0xE9` bytes and reads the file back.
+
+  The deep sample axis is guarded like the pixel axis. A pixel's sample
+  storage is allocated on the first value written, sized from the recorded
+  counts, by a vector resize OpenImageIO does not guard; the third review
+  capped the pixel count, but no pixel cap bounds `i32::MAX` samples of a
+  many-channel pixel. Every shim that can reach that allocation — the
+  sample-count setters, the value setters, insert, capacity, the deep
+  copies, and the pointer utilities — now catches the failure and reports
+  it instead of terminating, on both the `DeepImage` and `ImageBuf` paths.
+
+  `ImageBuf::clone` cannot hand back a copy that crashes on its first read.
+  OpenImageIO's copy constructor catches its own allocation failure, records
+  an error on the copy, and returns it anyway — with the source's
+  valid-pixels flag still set, so reading the broken copy reached a division
+  by a zero tile width, or a null cache pointer, inside OpenImageIO. The
+  copy's error state is checked now: `Clone` panics with the reason, and the
+  new `ImageBuf::try_clone` returns it as an `Err` instead.
+
+  `AttributeValue::is_writable` answers `false` for an empty string array,
+  whose write the third review had already made an error; the predicate had
+  kept saying `true`.
+
+  Five documentation contracts now say what the code does: a cached tile
+  holds the format the cache stores — `f32` for everything but `uint8`,
+  `uint16` and `half` — not the file's native format; `constant_color`'s
+  threshold-zero comparison is stricter than the float comparison for
+  formats wider than `f32`, not equivalent to it; `deepen` also grants a
+  sample for a lone non-zero `Z` below OpenImageIO's 1e30 cutoff, and
+  excludes `Zback` like `Z`; `write_scanlines` no longer claims only tiled
+  EXRs advertise `random_access` — DPX, FITS, GIF, RLA and WebP do so
+  unconditionally, and honour it; and the `algo` module's region text
+  counts its seven source-region operations and no longer pretends the
+  parameter name marks them out. `DeepImage::set_sample_count` documents
+  the sample resurrection its `ImageBuf` sibling already admitted — shrink
+  keeps the room, regrow brings the old values back — pinned by a test.
 
 - A third review — nine reviewers fanned across every module plus a
   cross-cutting sweep, each finding verified against the OpenImageIO source —
@@ -300,10 +364,12 @@ before the fork, but nothing was ever published under it, so starting both at
 - Several signatures moved to `&mut self`, and one option is gone, because the
   old shapes could not be made sound. `ImageCache::invalidate`,
   `invalidate_all`, and `TextureSystem`'s invalidation and attribute setters
-  are exclusive: invalidation is the one operation OpenImageIO does not make
-  thread-safe, and it frees state that a live `TileGuard`, `ImageHandle` or
-  `Perthread` still points into, so both hazards are compile errors now rather
-  than reads of freed memory. `ImageCacheBuilder::shared` is removed: two Rust
+  are exclusive: invalidation is not made thread-safe by OpenImageIO, and it
+  frees state that a live `TileGuard`, `ImageHandle` or `Perthread` still
+  points into, so both hazards are compile errors now rather than reads of
+  freed memory. The fourth review found statistics gathering on the same
+  footing, so `ImageCache::stats`, `ImageCache::reset_stats` and
+  `TextureSystem::stats` are exclusive too. `ImageCacheBuilder::shared` is removed: two Rust
   values over OpenImageIO's process-wide cache would let `&mut` on one alias
   `&` on the other, and every lifetime claim in that module is written against
   a single value. The third review removed `TextureSystem::shared` for the
