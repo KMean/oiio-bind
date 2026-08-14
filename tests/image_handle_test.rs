@@ -5,7 +5,7 @@ mod common;
 use std::sync::Arc;
 
 use common::{f16_ramp, f32_ramp, write_image, ScratchDir};
-use oiio::{f16, Error, ImageCache, ImageSpec, PixelFormat};
+use oiio::{f16, Error, ImageCache, ImageSpec, PixelFormat, Roi};
 
 /// 32x32, 3 channels, float, 16x16 tiles.
 fn tiled_fixture(scratch: &ScratchDir, name: &str) -> (std::path::PathBuf, ImageSpec, Vec<f32>) {
@@ -146,7 +146,7 @@ fn a_tile_exposes_its_own_region_and_pixels() {
 
     // Any coordinate inside the tile resolves to that tile.
     let tile = cache.tile(&path, 0, 0, [20, 4, 0], 0..3).unwrap();
-    let roi = tile.roi().unwrap();
+    let roi = tile.roi();
     assert_eq!(roi.x(), 16..32);
     assert_eq!(roi.y(), 0..16);
     assert_eq!(tile.format(), PixelFormat::F32);
@@ -261,4 +261,125 @@ fn thread_safety_is_modelled_as_openimageio_documents_it() {
     // Perthread and TileGuard are deliberately not Send or Sync; there is no
     // stable way to assert a negative bound, so this is documented by the
     // types holding raw pointers plus a PhantomData marker.
+}
+
+/// Reads through a handle used to skip validation the by-name read performs.
+///
+/// `ImageCache::get_pixels_into_at` fetches the spec, refuses deep images and
+/// checks the channel range against it. `ImageHandle::read` only checked that
+/// the destination was the right length, so a channel range past the end of the
+/// image went straight through. OpenImageIO does not clamp it: `get_pixels`
+/// takes `result_nchans = chend - chbegin` and hands that to
+/// `convert_pixel_values` against a tile that holds `spec.nchannels`, so asking
+/// eight channels of a three channel image reads 8/3 past every tile row and
+/// reports success. The validation now lives in the shim, where the handle is
+/// already resolved and costs no second name lookup.
+#[test]
+fn a_handle_refuses_a_channel_range_the_image_does_not_have() {
+    let scratch = ScratchDir::new("handlechan");
+    let (path, spec, _) = tiled_fixture(&scratch, "tiled.exr");
+    let cache = ImageCache::new().unwrap();
+    let handle = cache.handle(&path).unwrap();
+
+    let window = spec.data_window().unwrap();
+    // Three channels exist. Ask for eight.
+    let beyond = Roi::new(window.x(), window.y(), window.z(), 0..8).unwrap();
+
+    let mut pixels = vec![0.0_f32; beyond.element_count().unwrap()];
+    let error = handle
+        .get_pixels_into(beyond, &mut pixels)
+        .expect_err("channels 0..8 do not exist in a 3 channel image");
+    let text = error.to_string();
+    assert!(
+        text.contains("channel range"),
+        "expected the channel range to be named, got {text:?}"
+    );
+
+    // And the by-name path, which already rejected it, still does.
+    let mut same = vec![0.0_f32; beyond.element_count().unwrap()];
+    assert!(cache.get_pixels_into(&path, beyond, &mut same).is_err());
+}
+
+/// A tile's region and format are recorded when it is borrowed, not asked for
+/// afterwards. OpenImageIO derives both from the *file's* current spec, which
+/// invalidation frees, so `TileGuard::pixels` would otherwise build a slice
+/// whose length came out of freed memory.
+///
+/// Invalidating while a guard is alive is now a compile error rather than a use
+/// after free:
+///
+/// ```compile_fail
+/// # use oiio::ImageCache;
+/// # fn main() -> oiio::Result<()> {
+/// let mut cache = ImageCache::new()?;
+/// let tile = cache.tile(std::path::Path::new("x.exr"), 0, 0, [0, 0, 0], 0..3)?;
+/// cache.invalidate_all(true);   // needs &mut, and `tile` holds a &
+/// let _ = tile.pixels::<f32>()?;
+/// # Ok(())
+/// # }
+/// ```
+#[test]
+fn a_tile_reports_the_geometry_it_was_borrowed_with() {
+    let scratch = ScratchDir::new("tilesnapshot");
+    let (path, _, _) = tiled_fixture(&scratch, "tiled.exr");
+    let cache = ImageCache::new().unwrap();
+
+    let tile = cache.tile(&path, 0, 0, [4, 4, 0], 0..3).unwrap();
+    let roi = tile.roi();
+    assert_eq!(tile.format(), PixelFormat::F32);
+    // The fixture is 16x16 tiled, so the tile containing (4,4) is 0..16.
+    assert_eq!(roi.x(), 0..16);
+    assert_eq!(roi.y(), 0..16);
+    assert_eq!(
+        tile.pixels::<f32>().unwrap().len(),
+        roi.element_count().unwrap()
+    );
+}
+
+/// A caller-managed `Perthread` must be passed back through
+/// `get_perthread_info` before each use. That call is where OpenImageIO acts on
+/// the purge flag an invalidation sets; without it the record's two-tile
+/// microcache keeps handing back pre-invalidation tiles, so a read after an
+/// invalidate returns the old file's pixels. The shim now routes every
+/// caller-supplied record through it.
+#[test]
+fn per_thread_state_sees_an_invalidated_file() {
+    let scratch = ScratchDir::new("perthreadinval");
+    let path = scratch.file("changing.exr");
+    let spec = ImageSpec::new(32, 32, 3, PixelFormat::F32)
+        .unwrap()
+        .with_tile_size([16, 16, 1])
+        .unwrap();
+    let count = spec.element_count().unwrap();
+
+    write_image(&path, &spec, &vec![0.25_f32; count]).unwrap();
+
+    let mut cache = ImageCache::new().unwrap();
+    let window = spec.data_window().unwrap();
+    let mut pixels = vec![0.0_f32; count];
+
+    {
+        let state = cache.thread_state().unwrap();
+        let handle = cache.handle(&path).unwrap();
+        handle
+            .get_pixels_into_with(&state, 0, 0, window, &mut pixels)
+            .unwrap();
+        assert!(pixels.iter().all(|value| *value == 0.25));
+    }
+
+    // Replace the file on disk with different pixels, then invalidate. The
+    // borrow checker requires the handle and the state to be gone by here,
+    // which is the other half of the fix.
+    write_image(&path, &spec, &vec![0.75_f32; count]).unwrap();
+    cache.invalidate(&path, true).unwrap();
+
+    let state = cache.thread_state().unwrap();
+    let handle = cache.handle(&path).unwrap();
+    handle
+        .get_pixels_into_with(&state, 0, 0, window, &mut pixels)
+        .unwrap();
+    assert!(
+        pixels.iter().all(|value| *value == 0.75),
+        "the read after invalidate returned the pre-invalidation pixels"
+    );
 }

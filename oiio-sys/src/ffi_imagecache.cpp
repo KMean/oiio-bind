@@ -381,6 +381,43 @@ imagecache_get_pixels_handle_span_with_error(
         return false;
     }
 
+    // OpenImageIO's header is explicit that a caller-managed Perthread must be
+    // passed back through get_perthread_info before each use, because that is
+    // where the cache does its housekeeping: an invalidate sets a purge flag on
+    // the record, and nothing acts on it until this call. Skipping it leaves
+    // the two-tile microcache holding pre-invalidation tiles, which is stale
+    // data, and becomes a heap over-read if the replacement file is tiled more
+    // coarsely, since the old buffer gets indexed with the new dimensions.
+    if (thread_info != nullptr)
+        thread_info = imagecache.get_perthread_info(thread_info);
+
+    // The by-name read validates against the spec before crossing over; the
+    // handle read used to skip it entirely, so a channel range outside the
+    // image reached ImageCacheTile::data, which returns NULL out of range and
+    // is dereferenced without a check. Validate here rather than in Rust: the
+    // handle is already resolved, so this costs no second name lookup.
+    ImageSpec spec;
+    if (!imagecache.get_imagespec(file, thread_info, spec, subimage)) {
+        error = take_cache_error(imagecache);
+        if (error.empty())
+            error = rust::String::lossy(
+                "the image cache could not describe the image");
+        return false;
+    }
+    if (spec.deep) {
+        error = rust::String::lossy(
+            "the image cache cannot read flat pixels from a deep image");
+        return false;
+    }
+    if (roi.chbegin < 0 || roi.chend > spec.nchannels) {
+        error = rust::String::lossy(
+            OIIO::Strutil::fmt::format("channel range {}..{} extends outside "
+                                       "the image's {} channels",
+                                       roi.chbegin, roi.chend,
+                                       spec.nchannels));
+        return false;
+    }
+
     const int64_t width    = static_cast<int64_t>(roi.xend) - roi.xbegin;
     const int64_t height   = static_cast<int64_t>(roi.yend) - roi.ybegin;
     const int64_t depth    = static_cast<int64_t>(roi.zend) - roi.zbegin;

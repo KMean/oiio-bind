@@ -13,9 +13,20 @@ pub struct ImageCache {
     inner: cxx::SharedPtr<sys::imagecache::ImageCache>,
 }
 
-// OIIO documents ImageCache operations as thread-safe. Every method clones the
-// shared_ptr and uses CXX's opaque-type exception for thread-safe non-const C++
-// methods; no Rust reference to the C++ object escapes a call.
+// SAFETY: OpenImageIO documents the cache's read paths as thread-safe, and
+// every method here clones the shared_ptr and uses CXX's opaque-type exception
+// for thread-safe non-const C++ methods; no Rust reference to the C++ object
+// escapes a call.
+//
+// Invalidation is the exception and is not thread-safe: `invalidate_all` clears
+// each file's subimage and dimension pools while another thread may be reading
+// through them. That is why `invalidate` and `invalidate_all` take `&mut self`.
+// A `&mut` borrow cannot be shared across threads, so `Sync` is only ever
+// claiming the read paths, which is what OpenImageIO actually guarantees. It is
+// also why the builder does not offer OpenImageIO's process-wide shared cache:
+// two Rust values over one C++ cache would let `&mut` on one alias `&` on the
+// other, and every borrow-based guarantee in this module is expressed against a
+// single value.
 unsafe impl Send for ImageCache {}
 unsafe impl Sync for ImageCache {}
 
@@ -258,11 +269,32 @@ impl ImageCache {
                 "OpenImageIO returned no tile for that coordinate".to_owned(),
             ));
         }
-        Ok(TileGuard { cache: self, inner })
+        // Record the geometry now, while the file's spec is known good.
+        // Asking the cache for it later reads file state that invalidation
+        // frees, and `pixels` derives a slice length from it.
+        // SAFETY: the tile is live from here until the guard is dropped.
+        let tile_roi =
+            self.with_cache(|cache| unsafe { sys::imagecache::imagecache_tile_roi(cache, inner) });
+        let tile_roi = Roi::from_sys(&tile_roi)?;
+        // SAFETY: as above.
+        let tile_format = self
+            .with_cache(|cache| unsafe { sys::imagecache::imagecache_tile_format(cache, inner) });
+        Ok(TileGuard {
+            cache: self,
+            inner,
+            element_count: tile_roi.element_count()?,
+            roi: tile_roi,
+            format: PixelFormat::from_sys(&tile_format),
+        })
     }
 
     /// Invalidate one cached image. The next access will re-read it.
-    pub fn invalidate(&self, image_path: &Path, force: bool) -> Result<()> {
+    ///
+    /// This takes `&mut self` because it is the one cache operation that is not
+    /// thread-safe, and because it tears down state that a live [`TileGuard`],
+    /// [`ImageHandle`] or [`Perthread`] still points into. The exclusive borrow
+    /// makes both into compile errors rather than reads of freed memory.
+    pub fn invalidate(&mut self, image_path: &Path, force: bool) -> Result<()> {
         let filename = path_to_utf8(image_path)?;
         self.with_cache(|cache| {
             sys::imagecache::imagecache_invalidate(cache, filename, force);
@@ -271,7 +303,9 @@ impl ImageCache {
     }
 
     /// Invalidate every image held by this cache.
-    pub fn invalidate_all(&self, force: bool) {
+    ///
+    /// Exclusive for the reasons given on [`ImageCache::invalidate`].
+    pub fn invalidate_all(&mut self, force: bool) {
         self.with_cache(|cache| {
             sys::imagecache::imagecache_invalidate_all(cache, force);
         });
@@ -464,6 +498,9 @@ impl std::fmt::Debug for ImageHandle<'_> {
 pub struct TileGuard<'cache> {
     cache: &'cache ImageCache,
     inner: *mut sys::imagecache::Tile,
+    roi: Roi,
+    format: PixelFormat,
+    element_count: usize,
 }
 
 impl Drop for TileGuard<'_> {
@@ -479,23 +516,19 @@ impl Drop for TileGuard<'_> {
 
 impl TileGuard<'_> {
     /// The region this tile covers, which may extend past the data window.
-    pub fn roi(&self) -> Result<Roi> {
-        let inner = self.inner;
-        // SAFETY: the tile is live until this guard is dropped.
-        let roi = self
-            .cache
-            .with_cache(|cache| unsafe { sys::imagecache::imagecache_tile_roi(cache, inner) });
-        Roi::from_sys(&roi)
+    ///
+    /// Recorded when the tile was borrowed. OpenImageIO derives a tile's region
+    /// from the *file's* current spec rather than from the tile itself, so
+    /// asking it afterwards would answer out of state that invalidation frees.
+    pub fn roi(&self) -> Roi {
+        self.roi
     }
 
     /// The pixel format the tile holds, which is the file's native format.
+    ///
+    /// Recorded alongside [`TileGuard::roi`], for the same reason.
     pub fn format(&self) -> PixelFormat {
-        let inner = self.inner;
-        // SAFETY: as in `roi`.
-        let format = self
-            .cache
-            .with_cache(|cache| unsafe { sys::imagecache::imagecache_tile_format(cache, inner) });
-        PixelFormat::from_sys(&format)
+        self.format
     }
 
     /// Borrow the tile's pixels.
@@ -505,9 +538,6 @@ impl TileGuard<'_> {
     /// [`TileGuard::roi`] and borrows the guard, so it cannot outlive the
     /// tile.
     pub fn pixels<T: Pixel>(&self) -> Result<&[T]> {
-        let roi = self.roi()?;
-        let expected = roi.element_count()?;
-
         let inner = self.inner;
         let mut format = pixel::type_desc::<T>();
         let data = self.cache.with_cache(|cache| {
@@ -531,9 +561,11 @@ impl TileGuard<'_> {
         }
 
         // SAFETY: the format was just confirmed to be T's, the element count
-        // comes from the tile's own region, and the slice borrows `self`, so
-        // it cannot outlive the tile it points into.
-        Ok(unsafe { std::slice::from_raw_parts(data.cast::<T>(), expected) })
+        // was computed from the region recorded when the tile was borrowed, and
+        // the slice borrows `self`, so it cannot outlive the tile it points
+        // into. Borrowing the guard also borrows the cache, which is what stops
+        // `invalidate` from running underneath this slice.
+        Ok(unsafe { std::slice::from_raw_parts(data.cast::<T>(), self.element_count) })
     }
 }
 
@@ -541,7 +573,8 @@ impl std::fmt::Debug for TileGuard<'_> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("TileGuard")
-            .field("format", &self.format())
+            .field("roi", &self.roi)
+            .field("format", &self.format)
             .finish_non_exhaustive()
     }
 }
@@ -549,7 +582,6 @@ impl std::fmt::Debug for TileGuard<'_> {
 /// Typed configuration for constructing an [`ImageCache`].
 #[derive(Debug, Clone, Default)]
 pub struct ImageCacheBuilder {
-    shared: bool,
     max_memory_mb: Option<f32>,
     max_open_files: Option<u32>,
     autotile: Option<u32>,
@@ -557,15 +589,6 @@ pub struct ImageCacheBuilder {
 }
 
 impl ImageCacheBuilder {
-    /// Opt into OpenImageIO's process-wide shared cache.
-    ///
-    /// The default is a private cache. Shared cache settings and invalidation
-    /// may affect unrelated users in the same process.
-    pub fn shared(mut self, shared: bool) -> Self {
-        self.shared = shared;
-        self
-    }
-
     /// Set the approximate memory budget for the internal tile cache, in MB.
     pub fn max_memory_mb(mut self, megabytes: f32) -> Self {
         self.max_memory_mb = Some(megabytes);
@@ -604,7 +627,9 @@ impl ImageCacheBuilder {
         }
 
         let cache = ImageCache {
-            inner: sys::imagecache::imagecache_create(self.shared),
+            // Always private. The Sync justification above says why the
+            // process-wide cache is not offered.
+            inner: sys::imagecache::imagecache_create(false),
         };
         if cache.inner.is_null() {
             return Err(Error::operation(

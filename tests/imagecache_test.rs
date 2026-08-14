@@ -38,7 +38,7 @@ fn imagebuf_retains_its_imagecache() {
 
 #[test]
 fn safe_imagecache_reads_full_image_and_regions() -> Result<()> {
-    let cache = ImageCache::builder()
+    let mut cache = ImageCache::builder()
         .max_memory_mb(64.0)
         .max_open_files(8)
         .autotile(8)
