@@ -209,16 +209,23 @@ refuse_mixed_deep(ImageBuf& dst, const ImageBuf& src, const char* operation)
 // warp_ sizes its per-pixel scratch buffer from the destination and then has
 // filtered_sample fill it from the source, so a destination with fewer
 // channels is written past the end of a stack allocation. rotate and an exact
-// fit both reach the same kernel.
+// fit both reach the same kernel. The wider direction is unsound too, in the
+// quieter way the mad and copy refusals document: IBAprep clamps the written
+// range to the narrower side and, on the 3.1.14 CI builds, the channels only
+// the destination has come back holding whatever the allocation held, under a
+// success return. A pre-allocated destination must match the source's channel
+// count in both directions.
 bool
 refuse_narrow_destination(ImageBuf& dst, const ImageBuf& src,
                           const char* operation)
 {
-    if (!dst.initialized() || dst.nchannels() >= src.nchannels())
+    if (!dst.initialized() || dst.deep()
+        || dst.nchannels() == src.nchannels())
         return false;
-    dst.errorfmt("{}: the destination has {} channels and the source has {}; "
-                 "OpenImageIO writes past its own per-pixel buffer when the "
-                 "destination is narrower",
+    dst.errorfmt("{}: the destination is allocated with {} channels and the "
+                 "source has {}; narrower overruns OpenImageIO's per-pixel "
+                 "buffer and wider is returned partly unwritten, so line the "
+                 "channel counts up first",
                  operation, dst.nchannels(), src.nchannels());
     return true;
 }
@@ -1038,6 +1045,16 @@ imagebufalgo_channel_sum(ImageBuf& dst, const ImageBuf& src,
                      weights.size(), src.nchannels());
         return false;
     }
+    // The result is one channel. A pre-allocated destination with more keeps
+    // its shape, and the channels past the first are the mad/copy class:
+    // returned as allocated under a success return on the 3.1.14 CI builds.
+    if (dst.initialized() && !dst.deep() && dst.nchannels() != 1) {
+        dst.errorfmt("channel_sum: the result has one channel and the "
+                     "destination is allocated with {}; use an empty "
+                     "destination",
+                     dst.nchannels());
+        return false;
+    }
     return OIIO::ImageBufAlgo::channel_sum(dst, src, to_cspan(weights), roi,
                                            nthreads);
 }
@@ -1368,6 +1385,8 @@ imagebufalgo_unsharp_mask(ImageBuf& dst, const ImageBuf& src,
                           float threshold, const ROI& roi, int nthreads)
 {
     if (refuse_empty_region(dst, src, roi, "unsharp_mask"))
+        return false;
+    if (refuse_narrow_destination(dst, src, "unsharp_mask"))
         return false;
     if (dst.initialized() && dst.spec().format != src.spec().format) {
         // The final pass dispatches on the destination's type and then reads

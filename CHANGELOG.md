@@ -185,6 +185,13 @@ before the fork, but nothing was ever published under it, so starting both at
   the sample resurrection its `ImageBuf` sibling already admitted — shrink
   keeps the room, regrow brings the old values back — pinned by a test.
 
+- The whole family the property test probes with mismatched destinations —
+  `warp`, `rotate`, `fit`, `unsharp_mask`, `channel_sum` — now refuses a
+  pre-allocated destination wider than its result, not only the narrower one
+  that overran a stack buffer, closing the remaining known members of the
+  class below by construction rather than waiting for the property test to
+  catch them one at a time.
+
 - `copy` refuses a pre-allocated destination it cannot cover — a channel
   count that disagrees with the source's, or a data window the source does
   not reach. Property testing on the 3.1.14 CI builds caught the second

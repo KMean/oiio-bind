@@ -64,3 +64,12 @@ Publishing does not make this crate build anywhere: it needs OpenImageIO 3.1.4
 or newer installed, found through vcpkg on Windows or `pkg-config` on Unix.
 The README's Usage and Troubleshooting sections cover that, and are the first
 thing someone arriving from crates.io will read.
+
+## Publishing gate (agreed with Kim, 2026-08-14)
+
+Hold 0.1.0 until the runs come back boring: several consecutive CI runs
+across a few days with zero new findings and zero API movement. Each CI run
+re-rolls the property tests against the 3.1.14 builds this machine cannot
+reproduce, so quiet runs are the evidence that the IBAprep
+uninitialised-destination class is exhausted. The known members are refused
+by construction as of this date.

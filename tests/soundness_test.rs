@@ -897,6 +897,32 @@ fn copy_refuses_a_destination_it_cannot_cover() {
     let mut dst = ImageBuf::empty().unwrap();
     algo::copy(&mut dst, &source, None, None).unwrap();
     assert_eq!(dst.channel_count(), 1);
+
+    // The rest of the family the property test probes with mismatched
+    // destinations refuses the wider shape too, not only the narrower one
+    // that smashed a stack buffer: on the 3.1.14 CI builds the channels only
+    // the destination has come back as allocated, under a success return.
+    let mut wide = ImageBuf::new(&ImageSpec::new(4, 4, 5, PixelFormat::F32).unwrap()).unwrap();
+    let identity = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+    assert!(algo::warp(
+        &mut wide,
+        &source,
+        &identity,
+        &oiio::algo::WarpOptions::default(),
+        None
+    )
+    .is_err());
+    assert!(algo::rotate(
+        &mut wide,
+        &source,
+        0.7,
+        None,
+        &oiio::algo::WarpOptions::default(),
+        None
+    )
+    .is_err());
+    assert!(algo::unsharp_mask(&mut wide, &source, "gaussian", 3.0, 1.0, 0.0, None).is_err());
+    assert!(algo::channel_sum(&mut wide, &source, &[1.0], None).is_err());
 }
 
 /// `mad` with two image sources of different channel counts.
