@@ -361,8 +361,14 @@ mod ffi {
             data: &mut [u8],
         ) -> bool;
 
+        /// # Safety
+        /// The caller-supplied x/y/z/channel ranges are forwarded to
+        /// OpenImageIO, which sizes the read from them; `data` must be large
+        /// enough for the requested block, matching the `unsafe` sibling
+        /// `imageinput_read_native_tile`. Declared `unsafe` for the same reason
+        /// as the rest of the raw-buffer read family.
         #[allow(clippy::too_many_arguments)]
-        pub fn imageinput_read_native_tiles(
+        pub unsafe fn imageinput_read_native_tiles(
             imageinput: Pin<&mut ImageInput>,
             xbegin: i32,
             xend: i32,
