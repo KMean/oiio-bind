@@ -276,9 +276,18 @@ impl ImageCache {
         let tile_roi =
             self.with_cache(|cache| unsafe { sys::imagecache::imagecache_tile_roi(cache, inner) });
         let tile_roi = Roi::from_sys(&tile_roi)?;
-        // SAFETY: as above.
-        let tile_format = self
-            .with_cache(|cache| unsafe { sys::imagecache::imagecache_tile_format(cache, inner) });
+        // Ask through tile_pixels rather than tile_format. They disagree on
+        // purpose: tile_format returns the *file's* pixel format, while the
+        // tile is stored in the format the cache chose, which is float for
+        // everything except uint8, uint16 and half. `pixels` compares against
+        // the second, so reporting the first would have named a type `pixels`
+        // refuses for every uint32, int32 or double file.
+        let mut tile_format = pixel::type_desc::<f32>();
+        // SAFETY: as above; `tile_format` is an out parameter and the returned
+        // pointer is not retained here.
+        let _ = self.with_cache(|cache| unsafe {
+            sys::imagecache::imagecache_tile_pixels(cache, inner, &mut tile_format)
+        });
         Ok(TileGuard {
             cache: self,
             inner,
@@ -537,17 +546,22 @@ impl TileGuard<'_> {
         self.roi
     }
 
-    /// The pixel format the tile holds, which is the file's native format.
+    /// The pixel format the tile holds.
     ///
-    /// Recorded alongside [`TileGuard::roi`], for the same reason.
+    /// This is the format the *cache* stores the tile in, which is the file's
+    /// own only for uint8, uint16 and half; everything else is promoted to
+    /// float. It is what [`TileGuard::pixels`] requires, so the two agree by
+    /// construction. Recorded alongside [`TileGuard::roi`], for the same
+    /// reason.
     pub fn format(&self) -> PixelFormat {
         self.format
     }
 
     /// Borrow the tile's pixels.
     ///
-    /// The tile is stored in the file's native format, so `T` must match
-    /// [`TileGuard::format`]; no conversion happens here. The slice covers
+    /// `T` must match [`TileGuard::format`], which is the format the cache
+    /// stores rather than the file's; no conversion happens here. The slice
+    /// covers
     /// [`TileGuard::roi`] and borrows the guard, so it cannot outlive the
     /// tile.
     pub fn pixels<T: Pixel>(&self) -> Result<&[T]> {

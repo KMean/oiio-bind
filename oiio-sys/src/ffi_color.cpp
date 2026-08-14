@@ -54,6 +54,23 @@ colorconfig_geterror(const ColorConfig& config)
     return rust::String::lossy(error.data(), error.size());
 }
 
+int
+colorconfig_color_space_index(const ColorConfig& config, rust::Str name)
+{
+    // Exactly the resolution a conversion performs, so the two agree by
+    // construction: getColorSpaceIndex matches case-insensitively with
+    // Strutil::iequals and falls back to equivalent() for aliases. Comparing
+    // against the enumerated names instead rejected every alias and every
+    // difference in casing that colorconvert accepts.
+    //
+    // Roles are deliberately not folded in. getColorSpaceNameByRole resolves
+    // names like "default" that a conversion will not take, so treating a role
+    // as a colour space would overshoot in the other direction; a caller who
+    // wants one asks color_space_for_role.
+    const std::string_view c_name(name.data(), name.size());
+    return config.getColorSpaceIndex(c_name);
+}
+
 rust::Vec<rust::String>
 colorconfig_color_space_names(const ColorConfig& config)
 {

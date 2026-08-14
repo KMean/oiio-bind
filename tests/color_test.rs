@@ -186,3 +186,49 @@ fn a_missing_configuration_file_is_reported() {
         Err(error) => println!("absent config reported as: {error}"),
     }
 }
+
+/// `has_color_space` compared against the enumerated names, exactly and
+/// case-sensitively. OpenImageIO does not resolve names that way: colour space
+/// lookup is case-insensitive, falls back to aliases, and resolves roles
+/// separately. So the names `color_convert` accepts were a strict superset of
+/// the ones this admitted, and a caller using it to validate input rejected
+/// input that would have worked.
+#[test]
+fn has_color_space_agrees_with_what_a_conversion_accepts() {
+    let Ok(config) = ColorConfig::new() else {
+        eprintln!("no colour configuration available; skipping");
+        return;
+    };
+
+    let source = ImageBuf::new(&ImageSpec::new(4, 4, 3, PixelFormat::F32).unwrap()).unwrap();
+    let names = config.color_space_names();
+    if names.is_empty() {
+        eprintln!("the configuration lists no colour spaces; skipping");
+        return;
+    }
+    let target = names
+        .iter()
+        .find(|name| name.eq_ignore_ascii_case("ACEScg"))
+        .cloned()
+        .unwrap_or_else(|| names[0].clone());
+
+    // Every casing of a name it knows, plus the roles, must agree with what a
+    // conversion will actually accept.
+    let mut probes: Vec<String> = vec![
+        target.to_lowercase(),
+        target.to_uppercase(),
+        "definitely not a colour space".to_owned(),
+    ];
+    probes.extend(["scene_linear", "data", "default"].map(str::to_owned));
+
+    for probe in probes {
+        let mut dst = ImageBuf::empty().unwrap();
+        let converts =
+            oiio::algo::color_convert(&mut dst, &source, &probe, &target, false, None).is_ok();
+        assert_eq!(
+            config.has_color_space(&probe),
+            converts,
+            "has_color_space and color_convert disagree about {probe:?}"
+        );
+    }
+}

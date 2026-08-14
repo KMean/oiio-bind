@@ -74,8 +74,14 @@ impl ColorConfig {
     }
 
     /// Whether a name is one this configuration knows.
+    ///
+    /// Resolved the way a conversion resolves it: case-insensitively, and
+    /// through aliases. Comparing against [`ColorConfig::color_space_names`]
+    /// instead would reject names that [`color_convert`](crate::algo::color_convert)
+    /// accepts. A role is not a colour space here; use
+    /// [`ColorConfig::color_space_for_role`] for those.
     pub fn has_color_space(&self, name: &str) -> bool {
-        self.color_space_names().iter().any(|space| space == name)
+        sys::color::colorconfig_color_space_index(self.inner(), name) >= 0
     }
 
     fn from_inner(inner: cxx::UniquePtr<sys::color::ColorConfig>) -> Result<Self> {

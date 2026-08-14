@@ -1,4 +1,5 @@
 use crate::sys::{self, typedesc::BaseType};
+use crate::{Error, Result};
 
 /// A metadata value attached to an [`ImageSpec`](crate::ImageSpec).
 ///
@@ -62,12 +63,21 @@ impl AttributeValue {
     /// Whether this crate can write the attribute back to a file.
     ///
     /// Every variant can, including [`AttributeValue::Other`], which carries
-    /// the value's original bytes rather than only its printed form. The one
-    /// exception is an `Other` whose bytes did not come from OpenImageIO,
-    /// which is only possible if it was built by hand.
+    /// the value's original bytes rather than only its printed form. An
+    /// `Other` is writable when its type name parses, its length is exactly
+    /// what that type measures, and the type is one that means anything
+    /// outside this process: a string is carried by the `String` variant
+    /// instead, and a pointer or a hashed string is a raw process address.
+    /// Anything read out of a real file satisfies all of that; a hand-built
+    /// one may not.
     pub fn is_writable(&self) -> bool {
         match self {
-            Self::Other { bytes, .. } => !bytes.is_empty(),
+            Self::Other {
+                type_name, bytes, ..
+            } => {
+                !bytes.is_empty()
+                    && sys::imageio::attribute_bytes_are_writable(type_name, bytes.len())
+            }
             _ => true,
         }
     }
@@ -99,7 +109,11 @@ impl AttributeValue {
         }
     }
 
-    pub(crate) fn write(&self, mut spec: std::pin::Pin<&mut sys::imageio::ImageSpec>, name: &str) {
+    pub(crate) fn write(
+        &self,
+        mut spec: std::pin::Pin<&mut sys::imageio::ImageSpec>,
+        name: &str,
+    ) -> Result<()> {
         match self {
             Self::Int(value) => sys::imageio::imagespec_attribute_int(spec, name, *value),
             Self::Float(value) => sys::imageio::imagespec_attribute_float(spec, name, *value),
@@ -117,11 +131,25 @@ impl AttributeValue {
                 type_name, bytes, ..
             } => {
                 // Re-emitted from the stored bytes, so nothing is lost to the
-                // rounding in the printed form. A mismatched length is
-                // refused by the shim rather than read past.
-                sys::imageio::imagespec_attribute_set_bytes(spec.as_mut(), name, type_name, bytes);
+                // rounding in the printed form. The shim refuses a payload
+                // that does not measure what the type says, an array with no
+                // concrete length, and types that carry a process address.
+                // That refusal used to be discarded here, which left the
+                // attribute absent from the file with nothing said about it.
+                if !sys::imageio::imagespec_attribute_set_bytes(
+                    spec.as_mut(),
+                    name,
+                    type_name,
+                    bytes,
+                ) {
+                    return Err(Error::InvalidImageSpec(format!(
+                        "attribute {name:?} declares type {type_name:?} and carries {} bytes,                          which that type cannot hold",
+                        bytes.len()
+                    )));
+                }
             }
         }
+        Ok(())
     }
 }
 

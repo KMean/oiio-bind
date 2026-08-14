@@ -139,7 +139,7 @@ deepdata_all_samples(const DeepData& deepdata);
 rust ::Slice<const char>
 deepdata_all_data(const DeepData& deepdata);
 
-void
+size_t
 deepdata_get_pointers(const DeepData& deepdata, rust::Slice<uint8_t*> pointers);
 
 bool

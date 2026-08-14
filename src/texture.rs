@@ -349,7 +349,7 @@ impl TextureConfig {
         }
 
         for (name, value) in &self.attributes {
-            value.write(pinned.as_mut(), name);
+            value.write(pinned.as_mut(), name)?;
         }
 
         Ok(spec)

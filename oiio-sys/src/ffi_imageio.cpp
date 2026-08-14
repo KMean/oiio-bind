@@ -433,9 +433,7 @@ imagespec_attribute_bytes(const ImageSpec& spec, const rust::Str name)
 }
 
 bool
-imagespec_attribute_set_bytes(ImageSpec& spec, const rust::Str name,
-                              const rust::Str type_name,
-                              rust::Slice<const uint8_t> bytes)
+attribute_bytes_are_writable(const rust::Str type_name, size_t length)
 {
     const OIIO::TypeDesc type(std::string(type_name.data(), type_name.size()));
     if (type == OIIO::TypeUnknown)
@@ -444,14 +442,14 @@ imagespec_attribute_set_bytes(ImageSpec& spec, const rust::Str name,
     // TypeDesc::fromstring presets arraylen to -1, so "float[]" parses to -1
     // and "uint8[-3]" to -3, while TypeDesc::size() clamps the count to at
     // least one -- so "float[]" measures four bytes and a four byte payload
-    // sails through. The clamp is not applied on the way back out: both
+    // would sail through. The clamp is not applied on the way back out: both
     // sprint_type and format_type size their loop as `arraylen ? arraylen : 1`
     // with the raw value, and size_t(-1) walks off the end of the stored value.
     if (type.arraylen < 0)
         return false;
     // The value must be exactly the size the type describes, or OpenImageIO
     // would read past what was handed to it.
-    if (type.size() != bytes.size())
+    if (type.size() != length)
         return false;
     if (type.basetype == OIIO::TypeDesc::STRING)
         return false;
@@ -460,7 +458,19 @@ imagespec_attribute_set_bytes(ImageSpec& spec, const rust::Str name,
     if (type.basetype == OIIO::TypeDesc::PTR
         || type.basetype == OIIO::TypeDesc::USTRINGHASH)
         return false;
+    return true;
+}
 
+bool
+imagespec_attribute_set_bytes(ImageSpec& spec, const rust::Str name,
+                              const rust::Str type_name,
+                              rust::Slice<const uint8_t> bytes)
+{
+    if (!attribute_bytes_are_writable(type_name, bytes.size()))
+        return false;
+    const OIIO::TypeDesc type(std::string(type_name.data(), type_name.size()));
+    if (type == OIIO::TypeUnknown)
+        return false;
     spec.attribute(to_string_view(name), type, bytes.data());
     return true;
 }

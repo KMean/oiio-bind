@@ -379,7 +379,7 @@ impl ImageSpec {
         sys::imageio::imagespec_set_deep(pinned.as_mut(), self.deep);
 
         for (name, value) in &self.attributes {
-            value.write(pinned.as_mut(), name);
+            value.write(pinned.as_mut(), name)?;
         }
 
         Ok(spec)

@@ -269,12 +269,24 @@ deepdata_all_data(const DeepData& deepdata)
     return rust::Slice<const char>(c_all_data.data(), c_all_data.size());
 }
 
-void
+size_t
 deepdata_get_pointers(const DeepData& deepdata, rust::Slice<uint8_t*> pointers)
 {
-    // TODO: This is inefficient. Maybe we can use a span instead of a vector.
-    std::vector<void*> c_pointers(pointers.begin(), pointers.end());
+    // DeepData::get_pointers resizes the vector it is given to
+    // pixels() * channels() and fills it, so the vector is an out parameter
+    // rather than an in-out one. Copying the caller's slice in was pointless
+    // and, worse, nothing was ever copied back: the function looked like an
+    // out-parameter fill and was a guaranteed no-op.
+    std::vector<void*> c_pointers;
     deepdata.get_pointers(c_pointers);
+
+    const size_t available = c_pointers.size();
+    const size_t copied    = std::min(available, pointers.size());
+    for (size_t i = 0; i < copied; ++i)
+        pointers[i] = static_cast<uint8_t*>(c_pointers[i]);
+    // The number OpenImageIO produced, so a caller given a short slice can
+    // tell it was truncated rather than assume it saw everything.
+    return available;
 }
 
 bool

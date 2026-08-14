@@ -25,6 +25,9 @@ colorconfig_name(const ColorConfig& config);
 rust::String
 colorconfig_geterror(const ColorConfig& config);
 
+int
+colorconfig_color_space_index(const ColorConfig& config, rust::Str name);
+
 rust::Vec<rust::String>
 colorconfig_color_space_names(const ColorConfig& config);
 

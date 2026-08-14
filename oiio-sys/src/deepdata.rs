@@ -138,7 +138,7 @@ mod ffi {
 
         pub fn deepdata_all_data(deepdata: &DeepData) -> &[c_char];
 
-        pub fn deepdata_get_pointers(deepdata: &DeepData, pointers: &mut [*mut u8]);
+        pub fn deepdata_get_pointers(deepdata: &DeepData, pointers: &mut [*mut u8]) -> usize;
 
         pub fn deepdata_copy_deep_sample(
             deepdata: Pin<&mut DeepData>,

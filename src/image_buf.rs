@@ -223,7 +223,7 @@ impl ImageBuf {
     /// values are converted to `T` if the image holds another format.
     pub fn get_pixels_into<T: Pixel>(&self, roi: Roi, pixels: &mut [T]) -> Result<()> {
         self.require_flat("read image buffer pixels")?;
-        self.require_channels(&roi)?;
+        self.require_region_inside(&roi)?;
         validate_buffer_len(roi.element_count()?, pixels.len())?;
         let sys_roi = roi.to_sys();
 
@@ -261,7 +261,7 @@ impl ImageBuf {
     /// The source length must exactly equal `roi.element_count()`.
     pub fn set_pixels<T: Pixel>(&mut self, roi: Roi, pixels: &[T]) -> Result<()> {
         self.require_flat("write image buffer pixels")?;
-        self.require_channels(&roi)?;
+        self.require_region_inside(&roi)?;
         validate_buffer_len(roi.element_count()?, pixels.len())?;
         let sys_roi = roi.to_sys();
 
@@ -479,23 +479,28 @@ impl ImageBuf {
         }
     }
 
-    /// Refuse a channel range the image does not have.
+    /// Refuse a region the image does not have, on any axis.
     ///
-    /// `ImageBuf::get_pixels` clamps `chend` to the channel count but never
-    /// `chbegin`, so a range starting at or past the end leaves a zero or
-    /// negative channel count. `ROI::contains` still passes, so it takes the
-    /// fast path into `copy_image`, which divides the pixel size by that count
-    /// and then memcpys with it.
-    fn require_channels(&self, roi: &Roi) -> Result<()> {
-        let available = self.channel_count();
-        let channels = roi.channels();
-        if available < 0 || channels.end > available.unsigned_abs() {
-            return Err(Error::InvalidRoi(format!(
-                "channel range {}..{} extends outside the image's {available} channels",
-                channels.start, channels.end
-            )));
-        }
-        Ok(())
+    /// The channel axis is the one that traps. `ImageBuf::get_pixels` clamps
+    /// `chend` to the channel count but never `chbegin`, so a range starting at
+    /// or past the end leaves a zero or negative channel count; `ROI::contains`
+    /// still passes, so it takes the fast path into `copy_image`, which divides
+    /// the pixel size by that count and then memcpys with it.
+    ///
+    /// The spatial axes are quieter and just as wrong. A region outside the
+    /// data window reads as zeros, because the iterator's default wrap is
+    /// `WrapBlack`, so the caller cannot tell an absent region from a black
+    /// one; and `set_pixels` skips every pixel that does not exist and still
+    /// reports success, so the write silently goes nowhere. A `chend` past the
+    /// channel count is worse than either: the strides were computed from the
+    /// range the caller asked for, so OpenImageIO writes the real channels at
+    /// the wide stride and every remaining slot keeps whatever the caller's
+    /// buffer already held.
+    ///
+    /// `ImageInput::read_region_into` has always rejected these, so this is
+    /// also what stops the two halves of the crate from disagreeing.
+    fn require_region_inside(&self, roi: &Roi) -> Result<()> {
+        roi.validate_within(&self.spec()?)
     }
 
     fn require_deep(&self, operation: &'static str) -> Result<()> {

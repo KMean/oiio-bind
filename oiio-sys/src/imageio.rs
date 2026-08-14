@@ -131,6 +131,8 @@ mod ffi {
         ) -> String;
         pub fn imagespec_attribute_to_string(spec: &ImageSpec, name: &str) -> String;
         pub fn imagespec_attribute_bytes(spec: &ImageSpec, name: &str) -> Vec<u8>;
+        pub fn attribute_bytes_are_writable(type_name: &str, length: usize) -> bool;
+
         pub fn imagespec_attribute_set_bytes(
             spec: Pin<&mut ImageSpec>,
             name: &str,

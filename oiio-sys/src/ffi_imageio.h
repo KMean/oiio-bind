@@ -157,6 +157,9 @@ rust::Vec<uint8_t>
 imagespec_attribute_bytes(const ImageSpec& spec, const rust::Str name);
 
 bool
+attribute_bytes_are_writable(const rust::Str type_name, size_t length);
+
+bool
 imagespec_attribute_set_bytes(ImageSpec& spec, const rust::Str name,
                               const rust::Str type_name,
                               rust::Slice<const uint8_t> bytes);

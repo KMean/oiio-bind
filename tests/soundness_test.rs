@@ -656,3 +656,84 @@ fn an_algo_region_cannot_start_past_the_destination() {
     algo::copy(&mut dst, &source, None, None).unwrap();
     assert_eq!(dst.channel_count(), 3);
 }
+
+/// The quiet half of the region problem: results that were wrong rather than
+/// fatal, and reported as Ok.
+///
+/// A `chend` past the channel count is the worst of them, because the strides
+/// were computed from the range the caller asked for: OpenImageIO writes the
+/// real channels at the wide stride and leaves every remaining slot holding
+/// whatever the caller's buffer already had, which reads as data. A region
+/// outside the data window comes back as zeros, because the iterator's default
+/// wrap is `WrapBlack`, so an absent region is indistinguishable from a black
+/// one. And `set_pixels` outside the window skips every pixel that does not
+/// exist and still reports success, so the write goes nowhere.
+#[test]
+fn a_region_the_image_does_not_have_is_an_error_not_a_wrong_answer() {
+    let spec = ImageSpec::new(2, 2, 3, PixelFormat::F32).unwrap();
+    let mut buffer = ImageBuf::new(&spec).unwrap();
+    let window = spec.data_window().unwrap();
+    let values: Vec<f32> = (0..12).map(|value| value as f32).collect();
+    buffer.set_pixels(window, &values).unwrap();
+
+    // (a) more channels than exist: used to return Ok with the caller's own
+    // stale bytes in the slots that were never written.
+    let wide = window.with_channels(0..6).unwrap();
+    let mut out = vec![-1.0_f32; wide.element_count().unwrap()];
+    assert!(buffer.get_pixels_into(wide, &mut out).is_err());
+    assert!(out.iter().all(|value| *value == -1.0));
+
+    // (b) a region nowhere near the image: used to return Ok and all zeros.
+    let elsewhere = Roi::new(1000..1002, 1000..1002, 0..1, 0..3).unwrap();
+    let mut out = vec![-1.0_f32; elsewhere.element_count().unwrap()];
+    assert!(buffer.get_pixels_into(elsewhere, &mut out).is_err());
+
+    // A partial overlap is just as wrong, and just as quiet.
+    let straddling = Roi::new(1..3, 0..2, 0..1, 0..3).unwrap();
+    let mut out = vec![-1.0_f32; straddling.element_count().unwrap()];
+    assert!(buffer.get_pixels_into(straddling, &mut out).is_err());
+
+    // (c) writing outside the window: used to report success and do nothing.
+    let payload = vec![9.0_f32; elsewhere.element_count().unwrap()];
+    assert!(buffer.set_pixels(elsewhere, &payload).is_err());
+
+    // The region the image does have still round-trips.
+    let mut back = vec![0.0_f32; window.element_count().unwrap()];
+    buffer.get_pixels_into(window, &mut back).unwrap();
+    assert_eq!(back, values);
+}
+
+/// An `Other` attribute whose payload does not measure what its type says was
+/// dropped by the shim and the refusal discarded, so the attribute vanished
+/// between the spec and the file with nothing said. `is_writable` claimed it
+/// would be written, too.
+#[test]
+fn an_attribute_that_cannot_be_written_says_so() {
+    let short = oiio::AttributeValue::Other {
+        type_name: "float2".to_owned(),
+        value: String::new(),
+        bytes: vec![0_u8; 4],
+    };
+    assert!(!short.is_writable(), "four bytes is not a float2");
+
+    let spec = ImageSpec::new(4, 4, 3, PixelFormat::U8)
+        .unwrap()
+        .with_attribute("short", short);
+    assert!(
+        ImageBuf::new(&spec).is_err(),
+        "the attribute cannot be carried and that has to be said"
+    );
+
+    // The right number of bytes for the declared type is fine.
+    let exact = oiio::AttributeValue::Other {
+        type_name: "float2".to_owned(),
+        value: String::new(),
+        bytes: vec![0_u8; 8],
+    };
+    assert!(exact.is_writable());
+    let spec = ImageSpec::new(4, 4, 3, PixelFormat::U8)
+        .unwrap()
+        .with_attribute("exact", exact);
+    let buffer = ImageBuf::new(&spec).unwrap();
+    assert!(buffer.spec().unwrap().attribute("exact").is_some());
+}

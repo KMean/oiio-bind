@@ -12,6 +12,8 @@ mod ffi {
         pub fn colorconfig_supports_opencolorio() -> bool;
         pub fn colorconfig_name(config: &ColorConfig) -> String;
         pub fn colorconfig_geterror(config: &ColorConfig) -> String;
+        pub fn colorconfig_color_space_index(config: &ColorConfig, name: &str) -> i32;
+
         pub fn colorconfig_color_space_names(config: &ColorConfig) -> Vec<String>;
         pub fn colorconfig_role_names(config: &ColorConfig) -> Vec<String>;
         pub fn colorconfig_color_space_for_role(config: &ColorConfig, role: &str) -> String;
