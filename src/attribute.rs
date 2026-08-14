@@ -25,6 +25,12 @@ pub enum AttributeValue {
     /// attribute this crate does not model — `float2`, `uint16`, `timecode`,
     /// an ICC profile — still survives being read from one image and written
     /// to another. `value` is only for display, and rounds.
+    ///
+    /// A hand-built `Other` is only writable if its bytes match the size its
+    /// `type_name` describes and the type is one that means something outside
+    /// this process; see [`AttributeValue::is_writable`]. One that is not
+    /// makes the write fail rather than vanish. Everything read from a real
+    /// file satisfies this, so a round trip never trips it.
     Other {
         /// The OpenImageIO type name, such as `"float2"` or `"uint8[3144]"`.
         type_name: String,
@@ -153,7 +159,8 @@ impl AttributeValue {
                     bytes,
                 ) {
                     return Err(Error::InvalidImageSpec(format!(
-                        "attribute {name:?} declares type {type_name:?} and carries {} bytes,                          which that type cannot hold",
+                        "attribute {name:?} declares type {type_name:?} and carries {} bytes, \
+                         which that type cannot hold",
                         bytes.len()
                     )));
                 }

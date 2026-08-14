@@ -317,8 +317,14 @@ impl ImageSpec {
 
     /// Build the OpenImageIO specification this describes.
     ///
-    /// Attributes that are not [writable](AttributeValue::is_writable) are
-    /// omitted.
+    /// An attribute that cannot be carried faithfully makes this fail rather
+    /// than being dropped, so nothing is lost without a word. Anything read
+    /// from a real file round-trips: [`AttributeValue::read`] only ever
+    /// produces a concretely-typed, correctly-sized value. The failure is
+    /// reachable only for a hand-built [`AttributeValue::Other`] whose bytes do
+    /// not match its declared type, or whose type carries a process address
+    /// ([`AttributeValue::is_writable`] reports which). Strip such an attribute
+    /// first if a partial write is wanted.
     pub(crate) fn to_sys(&self) -> Result<cxx::UniquePtr<sys::imageio::ImageSpec>> {
         if self.format == PixelFormat::Other {
             return Err(Error::InvalidImageSpec(
