@@ -440,11 +440,25 @@ imagespec_attribute_set_bytes(ImageSpec& spec, const rust::Str name,
     const OIIO::TypeDesc type(std::string(type_name.data(), type_name.size()));
     if (type == OIIO::TypeUnknown)
         return false;
+    // An array whose length is not concrete defeats every check below.
+    // TypeDesc::fromstring presets arraylen to -1, so "float[]" parses to -1
+    // and "uint8[-3]" to -3, while TypeDesc::size() clamps the count to at
+    // least one -- so "float[]" measures four bytes and a four byte payload
+    // sails through. The clamp is not applied on the way back out: both
+    // sprint_type and format_type size their loop as `arraylen ? arraylen : 1`
+    // with the raw value, and size_t(-1) walks off the end of the stored value.
+    if (type.arraylen < 0)
+        return false;
     // The value must be exactly the size the type describes, or OpenImageIO
     // would read past what was handed to it.
     if (type.size() != bytes.size())
         return false;
     if (type.basetype == OIIO::TypeDesc::STRING)
+        return false;
+    // A pointer or a hashed string carries a raw process address, which is
+    // meaningless in another process and would be written into the file.
+    if (type.basetype == OIIO::TypeDesc::PTR
+        || type.basetype == OIIO::TypeDesc::USTRINGHASH)
         return false;
 
     spec.attribute(to_string_view(name), type, bytes.data());

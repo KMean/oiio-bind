@@ -570,3 +570,57 @@ fn a_buffer_whose_read_failed_does_not_hand_back_the_heap() {
     lazy.get_pixels_into(roi, &mut through).unwrap();
     assert!(through.iter().any(|value| *value != -1.0));
 }
+
+/// An attribute whose type is an array with no concrete length.
+///
+/// `TypeDesc::fromstring` presets `arraylen` to -1, so `"float[]"` parses to -1
+/// and `"uint8[-3]"` to -3, while `TypeDesc::size()` clamps the element count
+/// to at least one -- so `"float[]"` measures four bytes and a four byte
+/// payload passed the size check. The clamp is not applied on the way back out:
+/// `sprint_type` and `format_type` both size their loop as
+/// `arraylen ? arraylen : 1` with the raw value, and `size_t(-1)` is
+/// 18446744073709551615, so reading the spec back walked off the end of a four
+/// byte inline buffer.
+#[test]
+fn an_attribute_with_an_unsized_array_type_is_refused() {
+    for type_name in ["float[]", "uint8[-3]", "int[-1]", "float[-1000]"] {
+        let spec = ImageSpec::new(4, 4, 3, PixelFormat::U8)
+            .unwrap()
+            .with_attribute(
+                "probe",
+                oiio::AttributeValue::Other {
+                    type_name: type_name.to_owned(),
+                    value: String::new(),
+                    bytes: vec![0_u8; 4],
+                },
+            );
+
+        // Either the spec refuses it or the buffer does; what must not happen
+        // is that it is stored and then stringified on the way back out.
+        if let Ok(buffer) = ImageBuf::new(&spec) {
+            let restored = buffer.spec().expect("reading the spec back");
+            assert!(
+                restored.attribute("probe").is_none(),
+                "{type_name} was stored anyway"
+            );
+        }
+    }
+
+    // A concrete array still works.
+    let spec = ImageSpec::new(4, 4, 3, PixelFormat::U8)
+        .unwrap()
+        .with_attribute(
+            "good",
+            oiio::AttributeValue::Other {
+                type_name: "float[2]".to_owned(),
+                value: String::new(),
+                bytes: 1.0_f32
+                    .to_ne_bytes()
+                    .into_iter()
+                    .chain(2.0_f32.to_ne_bytes())
+                    .collect(),
+            },
+        );
+    let buffer = ImageBuf::new(&spec).unwrap();
+    assert!(buffer.spec().unwrap().attribute("good").is_some());
+}
