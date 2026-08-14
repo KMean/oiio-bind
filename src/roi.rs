@@ -107,6 +107,54 @@ impl Roi {
         difference(self.channel_begin, self.channel_end)
     }
 
+    /// The smallest region containing both, on every axis.
+    ///
+    /// Two valid regions can union to one wider than the crate accepts, so
+    /// the result is re-validated rather than assumed.
+    pub fn union(&self, other: &Roi) -> Result<Roi> {
+        Self::new(
+            self.x_begin.min(other.x_begin)..self.x_end.max(other.x_end),
+            self.y_begin.min(other.y_begin)..self.y_end.max(other.y_end),
+            self.z_begin.min(other.z_begin)..self.z_end.max(other.z_end),
+            (self.channel_begin.min(other.channel_begin) as u32)
+                ..(self.channel_end.max(other.channel_end) as u32),
+        )
+    }
+
+    /// The overlap of two regions, or `None` when they share nothing.
+    ///
+    /// OpenImageIO's own intersection returns an inverted region for disjoint
+    /// inputs — end before begin — whose width then goes negative in whatever
+    /// arithmetic touches it next. Absence is an `Option`, not an inversion.
+    pub fn intersection(&self, other: &Roi) -> Option<Roi> {
+        let x = self.x_begin.max(other.x_begin)..self.x_end.min(other.x_end);
+        let y = self.y_begin.max(other.y_begin)..self.y_end.min(other.y_end);
+        let z = self.z_begin.max(other.z_begin)..self.z_end.min(other.z_end);
+        let channels =
+            self.channel_begin.max(other.channel_begin)..self.channel_end.min(other.channel_end);
+        if x.is_empty() || y.is_empty() || z.is_empty() || channels.is_empty() {
+            return None;
+        }
+        Self::new(x, y, z, (channels.start as u32)..(channels.end as u32)).ok()
+    }
+
+    /// Whether a pixel coordinate lies inside this region, at depth zero.
+    pub fn contains(&self, x: i32, y: i32) -> bool {
+        self.x().contains(&x) && self.y().contains(&y)
+    }
+
+    /// Whether every pixel and channel of `other` lies inside this region.
+    pub fn contains_roi(&self, other: &Roi) -> bool {
+        self.x_begin <= other.x_begin
+            && self.x_end >= other.x_end
+            && self.y_begin <= other.y_begin
+            && self.y_end >= other.y_end
+            && self.z_begin <= other.z_begin
+            && self.z_end >= other.z_end
+            && self.channel_begin <= other.channel_begin
+            && self.channel_end >= other.channel_end
+    }
+
     /// Number of scalar channel values described by this region.
     pub fn element_count(&self) -> Result<usize> {
         [
@@ -253,6 +301,39 @@ fn checked_end(name: &str, origin: i32, size: u32) -> Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn algebra_unions_intersects_and_contains() {
+        let a = Roi::new(0..4, 0..4, 0..1, 0..3).unwrap();
+        let b = Roi::new(2..8, 1..3, 0..1, 1..5).unwrap();
+
+        let union = a.union(&b).unwrap();
+        assert_eq!(union.x(), 0..8);
+        assert_eq!(union.y(), 0..4);
+        assert_eq!(union.channels(), 0..5);
+
+        let overlap = a.intersection(&b).unwrap();
+        assert_eq!(overlap.x(), 2..4);
+        assert_eq!(overlap.y(), 1..3);
+        assert_eq!(overlap.channels(), 1..3);
+
+        // Disjoint on x: absence, not an inverted region.
+        let far = Roi::new(100..104, 0..4, 0..1, 0..3).unwrap();
+        assert!(a.intersection(&far).is_none());
+        // Disjoint only on channels counts too.
+        let other_channels = Roi::new(0..4, 0..4, 0..1, 3..5).unwrap();
+        assert!(a.intersection(&other_channels).is_none());
+
+        assert!(a.contains(3, 3));
+        assert!(!a.contains(4, 3), "the range is half-open");
+        assert!(union.contains_roi(&a) && union.contains_roi(&b));
+        assert!(!a.contains_roi(&b));
+
+        // A union that would overflow the span cap is an error, not a wrap.
+        let low = Roi::new(i32::MIN + 1..i32::MIN + 2, 0..1, 0..1, 0..1).unwrap();
+        let high = Roi::new(i32::MAX - 1..i32::MAX, 0..1, 0..1, 0..1).unwrap();
+        assert!(low.union(&high).is_err());
+    }
 
     #[test]
     fn rejects_empty_and_reversed_ranges() {
