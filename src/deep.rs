@@ -90,6 +90,19 @@ impl DeepImage {
             ));
         }
 
+        // DeepData::init indexes its per-pixel sample vectors with an int, so a
+        // pixel count past i32::MAX truncates to a negative one and the resize
+        // below throws out of a shim cxx wraps noexcept -- std::terminate. This
+        // is the same cap ImageBuf::new applies to a deep spec; DeepImage was
+        // the other half of it.
+        let pixels = spec.pixel_count()?;
+        if pixels > i32::MAX as usize {
+            return Err(Error::InvalidImageSpec(format!(
+                "a deep image is limited to {} pixels, and this spec has {pixels}",
+                i32::MAX
+            )));
+        }
+
         let native_spec = spec.to_sys()?;
         let Some(native_spec) = native_spec.as_ref() else {
             return Err(Error::InvalidImageSpec(
@@ -104,7 +117,10 @@ impl DeepImage {
                 "OpenImageIO could not allocate deep data".to_owned(),
             ));
         };
-        sys::deepdata::deepdata_init_from_spec(pinned, native_spec);
+        let mut error = String::new();
+        if !sys::deepdata::deepdata_init_from_spec(pinned, native_spec, &mut error) {
+            return Err(Error::operation("create deep image", error));
+        }
 
         Self::from_parts(inner, spec)
     }

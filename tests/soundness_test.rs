@@ -15,7 +15,7 @@
 mod common;
 
 use oiio::algo::{FitMode, Operand};
-use oiio::{algo, ImageBuf, ImageInput, ImageSpec, PixelFormat, Roi};
+use oiio::{algo, DeepImage, ImageBuf, ImageInput, ImageSpec, PixelFormat, Roi};
 
 fn flat(width: u32, height: u32, channels: u32) -> ImageBuf {
     let spec = ImageSpec::new(width, height, channels, PixelFormat::F32).unwrap();
@@ -527,6 +527,14 @@ fn a_spec_too_large_to_allocate_is_an_error_not_an_abort() {
         .unwrap()
         .as_deep();
     assert!(ImageBuf::new(&deep).is_err());
+
+    // DeepImage::new reaches the same DeepData::init and needs the same cap:
+    // 65536 x 65536 pixels truncate to a negative int, and the resize that
+    // negative reaches throws out of a noexcept shim -- std::terminate.
+    assert!(
+        DeepImage::new(&deep).is_err(),
+        "a deep image past the int pixel cap should be refused, not truncated"
+    );
 }
 
 /// A buffer whose read failed handed back uninitialised heap and called it Ok.

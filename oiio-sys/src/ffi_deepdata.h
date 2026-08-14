@@ -35,8 +35,9 @@ deepdata_init(DeepData& deepdata, int64_t npix, int nchan,
               rust::Slice<const TypeDesc> channeltypes,
               rust::Slice<const rust::String> channelnames);
 
-void
-deepdata_init_from_spec(DeepData& deepdata, const ImageSpec& spec);
+bool
+deepdata_init_from_spec(DeepData& deepdata, const ImageSpec& spec,
+                        rust::String& error);
 
 bool
 deepdata_initialized(const DeepData& deepdata);

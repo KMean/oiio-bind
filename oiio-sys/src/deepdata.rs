@@ -32,7 +32,11 @@ mod ffi {
             channelnames: &[String],
         );
 
-        pub fn deepdata_init_from_spec(deepdata: Pin<&mut DeepData>, spec: &ImageSpec);
+        pub fn deepdata_init_from_spec(
+            deepdata: Pin<&mut DeepData>,
+            spec: &ImageSpec,
+            error: &mut String,
+        ) -> bool;
 
         pub fn deepdata_initialized(deepdata: &DeepData) -> bool;
 

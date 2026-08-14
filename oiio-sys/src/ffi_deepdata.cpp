@@ -60,10 +60,25 @@ deepdata_init(DeepData& deepdata, int64_t npix, int nchan,
     deepdata.init(npix, nchan, c_channeltypes, c_channelnames);
 }
 
-void
-deepdata_init_from_spec(DeepData& deepdata, const ImageSpec& spec)
+bool
+deepdata_init_from_spec(DeepData& deepdata, const ImageSpec& spec,
+                        rust::String& error)
 {
-    deepdata.init(spec);
+    // DeepData::init resizes three per-pixel vectors with no try/catch, so a
+    // deep spec whose pixel count is within the i32 cap but still too large for
+    // the machine throws bad_alloc straight out. This shim is noexcept, so that
+    // would be std::terminate. Catch it and report, as the flat path does.
+    error = rust::String();
+    try {
+        deepdata.init(spec);
+        return true;
+    } catch (const std::exception& exception) {
+        const std::string recorded = exception.what();
+        error = rust::String::lossy(
+            recorded.empty() ? "OpenImageIO could not allocate the deep image"
+                             : recorded.c_str());
+        return false;
+    }
 }
 
 bool

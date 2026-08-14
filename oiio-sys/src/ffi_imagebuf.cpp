@@ -45,33 +45,50 @@ imagebuf_new_from_spec_checked(const ImageSpec& spec, rust::String& error)
     // ImageBufAlgo::zero, which asserts on localpixels() and then divides by
     // zero, so the constructor never returns and there is nothing to check.
     // Allocating first and zeroing afterwards gives us the chance.
-    auto buffer = std::make_unique<ImageBuf>(spec, OIIO::InitializePixels::No);
+    //
+    // The flat allocation is caught by new_pixels and reported through
+    // localpixels(), but the deep allocation is not: realloc's deep branch
+    // calls DeepData::init, which resizes three per-pixel vectors with no
+    // try/catch of its own, so a deep spec too large for the machine throws
+    // straight out of the constructor. This shim is wrapped noexcept by cxx,
+    // so an escaping exception would be std::terminate. Catch it here and turn
+    // it into an error, the same courtesy new_pixels does for the flat case.
+    try {
+        auto buffer = std::make_unique<ImageBuf>(spec, OIIO::InitializePixels::No);
 
-    // A deep image legitimately has no flat storage: realloc passes size 0 and
-    // the samples live in the DeepData. Only a flat image must have pixels.
-    if (!spec.deep && buffer->localpixels() == nullptr) {
-        std::string recorded = buffer->geterror(true);
-        if (recorded.empty())
-            recorded = OIIO::Strutil::fmt::format(
-                "OpenImageIO could not allocate {} bytes for the image",
-                spec.image_bytes());
-        error = rust::String::lossy(recorded.data(), recorded.size());
-        return {};
-    }
-    if (buffer->has_error()) {
-        const std::string recorded = buffer->geterror(true);
-        error = rust::String::lossy(recorded.data(), recorded.size());
-        return {};
-    }
+        // A deep image legitimately has no flat storage: realloc passes size 0
+        // and the samples live in the DeepData. Only a flat image must have
+        // pixels.
+        if (!spec.deep && buffer->localpixels() == nullptr) {
+            std::string recorded = buffer->geterror(true);
+            if (recorded.empty())
+                recorded = OIIO::Strutil::fmt::format(
+                    "OpenImageIO could not allocate {} bytes for the image",
+                    spec.image_bytes());
+            error = rust::String::lossy(recorded.data(), recorded.size());
+            return {};
+        }
+        if (buffer->has_error()) {
+            const std::string recorded = buffer->geterror(true);
+            error = rust::String::lossy(recorded.data(), recorded.size());
+            return {};
+        }
 
-    if (!spec.deep && !OIIO::ImageBufAlgo::zero(*buffer)) {
-        const std::string recorded = buffer->geterror(true);
+        if (!spec.deep && !OIIO::ImageBufAlgo::zero(*buffer)) {
+            const std::string recorded = buffer->geterror(true);
+            error = rust::String::lossy(
+                recorded.empty() ? "OpenImageIO could not clear the image"
+                                 : recorded.c_str());
+            return {};
+        }
+        return buffer;
+    } catch (const std::exception& exception) {
+        const std::string recorded = exception.what();
         error = rust::String::lossy(
-            recorded.empty() ? "OpenImageIO could not clear the image"
+            recorded.empty() ? "OpenImageIO could not allocate the image"
                              : recorded.c_str());
         return {};
     }
-    return buffer;
 }
 
 std::unique_ptr<ImageBuf>
