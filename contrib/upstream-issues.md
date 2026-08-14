@@ -740,3 +740,53 @@ contiguous destination, so this is reached through the public API rather than
 through OpenImageIO's own paths — but `copy_image` is `OIIO_API` and the header
 recommends it over the pointer form. This binding uses the pointer overload and
 is not affected.
+
+---
+
+## Open — `IBAprep` allocates the destination uninitialised, and something on 3.1.14 does not fill it
+
+Not yet reproduced locally. Recorded because a property test found it on CI and
+the mechanism is only half established.
+
+`ImageBufAlgo::IBAprep` allocates a destination the caller left empty with
+
+```cpp
+dst->reset(spec, (prepflags & IBAprep_FILL_ZERO_ALLOC)
+                     ? InitializePixels::Yes
+                     : InitializePixels::No);
+```
+
+`imagebufalgo.cpp:258`. Nothing in the tree passes `IBAprep_FILL_ZERO_ALLOC`,
+so every operation that allocates its own destination starts from uninitialised
+heap, and anything it does not go on to write is returned to the caller as
+image data with a success return.
+
+The lines immediately after it are meant to close that for the channel axis:
+when `IBAprep_CLAMP_MUTUAL_NCHANNELS` clamps the written range to the narrower
+source, the range from there to `dst->nchannels()` is zeroed. On 3.1.12 that
+holds — `mad` with a one-channel and a two-channel source produces a
+two-channel destination and both channels come back written.
+
+On the OpenImageIO 3.1.14 that CI builds against, it does not. `tests/property_test.rs`
+reported:
+
+```
+mad reported success over the whole image but left 2.28e32 at element 47,
+which it never wrote.
+  a = 8x3, 1 channel, F16, origin 5,7
+  b = 8x7, 2 channels, U16, origin 5,7
+  mad(dst, a, Image(b), Constant([0.5])), whole image
+```
+
+Element 47 of an 8x7x2 buffer is x=7, y=2, channel 1 — exactly the channel the
+clamp excludes and the clear is supposed to cover.
+
+What is established: the allocation is uninitialised, nothing requests
+otherwise, and the clearing that compensates is version-dependent enough that
+one build of 3.1.14 did not do it. What is not: whether 3.1.14 differs here,
+whether the Highway SIMD path (`mad_impl_hwy`, enabled by `OIIO_USE_HWY`) skips
+the clear, or whether the clear itself has a condition that this shape misses.
+
+Worth settling before it is reported, because the general shape — an operation
+that reports success while handing back heap it never wrote — is not specific
+to `mad`.

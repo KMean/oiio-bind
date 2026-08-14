@@ -171,6 +171,10 @@ imagecache_get_pixels_span_with_error(
 
 // The same bounded read, addressed by a resolved handle instead of a file
 // name, so repeated reads skip the name lookup.
+int
+imagecache_handle_is_deep(ImageCache& imagecache, ImageHandle* file,
+                          Perthread* thread_info, int subimage);
+
 bool
 imagecache_get_pixels_handle_span_with_error(
     ImageCache& imagecache, ImageHandle* file, Perthread* thread_info,

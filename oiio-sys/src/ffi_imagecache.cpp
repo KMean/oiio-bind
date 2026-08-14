@@ -369,6 +369,24 @@ imagecache_get_pixels_span_with_error(
     return false;
 }
 
+int
+imagecache_handle_is_deep(ImageCache& imagecache, ImageHandle* file,
+                          Perthread* thread_info, int subimage)
+{
+    if (file == nullptr)
+        return -1;
+    if (thread_info != nullptr)
+        thread_info = imagecache.get_perthread_info(thread_info);
+    ImageSpec spec;
+    if (!imagecache.get_imagespec(file, thread_info, spec, subimage)) {
+        // Drain, so the failure is not left pending on the cache for an
+        // unrelated call to pick up.
+        (void)imagecache.geterror(true);
+        return -1;
+    }
+    return spec.deep ? 1 : 0;
+}
+
 bool
 imagecache_get_pixels_handle_span_with_error(
     ImageCache& imagecache, ImageHandle* file, Perthread* thread_info,

@@ -159,7 +159,21 @@ fn check_result(operation: &str, outcome: oiio::Result<()>, image: &ImageBuf, wh
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig { cases: 48, ..ProptestConfig::default() })]
+    // Each run explores different shapes, which is the point: this layer is
+    // here to find cases nobody thought of. Anything it does find should be
+    // pinned as its own test in `soundness_test.rs`, which is where the
+    // reproduced cases live, so that the fix has a deterministic guard and
+    // this stays free to look elsewhere. `contrib/fuzzing.md` explains why the
+    // second layer is proptest rather than cargo-fuzz.
+    //
+    // Failures are not persisted to a file: proptest wants to write one next
+    // to the source, which is neither useful in CI nor wanted in the tree. The
+    // failing input is printed, which is what a pinned test is written from.
+    #![proptest_config(ProptestConfig {
+        cases: 48,
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    })]
 
     /// The operations that take one source and a region: the largest family,
     /// and the one where a bad region has the most ways in.

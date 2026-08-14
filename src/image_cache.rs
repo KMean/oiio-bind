@@ -475,6 +475,25 @@ impl<'cache> ImageHandle<'cache> {
 
         let inner = self.inner;
         let thread_info = thread_state.map_or(std::ptr::null_mut(), |state| state.inner);
+
+        // The shim refuses a deep image too, since that is where the guard has
+        // to be, but it can only report a message. Ask first so this path
+        // returns the same typed error the by-name read does.
+        let deep = self.cache.with_cache(|cache| {
+            // SAFETY: the handle and per-thread record belong to this cache and
+            // outlive the call.
+            unsafe {
+                sys::imagecache::imagecache_handle_is_deep(
+                    cache,
+                    inner,
+                    thread_info,
+                    subimage_index,
+                )
+            }
+        });
+        if deep == 1 {
+            return Err(Error::UnsupportedDeepImage);
+        }
         let sys_roi = roi.to_sys();
         let mut error = String::new();
         let succeeded = self.cache.with_cache(|cache| {

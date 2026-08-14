@@ -422,3 +422,44 @@ fn per_thread_state_from_another_cache_is_refused() {
         .unwrap();
     assert_eq!(pixels, whole);
 }
+
+/// A deep file read through a handle used to report success and return zeros,
+/// where the same read by file name returned `Error::UnsupportedDeepImage`.
+/// Both paths refuse it, and both say the same thing.
+#[test]
+fn a_deep_file_is_refused_the_same_way_through_both_cache_paths() {
+    let scratch = ScratchDir::new("deephandle");
+    let path = scratch.file("deep.exr");
+
+    let spec = ImageSpec::new(4, 4, 5, PixelFormat::F32)
+        .unwrap()
+        .with_channel_names(["R", "G", "B", "A", "Z"])
+        .unwrap()
+        .as_deep();
+    let mut deep = oiio::DeepImage::new(&spec).unwrap();
+    for y in 0..4 {
+        for x in 0..4 {
+            deep.set_sample_count(x, y, 1).unwrap();
+            deep.set_value(x, y, 4, 0, 10.0).unwrap();
+        }
+    }
+    let mut output = oiio::ImageOutput::create(&path, &spec).unwrap();
+    output.write_deep_image(&deep).unwrap();
+    output.close().unwrap();
+
+    let cache = ImageCache::new().unwrap();
+    let window = Roi::new(0..4, 0..4, 0..1, 0..5).unwrap();
+    let mut pixels = vec![-1.0_f32; window.element_count().unwrap()];
+
+    assert!(matches!(
+        cache.get_pixels_into(&path, window, &mut pixels),
+        Err(Error::UnsupportedDeepImage)
+    ));
+
+    let handle = cache.handle(&path).unwrap();
+    assert!(matches!(
+        handle.get_pixels_into(window, &mut pixels),
+        Err(Error::UnsupportedDeepImage)
+    ));
+    assert!(pixels.iter().all(|value| *value == -1.0));
+}

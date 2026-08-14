@@ -296,6 +296,13 @@ mod ffi {
 
         /// Safety: `file` must be a live handle from this cache, and
         /// `thread_info` null or a live per-thread record.
+        pub unsafe fn imagecache_handle_is_deep(
+            imagecache: Pin<&mut ImageCache>,
+            file: *mut ImageHandle,
+            thread_info: *mut Perthread,
+            subimage: i32,
+        ) -> i32;
+
         pub unsafe fn imagecache_get_pixels_handle_span_with_error(
             imagecache: Pin<&mut ImageCache>,
             file: *mut ImageHandle,
