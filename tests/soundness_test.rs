@@ -868,6 +868,37 @@ fn a_deep_channel_name_that_is_not_utf8_is_read_lossily_not_fatally() {
     assert_eq!(read.value(0, 0, 0, 0).unwrap(), 0.25);
 }
 
+/// `copy` into a pre-allocated destination it cannot cover.
+///
+/// Property testing on the 3.1.14 CI builds caught a one-channel 2x7 source
+/// copied into a 10x6, five-channel F16 destination at 100000,100000:
+/// success, with `inf` in a channel the copy never wrote — the same IBAprep
+/// uninitialised-destination class as `mad`, surfaced on macOS. The shapes
+/// the copy cannot cover are refused.
+#[test]
+fn copy_refuses_a_destination_it_cannot_cover() {
+    let source = flat(2, 7, 1);
+
+    // The CI shape: disjoint windows and a wider destination.
+    let far = ImageSpec::new(10, 6, 5, PixelFormat::F16)
+        .unwrap()
+        .with_origin([100_000, 100_000, 0]);
+    let mut dst = ImageBuf::new(&far).unwrap();
+    assert!(algo::copy(&mut dst, &source, None, None).is_err());
+
+    // A channel mismatch alone is enough, windows overlapping or not.
+    let mut dst = ImageBuf::new(&ImageSpec::new(4, 4, 5, PixelFormat::F32).unwrap()).unwrap();
+    assert!(algo::copy(&mut dst, &source, None, None).is_err());
+
+    // Matching shapes still copy into an allocated destination, and an empty
+    // destination still takes any source.
+    let mut dst = flat(2, 7, 1);
+    algo::copy(&mut dst, &source, None, None).unwrap();
+    let mut dst = ImageBuf::empty().unwrap();
+    algo::copy(&mut dst, &source, None, None).unwrap();
+    assert_eq!(dst.channel_count(), 1);
+}
+
 /// `mad` with two image sources of different channel counts.
 ///
 /// The destination is sized from the wider source, and `IBAprep` allocates it

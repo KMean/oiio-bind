@@ -710,6 +710,31 @@ imagebufalgo_copy(ImageBuf& dst, const ImageBuf& src, TypeDesc convert,
         return false;
     if (refuse_mixed_deep(dst, src, "copy"))
         return false;
+    // A destination that is already allocated keeps its own shape: OpenImageIO
+    // clamps the copied range against it rather than resizing it, and what the
+    // clamp excludes is returned as it lies. Property testing on the 3.1.14 CI
+    // builds caught a one-channel source copied into a pre-allocated
+    // five-channel destination whose window did not even overlap the source's:
+    // success, with a channel the copy never wrote holding inf — the same
+    // IBAprep uninitialised-destination class as mad. Refuse the shapes the
+    // copy cannot cover, rather than depend on which OpenImageIO is linked.
+    if (dst.initialized() && !dst.deep()) {
+        if (dst.nchannels() != src.nchannels()) {
+            dst.errorfmt("copy: the destination is allocated with {} channels "
+                         "and the source has {}; line them up with channels "
+                         "first, or copy into an empty destination",
+                         dst.nchannels(), src.nchannels());
+            return false;
+        }
+        const OIIO::ROI overlap = OIIO::roi_intersection(dst.roi(), src.roi());
+        if (overlap.xend <= overlap.xbegin || overlap.yend <= overlap.ybegin) {
+            dst.errorfmt(
+                "copy: the source's data window does not reach the allocated "
+                "destination, so nothing would be copied and the destination "
+                "would come back unchanged under a success return");
+            return false;
+        }
+    }
     return OIIO::ImageBufAlgo::copy(dst, src, convert, roi, nthreads);
 }
 

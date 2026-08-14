@@ -935,9 +935,13 @@ one build of 3.1.14 did not do it. What is not: whether 3.1.14 differs here,
 whether the Highway SIMD path (`mad_impl_hwy`, enabled by `OIIO_USE_HWY`) skips
 the clear, or whether the clear itself has a condition that this shape misses.
 
-Property testing hit it twice, on different platforms and different shapes, and
-both were the same class: `mad` with two image sources of unequal channel
-counts, with the channels beyond the narrower source left holding heap.
+Property testing has now hit the class three times, on different platforms,
+different operations and different shapes. Twice through `mad` with two image
+sources of unequal channel counts, with the channels beyond the narrower
+source left holding heap; then through `copy` on macOS/3.1.14 — a one-channel
+2x7 source at the origin copied into a pre-allocated 10x6 five-channel F16
+destination at 100000,100000 returned success with `inf` in channel 4 of the
+first pixel, memory the copy never wrote.
 
 | build | a | b | destination | unwritten |
 | --- | --- | --- | --- | --- |

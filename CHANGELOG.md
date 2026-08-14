@@ -185,6 +185,15 @@ before the fork, but nothing was ever published under it, so starting both at
   the sample resurrection its `ImageBuf` sibling already admitted — shrink
   keeps the room, regrow brings the old values back — pinned by a test.
 
+- `copy` refuses a pre-allocated destination it cannot cover — a channel
+  count that disagrees with the source's, or a data window the source does
+  not reach. Property testing on the 3.1.14 CI builds caught the second
+  operation in the `IBAprep` uninitialised-destination class `mad` was the
+  first of: a one-channel source copied into a disjoint five-channel
+  destination returned success with `inf` in a channel the copy never wrote.
+  The class is recorded as the open observation in
+  `contrib/upstream-issues.md`, now with three sightings.
+
 - A third review — nine reviewers fanned across every module plus a
   cross-cutting sweep, each finding verified against the OpenImageIO source —
   found eight more. What it caught, again, were guards applied to one family
