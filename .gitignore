@@ -4,3 +4,9 @@ target/
 # proptest records failing inputs here; they are machine-local findings, not
 # fixtures — a real one becomes a named test in tests/soundness_test.rs.
 *.proptest-regressions
+
+# Scratch images from running repros by hand at the repo root. The tests
+# write only under their own scratch directories; nothing in the tree is a
+# committed image, and the corpora are external and opt-in.
+/*.exr
+/span-demo/
