@@ -109,6 +109,14 @@ before the fork, but nothing was ever published under it, so starting both at
 - Tests against OpenImageIO's and OpenEXR's own image corpora, opt-in through
   `OIIO_BIND_TEST_IMAGES` and `OIIO_BIND_TEST_EXR_IMAGES`, including
   OpenEXR's `Damaged` directory of reader crash cases.
+- `ImageBuf::read_channels` and `read_channels_at`: read a channel subset of
+  a file-backed buffer. The range is validated against the native spec of
+  the subimage actually being read — upstream never checks `chbegin`,
+  silently clamps `chend`, terminates on a reversed range, and writes one
+  channel into a zero-channel allocation when the range is empty — and the
+  result is verified afterwards, because OpenImageIO's re-read early-out
+  compares only the channel count and would otherwise keep a previously
+  read same-sized subset while reporting success.
 - `ImageSpec` carries per-channel pixel formats — the mixed `half`/`float`
   layout most multi-AOV EXRs use — as `channel_formats`, with
   `with_channel_formats`, `channel_format` and a full write/read round trip.

@@ -195,6 +195,147 @@ impl ImageBuf {
         self.check("read image buffer", succeeded)
     }
 
+    /// Read only channels `channels.start..channels.end` of the attached
+    /// file.
+    ///
+    /// Equivalent to [`ImageBuf::read_channels_at`] with subimage 0, mip
+    /// level 0 and no conversion.
+    pub fn read_channels(&mut self, channels: std::ops::Range<u32>) -> Result<()> {
+        self.read_channels_at(0, 0, channels, None)
+    }
+
+    /// Read a channel subset of one subimage and mip level, optionally
+    /// converting the pixels.
+    ///
+    /// On success the buffer holds exactly the requested channels,
+    /// renumbered from zero, and [`ImageBuf::spec`] reflects that shape;
+    /// [`ImageBuf::native_spec`] keeps the file's full channel list.
+    /// OpenImageIO documents the subset as advisory — "not guaranteed to be
+    /// honored by the underlying implementation" — so this method verifies
+    /// afterwards that the buffer holds the channels asked for, and reports
+    /// an error when OpenImageIO kept something else.
+    ///
+    /// The range must be non-empty, ascending and within the native channel
+    /// count of the requested subimage. Deep images are refused: OpenImageIO
+    /// reads a deep file whole and ignores both the range and `convert_to`.
+    ///
+    /// A buffer that already holds a *different* subset of the *same size*
+    /// of the same subimage cannot be re-read in place — OpenImageIO's
+    /// early-out compares only the channel count — so that call returns an
+    /// error naming the channels the buffer kept. Read the full range first,
+    /// or use a fresh buffer. Files with duplicate channel names can defeat
+    /// this detection.
+    ///
+    /// Passing `None` keeps the file's own format.
+    pub fn read_channels_at(
+        &mut self,
+        subimage: u32,
+        mip_level: u32,
+        channels: std::ops::Range<u32>,
+        convert_to: Option<PixelFormat>,
+    ) -> Result<()> {
+        const OPERATION: &str = "read image buffer channels";
+        let subimage = level_index(subimage)?;
+        let mip_level = level_index(mip_level)?;
+
+        // An empty or reversed range must not reach C++: OpenImageIO sizes
+        // the buffer as chend - chbegin, so an inverted range turns a
+        // negative count into a huge resize whose length_error is
+        // std::terminate under the noexcept shim, and an equal pair
+        // allocates zero channels that the reader then writes one channel
+        // of every pixel into.
+        if channels.start >= channels.end {
+            return Err(Error::InvalidRoi(format!(
+                "channel range {}..{} is empty or reversed",
+                channels.start, channels.end
+            )));
+        }
+
+        // A buffer with no attached file reports success having read
+        // nothing; say so instead.
+        let filename = self.name().to_owned();
+        if filename.is_empty() {
+            return Err(Error::operation(
+                OPERATION,
+                "this buffer is not attached to a file".to_owned(),
+            ));
+        }
+
+        // Resolve the requested subimage's native spec before validating —
+        // OpenImageIO clamps against the native spec only after its own
+        // init_spec, so validating against the current subimage would check
+        // the wrong image. The call is idempotent once resolved.
+        if !sys::imagebuf::imagebuf_init_spec(self.inner_mut(), &filename, subimage, mip_level) {
+            return Err(Error::operation(OPERATION, self.take_error()));
+        }
+        let native = self.native_spec()?;
+
+        // A deep file is read whole, before the channel range or conversion
+        // are consulted, which would quietly answer this call with every
+        // channel in the file's own format.
+        if native.is_deep() {
+            return Err(Error::operation(
+                OPERATION,
+                "this image is deep, and OpenImageIO reads a deep file whole, \
+                 ignoring the channel subset; use ImageBuf::read"
+                    .to_owned(),
+            ));
+        }
+
+        // chbegin is never validated upstream, and a too-large chend is
+        // silently clamped, handing back fewer channels than asked for
+        // under a success return.
+        let count = native.channel_count();
+        if channels.end > count {
+            return Err(Error::InvalidRoi(format!(
+                "channel range {}..{} is outside the native channel count {count}",
+                channels.start, channels.end
+            )));
+        }
+        let to_i32 = |value: u32| {
+            i32::try_from(value)
+                .map_err(|_| Error::InvalidRoi("channel index exceeds i32::MAX".to_owned()))
+        };
+        let chbegin = to_i32(channels.start)?;
+        let chend = to_i32(channels.end)?;
+
+        // force is always true: without it, OpenImageIO's first early-out
+        // returns an already-read buffer untouched without looking at the
+        // channel range at all.
+        let convert = convert_to.unwrap_or(PixelFormat::Other).to_sys();
+        let succeeded = sys::imagebuf::imagebuf_read_subset(
+            self.inner_mut(),
+            subimage,
+            mip_level,
+            chbegin,
+            chend,
+            true,
+            convert,
+        );
+        self.check(OPERATION, succeeded)?;
+
+        // The second early-out compares only the channel count: a buffer
+        // already holding a same-sized different subset of this subimage
+        // reports success while keeping the old channels. The subset is
+        // also documented as advisory. Verify what the buffer holds.
+        let expected = &native.channel_names()[channels.start as usize..channels.end as usize];
+        let held = self.spec()?;
+        if held.channel_names() != expected {
+            return Err(Error::operation(
+                OPERATION,
+                format!(
+                    "the buffer kept previously read channels {:?} instead of {:?}; \
+                     OpenImageIO does not re-read when only the position of a \
+                     same-sized channel range changes — read the full image first, \
+                     or use a fresh buffer",
+                    held.channel_names(),
+                    expected
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     /// The image's specification.
     pub fn spec(&self) -> Result<ImageSpec> {
         ImageSpec::from_sys(sys::imagebuf::imagebuf_spec(self.inner()))

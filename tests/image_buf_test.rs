@@ -178,6 +178,93 @@ fn writes_in_a_chosen_pixel_format() {
 }
 
 #[test]
+fn reads_a_channel_subset_of_a_written_file() {
+    let scratch = ScratchDir::new("bufsubset");
+    let (path, _spec, written) = fixture(&scratch, "image.exr");
+
+    let mut image = ImageBuf::from_path(&path).unwrap();
+    image.read_channels(1..3).unwrap();
+
+    // The buffer is shaped to the subset, renumbered from zero...
+    assert_eq!(image.channel_count(), 2);
+    assert_eq!(image.spec().unwrap().channel_names(), ["G", "B"]);
+    assert_eq!(image.storage(), Storage::Local);
+    // ...while the native spec still describes the whole file.
+    assert_eq!(image.native_spec().unwrap().channel_count(), 3);
+
+    let roi = image.spec().unwrap().data_window().unwrap();
+    let mut pixels = vec![0.0_f32; roi.element_count().unwrap()];
+    image.get_pixels_into(roi, &mut pixels).unwrap();
+    let expected: Vec<f32> = written
+        .chunks(3)
+        .flat_map(|pixel| [pixel[1], pixel[2]])
+        .collect();
+    assert_eq!(pixels, expected);
+}
+
+#[test]
+fn refuses_an_empty_or_reversed_channel_range() {
+    let scratch = ScratchDir::new("bufsubsetempty");
+    let (path, _spec, _written) = fixture(&scratch, "image.exr");
+    let mut image = ImageBuf::from_path(&path).unwrap();
+
+    // Without the guard, an empty range is a heap overflow (the reader
+    // clamps chend up to chbegin + 1 into a zero-channel allocation) and a
+    // reversed one is a negative resize that terminates the process.
+    assert!(matches!(
+        image.read_channels(2..2),
+        Err(Error::InvalidRoi(_))
+    ));
+    #[allow(clippy::reversed_empty_ranges)]
+    let reversed = image.read_channels(3..1);
+    assert!(matches!(reversed, Err(Error::InvalidRoi(_))));
+    // The buffer still holds every channel, untouched by the refused calls.
+    assert_eq!(image.channel_count(), 3);
+}
+
+#[test]
+fn refuses_a_channel_range_past_the_native_count() {
+    let scratch = ScratchDir::new("bufsubsetend");
+    let (path, _spec, _written) = fixture(&scratch, "image.exr");
+    let mut image = ImageBuf::from_path(&path).unwrap();
+
+    // OpenImageIO would clamp past-the-end down to the native count and
+    // report success with fewer channels than asked for.
+    assert!(matches!(
+        image.read_channels(1..4),
+        Err(Error::InvalidRoi(_))
+    ));
+    assert!(matches!(
+        image.read_channels(0..4),
+        Err(Error::InvalidRoi(_))
+    ));
+    // The buffer still holds every channel, untouched by the refused calls.
+    assert_eq!(image.channel_count(), 3);
+}
+
+#[test]
+fn a_same_size_subset_swap_is_reported_not_silently_kept() {
+    let scratch = ScratchDir::new("bufsubsetswap");
+    let (path, _spec, _written) = fixture(&scratch, "image.exr");
+    let mut image = ImageBuf::from_path(&path).unwrap();
+    image.read_channels(1..3).unwrap();
+
+    // OpenImageIO's re-read early-out compares only the channel count, so
+    // it keeps G,B while reporting success for R,G. The wrapper must
+    // either deliver R,G (should upstream fix the early-out) or say what
+    // happened — never succeed holding the wrong channels.
+    match image.read_channels(0..2) {
+        Ok(()) => assert_eq!(image.spec().unwrap().channel_names(), ["R", "G"]),
+        Err(Error::Operation { operation, .. }) => {
+            assert_eq!(operation, "read image buffer channels")
+        }
+        Err(other) => panic!("unexpected error kind: {other:?}"),
+    }
+    // Whatever the outcome, the buffer's spec tells the truth.
+    assert_eq!(image.channel_count(), 2);
+}
+
+#[test]
 fn point_access_reads_writes_and_interpolates() {
     use oiio::Wrap;
 
