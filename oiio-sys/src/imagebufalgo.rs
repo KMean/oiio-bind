@@ -176,6 +176,7 @@ mod ffi {
             warnthresh: f32,
             roi: &ROI,
             nthreads: i32,
+            error: &mut String,
         ) -> CompareSummary;
 
         pub fn imagebufalgo_colorconvert(

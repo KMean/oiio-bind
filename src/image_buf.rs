@@ -275,10 +275,15 @@ impl ImageBuf {
 
     /// Set how many samples one pixel holds.
     ///
-    /// Growing a pixel leaves the new samples zeroed; shrinking discards the
-    /// ones past the new end.
+    /// Shrinking a pixel drops the samples past the new end but keeps the room
+    /// they occupied, so growing it again within that room brings their old
+    /// values back rather than zeroes. Write every sample you intend to read.
     pub fn set_deep_sample_count(&mut self, x: i32, y: i32, count: u32) -> Result<()> {
         self.require_deep("set deep sample count")?;
+        // OpenImageIO's setter indexes the pixel without checking the range,
+        // so an out-of-range coordinate silently resizes a different pixel —
+        // one the reader, which does check, then reports as empty.
+        self.require_inside("set deep sample count", x, y)?;
         let count = i32::try_from(count).map_err(|_| {
             Error::InvalidImageSpec("deep sample count exceeds i32::MAX".to_owned())
         })?;
@@ -349,6 +354,30 @@ impl ImageBuf {
             value,
         );
         Ok(())
+    }
+
+    /// Reject a coordinate outside the data window.
+    fn require_inside(&self, operation: &'static str, x: i32, y: i32) -> Result<()> {
+        let spec = self.spec()?;
+        let [origin_x, origin_y, _] = spec.origin();
+        let [width, height, _] = spec.dimensions();
+        let inside = x >= origin_x
+            && y >= origin_y
+            && (x - origin_x) < width as i32
+            && (y - origin_y) < height as i32;
+        if inside {
+            Ok(())
+        } else {
+            Err(Error::operation(
+                operation,
+                format!(
+                    "{x},{y} is outside the data window {origin_x},{origin_y} \
+                     to {},{}",
+                    origin_x + width as i32,
+                    origin_y + height as i32
+                ),
+            ))
+        }
     }
 
     fn require_deep(&self, operation: &'static str) -> Result<()> {

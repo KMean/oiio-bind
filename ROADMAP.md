@@ -78,8 +78,9 @@ line is established and tested deliberately.
 The bounded pixel calls validate the caller's buffer against the image
 specification and then pass explicit strides, rather than using OpenImageIO's
 `image_span` overloads. Two behaviours motivate that, both measured with
-`contrib/span_repro.cpp` — a standalone C++ program using only public
-OpenImageIO API, so neither depends on this crate — and both reproduced
+`contrib/span_tiled_read_repro.cpp` and
+`contrib/span_scanline_origin_repro.cpp` — standalone C++ programs using only
+public OpenImageIO API, so neither depends on this crate — and both reproduced
 identically on **3.1.12.0** and on **3.2.0.2dev** (`main`, August 2026):
 
 - `ImageInput::read_image` taking an `image_span` returns false, without
@@ -102,7 +103,7 @@ To check whether a newer OpenImageIO has fixed them, build the reproduction
 against it and run it; it exits non-zero when the two overloads disagree:
 
 ```
-cl /std:c++17 /EHsc /utf-8 /MD contrib/span_repro.cpp \
+cl /std:c++17 /EHsc /utf-8 /MD contrib/span_tiled_read_repro.cpp \
    /I <oiio>/include /I <deps>/include \
    /link /LIBPATH:<oiio>/lib OpenImageIO.lib OpenImageIO_Util.lib
 ```
@@ -149,10 +150,14 @@ The `ImageBufAlgo` surface is being completed in slices, each one commit:
   `half` to `float`, and OpenEXR demotes integer formats to `half`.
 - [x] Statistics and introspection: `pixel_stats`, `histogram`,
   `constant_color`, `is_constant_channel`, `is_monochrome`, `nonzero_region`
-  and `pixel_hash_sha1`. None of OpenImageIO's versions guards against a deep
-  image, whose iterators have no pixel pointer, and three of them read or write
-  out of bounds for regions the rest of `ImageBufAlgo` accepts; see issues 5, 6
-  and 7 in `contrib/upstream-issues.md`. The bindings guard all of it.
+  and `pixel_hash_sha1`. Three of them read or write out of bounds for regions
+  the rest of `ImageBufAlgo` accepts; see issues 5, 6 and 7 in
+  `contrib/upstream-issues.md`. Most also have no deep-image guard, and a deep
+  buffer has no pixel pointer to walk — the two exceptions are
+  `computePixelStats`, which has a per-sample branch, and `nonzero_region`,
+  which dispatches to `deep_nonempty_region`. This binding still refuses deep
+  images to `pixel_stats`, because per-sample figures under a per-pixel name
+  would mislead; `nonzero_region` accepts them.
 - [x] Remaining pixel maths: `mad`, `pow`, `clamp`, `min`, `max`,
   `contrast_remap`, `saturate`, `invert`, `paste`, `cut`. `Operand` mirrors
   OpenImageIO's `Image_or_Const` for the three operations that accept either.

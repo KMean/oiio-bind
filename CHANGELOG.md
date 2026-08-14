@@ -112,6 +112,27 @@ before the fork, but nothing was ever published under it, so starting both at
 
 ### Fixed
 
+- Safe Rust can no longer crash the process or read memory it does not own.
+  A pre-publication review found, and reproduced, several inputs that did:
+  a deep `ImageBuf` handed to any of seven entry points that walk contiguous
+  pixels (`fft`, `paste`, `copy`, `transpose`, `channel_sum`, and `convolve`'s
+  kernel and `st_warp`'s coordinate map — the last two are third images, which
+  OpenImageIO's own `IBAprep` never sees, and `fft` does not call it at all);
+  `ifft` on an ordinary overscan image, whose data window is smaller than its
+  display window, which returned heap contents as pixels; `pixel_hash_sha1` on
+  an `ImageBuf::empty()`, which divided by zero; `paste` with a channel offset
+  negative enough to reach `std::terminate`; `channel_sum` with fewer weights
+  than the source has channels, which read past the caller's own slice;
+  `warp`, `rotate` and an exact `fit` into a destination narrower than the
+  source, which wrote past a stack buffer; a region larger than the source
+  handed to any of the three OpenImageIO fast paths that take a raw pointer
+  from it; and `set_deep_sample_count` with a coordinate outside the image,
+  which resized a different pixel and reported success. Each is now refused or
+  clamped, and `tests/soundness_test.rs` covers every one.
+- `algo::compare` returns `Result`. `CompareResults` is a plain aggregate, so
+  when the comparison cannot be made — one image deep and the other flat —
+  OpenImageIO sets only its error flag and every measurement is left
+  whatever the stack held.
 - Colour operations no longer corrupt channels past the fourth. OpenImageIO's
   colour engine says in a comment that it copies leftover channels "unaltered
   from the source" and then writes `0.5 + 10 * source` into them, so any
@@ -130,14 +151,14 @@ before the fork, but nothing was ever published under it, so starting both at
 - The measurements cannot be made to read or write out of bounds, nor to
   dereference a deep image's absent pixel pointer. OpenImageIO's
   `isConstantColor` sizes its reference buffer to the region's channel count
-  but indexes it by absolute channel number; its `histogram` is alone among
-  the statistics in never clamping the channel range, so the 10000 a
-  default-constructed region carries is read from every pixel; and its
-  `computePixelHashSHA1` sizes its block results from the region but indexes
-  them from the image. None of the seven checks for a deep image. The
-  bindings refuse or clamp each case. Drafted for upstream as issues 5, 6 and
-  7; `pixel_hash_sha1` also does not expose the block size, which is the only
-  way to reach the third.
+  but indexes it by absolute channel number; its `histogram` never clamps the
+  channel range, so a region naming more channels than the image has is read
+  from every pixel; and its `computePixelHashSHA1` sizes its block results
+  from the region but indexes them from the image. Most of them also have no
+  deep-image guard — `computePixelStats` and `nonzero_region` are the two that
+  handle deep images properly. The bindings refuse or clamp each case.
+  Drafted for upstream as issues 5, 6 and 7; `pixel_hash_sha1` also does not
+  expose the block size, which is the only way to reach the third.
 - `algo::max` cannot be made to read or write out of bounds. OpenImageIO's
   image-against-image `max` widens its channel range where `min` narrows it,
   after the range has already been clamped to what the buffers hold, so it

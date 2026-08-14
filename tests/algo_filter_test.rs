@@ -244,12 +244,19 @@ fn dilate_grows_and_erode_shrinks() {
 /// Every pixel of the result has to come from somewhere in the source.
 /// OpenImageIO leaves -FLT_MAX or +FLT_MAX in pixels that had no source under
 /// them, and calls that success.
+///
+/// The region has to reach outside the source for that to be possible at all;
+/// with the default region it already equals the data window and the guard
+/// that clamps it has nothing to do. So this asks for a region twice the size
+/// of the image, which is the shape the guard exists for.
 #[test]
 fn dilate_and_erode_never_leave_a_float_extreme() {
-    let source = single_channel(8, 8);
+    let mut source = single_channel(8, 8);
+    algo::fill(&mut source, &[0.25], None).unwrap();
+    let beyond = Roi::new(-8..16, -8..16, 0..1, 0..1).unwrap();
 
     let mut grown = ImageBuf::empty().unwrap();
-    algo::dilate(&mut grown, &source, 3, None, None).unwrap();
+    algo::dilate(&mut grown, &source, 3, None, Some(beyond)).unwrap();
     let stats = algo::pixel_stats(&grown, None).unwrap();
     println!("dilate range: {} to {}", stats.min[0], stats.max[0]);
     assert!(
@@ -260,7 +267,7 @@ fn dilate_and_erode_never_leave_a_float_extreme() {
     );
 
     let mut shrunk = ImageBuf::empty().unwrap();
-    algo::erode(&mut shrunk, &source, 3, None, None).unwrap();
+    algo::erode(&mut shrunk, &source, 3, None, Some(beyond)).unwrap();
     let stats = algo::pixel_stats(&shrunk, None).unwrap();
     println!("erode range: {} to {}", stats.min[0], stats.max[0]);
     assert!(
@@ -332,10 +339,11 @@ fn the_inverse_transform_needs_pixels_in_memory() {
     algo::ifft(&mut back, &attached, None).unwrap();
 
     // A buffer that holds nothing at all is refused, not dereferenced.
+    // `soundness_test` covers the rest of ifft's preconditions.
     let nothing = ImageBuf::empty().unwrap();
     let error = algo::ifft(&mut back, &nothing, None).unwrap_err();
     println!("a source with no pixels reported as: {error}");
-    assert!(error.to_string().contains("not in memory"), "{error}");
+    assert!(error.to_string().contains("no pixels"), "{error}");
 }
 
 #[test]

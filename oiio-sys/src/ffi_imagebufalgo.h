@@ -149,9 +149,14 @@ bool
 imagebufalgo_transpose(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
                        int nthreads);
 
+// compare reports through an out parameter like the measurements do, because
+// CompareResults is a plain aggregate: when the comparison cannot be made,
+// OpenImageIO sets only its `error` flag and every measurement is left
+// uninitialised.
 CompareSummary
 imagebufalgo_compare(const ImageBuf& a, const ImageBuf& b, float failthresh,
-                     float warnthresh, const ROI& roi, int nthreads);
+                     float warnthresh, const ROI& roi, int nthreads,
+                     rust::String& error);
 
 // Colour space conversion using the default configuration, which is whatever
 // $OCIO names or OpenImageIO's built-in one.

@@ -111,12 +111,27 @@ fn histogram_clamps_rather_than_discarding() {
     assert_eq!(counts, vec![2, 2]);
 }
 
-/// A default region carries a channel end of 10000, which OpenImageIO's
-/// histogram is alone in not clamping; with `ignore_empty` it would read every
-/// channel up to that. Asking for it must be safe.
+/// OpenImageIO's histogram is alone among the statistics in never clamping
+/// the channel range, and with `ignore_empty` its inner loop reads every
+/// channel up to it. A `Roi` can name far more channels than the image has —
+/// nothing stops it — so the binding has to clamp.
+///
+/// The default region is not the dangerous one: `ROI()` carries `chend = 0`.
+/// The hazard needs a channel range asked for explicitly, which is what this
+/// passes.
 #[test]
-fn histogram_survives_a_wide_open_region() {
+fn histogram_clamps_a_channel_range_beyond_the_image() {
     let image = flat(8, 8, &[0.5, 0.5, 0.5]);
+    let far_too_many = Roi::new(0..8, 0..8, 0..1, 0..10_000).unwrap();
+
+    let counts = algo::histogram(&image, 0, 4, 0.0..1.0, true, Some(far_too_many)).unwrap();
+    assert_eq!(
+        counts.iter().sum::<u64>(),
+        64,
+        "every pixel should be counted exactly once"
+    );
+
+    // And the default region, which is the ordinary call.
     let counts = algo::histogram(&image, 0, 4, 0.0..1.0, true, None).unwrap();
     assert_eq!(counts.iter().sum::<u64>(), 64);
 }

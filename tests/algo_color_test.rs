@@ -161,8 +161,10 @@ fn a_look_with_no_spaces_named_does_not_crash() {
     let source = flat(4, 4, &[0.2, 0.4, 0.6]);
     let mut result = ImageBuf::empty().unwrap();
 
-    // No look, no spaces: the case that dereferences null upstream.
-    match algo::ocio_look(
+    // No look, no spaces: the case that dereferences null upstream. Whether
+    // the active configuration can satisfy it is not this test's business —
+    // that it answers at all, rather than taking the process down, is.
+    let outcome = algo::ocio_look(
         &mut result,
         &source,
         "",
@@ -170,10 +172,14 @@ fn a_look_with_no_spaces_named_does_not_crash() {
         None,
         &OcioOptions::default(),
         None,
-    ) {
+    );
+    match &outcome {
         Ok(()) => println!("converted through the default configuration"),
         Err(error) => println!("reported rather than crashed: {error}"),
     }
+    // Reaching this line at all is the assertion; make it one so the test
+    // cannot be mistaken for a check of the conversion itself.
+    assert!(outcome.is_ok() || outcome.is_err());
 }
 
 #[test]
@@ -190,10 +196,12 @@ fn a_look_that_does_not_exist_is_reported() {
         &OcioOptions::default(),
         None,
     );
-    match outcome {
-        Ok(()) => println!("this configuration accepted the look"),
-        Err(error) => println!("unknown look reported as: {error}"),
-    }
+    assert!(
+        outcome.is_err(),
+        "a look no configuration defines should be an error, not a silent \
+         pass-through"
+    );
+    println!("unknown look reported as: {}", outcome.unwrap_err());
 }
 
 #[test]

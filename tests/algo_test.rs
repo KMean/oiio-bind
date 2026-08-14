@@ -204,7 +204,7 @@ fn compare_measures_identical_and_differing_images() {
     let a = filled(&[0.5, 0.5, 0.5]);
     let identical = filled(&[0.5, 0.5, 0.5]);
 
-    let same = algo::compare(&a, &identical, 0.0, 0.0, None);
+    let same = algo::compare(&a, &identical, 0.0, 0.0, None).unwrap();
     assert_eq!(same.max_error, 0.0);
     assert_eq!(same.mean_error, 0.0);
     assert_eq!(same.failures, 0);
@@ -212,7 +212,7 @@ fn compare_measures_identical_and_differing_images() {
 
     // Every value differs by exactly 0.25.
     let different = filled(&[0.75, 0.75, 0.75]);
-    let differs = algo::compare(&a, &different, 0.1, 0.05, None);
+    let differs = algo::compare(&a, &different, 0.1, 0.05, None).unwrap();
     assert!((differs.max_error - 0.25).abs() < 1e-6);
     assert!((differs.mean_error - 0.25).abs() < 1e-6);
     assert!(differs.failed);
@@ -233,7 +233,7 @@ fn compare_is_how_a_round_trip_is_verified() {
     let mut read_back = ImageBuf::from_path(&path).unwrap();
     read_back.read().unwrap();
 
-    let results = algo::compare(&original, &read_back, 0.0, 0.0, None);
+    let results = algo::compare(&original, &read_back, 0.0, 0.0, None).unwrap();
     assert_eq!(results.max_error, 0.0, "the round trip was not exact");
     assert_eq!(results.failures, 0);
 }

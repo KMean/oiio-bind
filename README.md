@@ -153,7 +153,7 @@ let mut brighter = ImageBuf::new(&spec)?;
 algo::mul_constant(&mut brighter, &background, &[2.0, 2.0, 2.0], None)?;
 
 // How far apart are two images?
-let difference = algo::compare(&background, &brighter, 0.0, 0.0, None);
+let difference = algo::compare(&background, &brighter, 0.0, 0.0, None)?;
 println!("largest difference: {}", difference.max_error);
 # Ok::<(), oiio::Error>(())
 ```

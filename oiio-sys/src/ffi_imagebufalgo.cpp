@@ -70,6 +70,8 @@ bool
 repair_leftover_channels(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
                          int nthreads)
 {
+    // The region arrives already clamped to the source by color_region, and
+    // beginning at channel zero, so the scribble genuinely starts at 4.
     ROI bounded = roi.defined() ? roi : src.roi();
     bounded.chend = std::min(bounded.chend, src.nchannels());
     if (bounded.chend <= 4)
@@ -110,16 +112,95 @@ reject_deep(const ImageBuf& src, const char* operation, rust::String& error)
 }
 
 // A defined region is used verbatim by these calls, and a default-constructed
-// ROI carries chend = 10000. Bring it back to what the image actually holds.
+// ROI carries chend = 10000. Bring it back to what the image actually holds,
+// in space as well as in channels: OpenImageIO's iterators serve reads outside
+// the data window as black, but three of its fast paths take a raw pointer
+// from the region instead — simplePixelHashSHA1 and the float-RGBA colour path
+// among them — and read past the allocation.
 ROI
-bounded_channels(const ImageBuf& src, const ROI& roi)
+bounded_to_source(const ImageBuf& src, const ROI& roi)
 {
-    ROI bounded = roi;
-    if (!bounded.defined())
+    if (!roi.defined())
         return src.roi();
+    ROI bounded     = roi;
     bounded.chbegin = std::max(bounded.chbegin, 0);
     bounded.chend   = std::min(bounded.chend, src.nchannels());
-    return bounded;
+    return OIIO::roi_intersection(bounded, src.roi());
+}
+
+// A deep image has no contiguous pixels, so any kernel that walks them
+// dereferences a null pointer. IBAprep refuses deep images, but it is only
+// ever shown dst, A, B and C: an image passed separately — a convolution
+// kernel, an ST map — never reaches it, and fft skips IBAprep altogether.
+// Each such argument is checked here instead.
+bool
+refuse_deep(ImageBuf& dst, const ImageBuf& image, const char* operation,
+            const char* which)
+{
+    if (!image.deep())
+        return false;
+    dst.errorfmt("{}: the {} is a deep image, and this reads the contiguous "
+                 "pixels a deep image does not have",
+                 operation, which);
+    return true;
+}
+
+// copy and paste do support deep images, but only deep into deep. The mixed
+// cases fall through to the flat kernel; copy additionally calls IBAprep with
+// SUPPORT_DEEP and then discards its answer, so its own rejection never fires.
+bool
+refuse_mixed_deep(ImageBuf& dst, const ImageBuf& src, const char* operation)
+{
+    if (!dst.initialized() || dst.deep() == src.deep())
+        return false;
+    dst.errorfmt("{}: one of these images is deep and the other is not; "
+                 "OpenImageIO copies deep to deep or flat to flat, not across",
+                 operation);
+    return true;
+}
+
+// warp_ sizes its per-pixel scratch buffer from the destination and then has
+// filtered_sample fill it from the source, so a destination with fewer
+// channels is written past the end of a stack allocation. rotate and an exact
+// fit both reach the same kernel.
+bool
+refuse_narrow_destination(ImageBuf& dst, const ImageBuf& src,
+                          const char* operation)
+{
+    if (!dst.initialized() || dst.nchannels() >= src.nchannels())
+        return false;
+    dst.errorfmt("{}: the destination has {} channels and the source has {}; "
+                 "OpenImageIO writes past its own per-pixel buffer when the "
+                 "destination is narrower",
+                 operation, dst.nchannels(), src.nchannels());
+    return true;
+}
+
+// The colour engine mishandles a region that starts above channel zero in
+// three separate ways, all measured: it transforms channels 0..n rather than
+// the ones asked for, it leaves the requested upper channels merely copied,
+// and the scribble described above begins at min(4, roi.nchannels()) rather
+// than at channel 4, so it lands below where the repair reaches. No ordering
+// of the repair rescues that, so the region is refused instead — the same
+// shape is_constant_color and nonzero_region already refuse.
+//
+// The region is clamped to the source as well, because the float-RGBA fast
+// path memcpys from the source's pixel address across the region's width, and
+// IBAprep has only intersected the region with the destination.
+bool
+color_region(ImageBuf& dst, const ImageBuf& src, const ROI& roi, ROI& bounded,
+             const char* operation)
+{
+    if (refuse_deep(dst, src, operation, "source"))
+        return false;
+    bounded = bounded_to_source(src, roi);
+    if (bounded.chbegin != 0) {
+        dst.errorfmt("{}: the region must begin at channel zero; OpenImageIO "
+                     "transforms the wrong channels otherwise",
+                     operation);
+        return false;
+    }
+    return true;
 }
 
 }  // namespace
@@ -143,7 +224,7 @@ imagebufalgo_pixel_stats(const ImageBuf& src, const ROI& roi, int nthreads)
     src.geterror(true);
 
     const OIIO::ImageBufAlgo::PixelStats stats
-        = OIIO::ImageBufAlgo::computePixelStats(src, bounded_channels(src, roi),
+        = OIIO::ImageBufAlgo::computePixelStats(src, bounded_to_source(src, roi),
                                                 nthreads);
     if (stats.min.empty()) {
         std::string message = src.geterror(true);
@@ -190,7 +271,7 @@ imagebufalgo_histogram(const ImageBuf& src, int channel, int bins, float min,
     const std::vector<OIIO::imagesize_t> counts
         = OIIO::ImageBufAlgo::histogram(src, channel, bins, min, max,
                                         ignore_empty,
-                                        bounded_channels(src, roi), nthreads);
+                                        bounded_to_source(src, roi), nthreads);
     if (counts.empty()) {
         std::string message = src.geterror(true);
         if (message.empty())
@@ -213,7 +294,7 @@ imagebufalgo_is_constant_color(const ImageBuf& src, float threshold,
     if (reject_deep(src, "is_constant_color", error))
         return false;
 
-    const ROI bounded = bounded_channels(src, roi);
+    const ROI bounded = bounded_to_source(src, roi);
     if (bounded.chbegin != 0) {
         // imagebufalgo_compare.cpp sizes the reference vector to the region's
         // channel count but indexes it with absolute channel numbers, so a
@@ -259,7 +340,7 @@ imagebufalgo_is_constant_channel(const ImageBuf& src, int channel, float value,
     src.geterror(true);
     const bool constant
         = OIIO::ImageBufAlgo::isConstantChannel(src, channel, value, threshold,
-                                                bounded_channels(src, roi),
+                                                bounded_to_source(src, roi),
                                                 nthreads);
     if (!constant) {
         const std::string message = src.geterror(true);
@@ -279,7 +360,7 @@ imagebufalgo_is_monochrome(const ImageBuf& src, float threshold, const ROI& roi,
     src.geterror(true);
     const bool monochrome
         = OIIO::ImageBufAlgo::isMonochrome(src, threshold,
-                                           bounded_channels(src, roi),
+                                           bounded_to_source(src, roi),
                                            nthreads);
     if (!monochrome) {
         const std::string message = src.geterror(true);
@@ -293,7 +374,7 @@ ROI
 imagebufalgo_nonzero_region(const ImageBuf& src, const ROI& roi, int nthreads,
                             rust::String& error)
 {
-    const ROI bounded = bounded_channels(src, roi);
+    const ROI bounded = bounded_to_source(src, roi);
     if (bounded.chbegin != 0) {
         // nonzero_region trims by calling isConstantColor, so it inherits that
         // function's out-of-bounds write for a region above channel zero.
@@ -312,6 +393,15 @@ imagebufalgo_pixel_hash_sha1(const ImageBuf& src, const rust::Str extrainfo,
 {
     if (reject_deep(src, "pixel_hash_sha1", error))
         return rust::String();
+    if (!src.initialized() || src.spec().pixel_bytes() == 0
+        || src.roi().width() == 0) {
+        // simplePixelHashSHA1 divides by roi.width() * pixel_bytes() without
+        // checking it, so an empty buffer takes the process down with an
+        // integer division by zero.
+        error = rust::String(
+            "pixel_hash_sha1: the image holds no pixels to hash");
+        return rust::String();
+    }
 
     src.geterror(true);
     // Block size fixed at 0: any other value changes the digest for identical
@@ -320,7 +410,7 @@ imagebufalgo_pixel_hash_sha1(const ImageBuf& src, const rust::Str extrainfo,
     const std::string digest
         = OIIO::ImageBufAlgo::computePixelHashSHA1(src,
                                                    to_string_view(extrainfo),
-                                                   bounded_channels(src, roi),
+                                                   bounded_to_source(src, roi),
                                                    0, nthreads);
     if (digest.empty()) {
         std::string message = src.geterror(true);
@@ -421,6 +511,8 @@ bool
 imagebufalgo_copy(ImageBuf& dst, const ImageBuf& src, TypeDesc convert,
                   const ROI& roi, int nthreads)
 {
+    if (refuse_mixed_deep(dst, src, "copy"))
+        return false;
     return OIIO::ImageBufAlgo::copy(dst, src, convert, roi, nthreads);
 }
 
@@ -449,6 +541,8 @@ bool
 imagebufalgo_transpose(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
                        int nthreads)
 {
+    if (refuse_deep(dst, src, "transpose", "source"))
+        return false;
     return OIIO::ImageBufAlgo::transpose(dst, src, roi, nthreads);
 }
 
@@ -457,13 +551,17 @@ imagebufalgo_colorconvert(ImageBuf& dst, const ImageBuf& src,
                           const rust::Str fromspace, const rust::Str tospace,
                           bool unpremult, const ROI& roi, int nthreads)
 {
+    ROI bounded;
+    if (!color_region(dst, src, roi, bounded, "colorconvert"))
+        return false;
+
     const std::string from(to_string_view(fromspace));
     const std::string to(to_string_view(tospace));
     if (!OIIO::ImageBufAlgo::colorconvert(dst, src, from, to, unpremult, "", "",
-                                          &default_color_config(), roi,
+                                          &default_color_config(), bounded,
                                           nthreads))
         return false;
-    return repair_leftover_channels(dst, src, roi, nthreads);
+    return repair_leftover_channels(dst, src, bounded, nthreads);
 }
 
 bool
@@ -477,15 +575,19 @@ imagebufalgo_colormatrixtransform(ImageBuf& dst, const ImageBuf& src,
                      matrix.size());
         return false;
     }
+    ROI bounded;
+    if (!color_region(dst, src, roi, bounded, "colour matrix transform"))
+        return false;
+
     float m[4][4];
     for (std::size_t row = 0; row < 4; ++row)
         for (std::size_t column = 0; column < 4; ++column)
             m[row][column] = matrix[row * 4 + column];
 
-    if (!OIIO::ImageBufAlgo::colormatrixtransform(dst, src, m, unpremult, roi,
-                                                  nthreads))
+    if (!OIIO::ImageBufAlgo::colormatrixtransform(dst, src, m, unpremult,
+                                                  bounded, nthreads))
         return false;
-    return repair_leftover_channels(dst, src, roi, nthreads);
+    return repair_leftover_channels(dst, src, bounded, nthreads);
 }
 
 bool
@@ -502,11 +604,15 @@ imagebufalgo_ociolook(ImageBuf& dst, const ImageBuf& src,
     const std::string key(to_string_view(context_key));
     const std::string value(to_string_view(context_value));
 
+    ROI bounded;
+    if (!color_region(dst, src, roi, bounded, "ociolook"))
+        return false;
     if (!OIIO::ImageBufAlgo::ociolook(dst, src, look_list, from, to, unpremult,
                                       inverse, key, value,
-                                      &default_color_config(), roi, nthreads))
+                                      &default_color_config(), bounded,
+                                      nthreads))
         return false;
-    return repair_leftover_channels(dst, src, roi, nthreads);
+    return repair_leftover_channels(dst, src, bounded, nthreads);
 }
 
 bool
@@ -525,12 +631,15 @@ imagebufalgo_ociodisplay(ImageBuf& dst, const ImageBuf& src,
     const std::string key(to_string_view(context_key));
     const std::string value(to_string_view(context_value));
 
+    ROI bounded;
+    if (!color_region(dst, src, roi, bounded, "ociodisplay"))
+        return false;
     if (!OIIO::ImageBufAlgo::ociodisplay(dst, src, display_name, view_name,
                                          from, look_list, unpremult, inverse,
                                          key, value, &default_color_config(),
-                                         roi, nthreads))
+                                         bounded, nthreads))
         return false;
-    return repair_leftover_channels(dst, src, roi, nthreads);
+    return repair_leftover_channels(dst, src, bounded, nthreads);
 }
 
 bool
@@ -546,11 +655,14 @@ imagebufalgo_ociofiletransform(ImageBuf& dst, const ImageBuf& src,
         dst.errorfmt("colour file transform: no transform file was named");
         return false;
     }
+    ROI bounded;
+    if (!color_region(dst, src, roi, bounded, "ociofiletransform"))
+        return false;
     if (!OIIO::ImageBufAlgo::ociofiletransform(dst, src, transform, unpremult,
                                                inverse, &default_color_config(),
-                                               roi, nthreads))
+                                               bounded, nthreads))
         return false;
-    return repair_leftover_channels(dst, src, roi, nthreads);
+    return repair_leftover_channels(dst, src, bounded, nthreads);
 }
 
 bool
@@ -564,12 +676,15 @@ imagebufalgo_ocionamedtransform(ImageBuf& dst, const ImageBuf& src,
     const std::string key(to_string_view(context_key));
     const std::string value(to_string_view(context_value));
 
+    ROI bounded;
+    if (!color_region(dst, src, roi, bounded, "ocionamedtransform"))
+        return false;
     if (!OIIO::ImageBufAlgo::ocionamedtransform(dst, src, transform, unpremult,
                                                 inverse, key, value,
-                                                &default_color_config(), roi,
-                                                nthreads))
+                                                &default_color_config(),
+                                                bounded, nthreads))
         return false;
-    return repair_leftover_channels(dst, src, roi, nthreads);
+    return repair_leftover_channels(dst, src, bounded, nthreads);
 }
 
 bool
@@ -591,6 +706,9 @@ imagebufalgo_fit(ImageBuf& dst, const ImageBuf& src, const rust::Str filtername,
                  float filterwidth, const rust::Str fillmode, bool exact,
                  const ROI& roi, int nthreads)
 {
+    // An exact fit reaches warp_, which sizes its scratch buffer from dst.
+    if (exact && refuse_narrow_destination(dst, src, "fit"))
+        return false;
     OIIO::ParamValueList options;
     if (filtername.size() != 0)
         options["filtername"] = std::string(filtername.data(),
@@ -636,6 +754,17 @@ imagebufalgo_channel_sum(ImageBuf& dst, const ImageBuf& src,
                          rust::Slice<const float> weights, const ROI& roi,
                          int nthreads)
 {
+    if (refuse_deep(dst, src, "channel_sum", "source"))
+        return false;
+    // OpenImageIO pads the weights to the DESTINATION's channel count, which
+    // is one, and then indexes them across the SOURCE's channels. A shorter
+    // slice than the source has channels is read past its end.
+    if (std::ptrdiff_t(weights.size()) != std::ptrdiff_t(src.nchannels())) {
+        dst.errorfmt("channel_sum: expected one weight per source channel, "
+                     "got {} for {} channels",
+                     weights.size(), src.nchannels());
+        return false;
+    }
     return OIIO::ImageBufAlgo::channel_sum(dst, src, to_cspan(weights), roi,
                                            nthreads);
 }
@@ -663,11 +792,38 @@ imagebufalgo_channels(ImageBuf& dst, const ImageBuf& src, int nchannels,
 
 CompareSummary
 imagebufalgo_compare(const ImageBuf& a, const ImageBuf& b, float failthresh,
-                     float warnthresh, const ROI& roi, int nthreads)
+                     float warnthresh, const ROI& roi, int nthreads,
+                     rust::String& error)
 {
+    CompareSummary refused {};
+    if (a.deep() != b.deep()) {
+        // CompareResults is a plain aggregate with no initialisers. When the
+        // images disagree about deepness, compare sets only `error` and
+        // returns, leaving every measurement indeterminate — so there is
+        // nothing here worth handing back.
+        error = rust::String(
+            "compare: one image is deep and the other is not");
+        return refused;
+    }
+    if (!a.initialized() || !b.initialized()) {
+        error = rust::String("compare: both images must hold pixels");
+        return refused;
+    }
+
+    a.geterror(true);
     const OIIO::ImageBufAlgo::CompareResults results
         = OIIO::ImageBufAlgo::compare(a, b, failthresh, warnthresh, roi,
                                       nthreads);
+    if (results.error && results.nfail == 0) {
+        // `error` means "some values exceeded the fail threshold" on the
+        // normal path and "the comparison did not happen" otherwise; nfail
+        // tells the two apart.
+        std::string message = a.geterror(true);
+        if (message.empty())
+            message = "OpenImageIO could not compare these images";
+        error = rust::String(message);
+        return refused;
+    }
     CompareSummary summary;
     summary.mean_error                = results.meanerror;
     summary.root_mean_square_error    = results.rms_error;
@@ -901,6 +1057,9 @@ imagebufalgo_convolve(ImageBuf& dst, const ImageBuf& src,
         dst.errorfmt("convolve: the kernel is empty");
         return false;
     }
+    // The kernel is a third image, so IBAprep never sees it.
+    if (refuse_deep(dst, kernel, "convolve", "kernel"))
+        return false;
     return OIIO::ImageBufAlgo::convolve(dst, src, kernel, normalize, roi,
                                         nthreads);
 }
@@ -1003,6 +1162,15 @@ bool
 imagebufalgo_fft(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
                  int nthreads)
 {
+    // fft never calls IBAprep; it goes straight to paste, which walks the
+    // source's pixels, and then to hfft_, whose assertions a release build
+    // compiles away.
+    if (refuse_deep(dst, src, "fft", "source"))
+        return false;
+    if (!src.initialized() || src.roi().npixels() == 0) {
+        dst.errorfmt("fft: the source holds no pixels to transform");
+        return false;
+    }
     return OIIO::ImageBufAlgo::fft(dst, src, roi, nthreads);
 }
 
@@ -1010,12 +1178,39 @@ bool
 imagebufalgo_ifft(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
                   int nthreads)
 {
+    if (refuse_deep(dst, src, "ifft", "source"))
+        return false;
+    if (!src.initialized() || src.roi().npixels() == 0) {
+        dst.errorfmt("ifft: the source holds no pixels to transform");
+        return false;
+    }
     if (!src.localpixels()) {
         // hfft_ casts src.pixeladdr(...) to a complex pointer behind an
         // assertion that a release build compiles out. A cache-backed buffer
         // answers that address with null.
         dst.errorfmt("ifft: the source's pixels are not in memory; read the "
                      "image before transforming it");
+        return false;
+    }
+
+    // Being in memory is not enough. ifft transforms the union of the source's
+    // data and display windows, allocates its working buffer at the origin
+    // with that size, and then reads the SOURCE at those same coordinates —
+    // hfft_'s own assertion says dst.roi() == src.roi(), and nothing enforces
+    // it. So a data window that does not start at the origin, or that is
+    // smaller than the display window, walks off the allocation: the first
+    // crashes, the second quietly returns heap contents as pixels. An overscan
+    // EXR is exactly the second shape, and so is anything algo::crop produced.
+    const ROI transformed = OIIO::roi_union(src.roi(), src.roi_full());
+    if (src.spec().x != 0 || src.spec().y != 0 || src.spec().z != 0
+        || !src.roi().contains(transformed)) {
+        dst.errorfmt(
+            "ifft: the source's pixels must start at the origin and cover its "
+            "display window. This one holds {},{} to {},{} with a display "
+            "window of {},{} to {},{}; OpenImageIO would read outside it",
+            src.roi().xbegin, src.roi().ybegin, src.roi().xend, src.roi().yend,
+            src.roi_full().xbegin, src.roi_full().ybegin, src.roi_full().xend,
+            src.roi_full().yend);
         return false;
     }
     return OIIO::ImageBufAlgo::ifft(dst, src, roi, nthreads);
@@ -1077,6 +1272,8 @@ imagebufalgo_rotate(ImageBuf& dst, const ImageBuf& src, float angle,
                     const rust::Str filtername, float filterwidth,
                     bool recompute_roi, const ROI& roi, int nthreads)
 {
+    if (refuse_narrow_destination(dst, src, "rotate"))
+        return false;
     if (!has_center)
         return OIIO::ImageBufAlgo::rotate(dst, src, angle,
                                           to_string_view(filtername),
@@ -1098,6 +1295,8 @@ imagebufalgo_warp(ImageBuf& dst, const ImageBuf& src,
                      matrix.size());
         return false;
     }
+    if (refuse_narrow_destination(dst, src, "warp"))
+        return false;
     float m[3][3];
     for (std::size_t row = 0; row < 3; ++row)
         for (std::size_t column = 0; column < 3; ++column)
@@ -1133,6 +1332,9 @@ imagebufalgo_st_warp(ImageBuf& dst, const ImageBuf& src, const ImageBuf& stbuf,
                      chan_s, chan_t);
         return false;
     }
+    // stbuf is a third image, so IBAprep never sees it.
+    if (refuse_deep(dst, stbuf, "st_warp", "coordinate map"))
+        return false;
     return OIIO::ImageBufAlgo::st_warp(dst, src, stbuf,
                                        to_string_view(filtername), filterwidth,
                                        chan_s, chan_t, flip_s, flip_t, roi,
@@ -1291,8 +1493,35 @@ imagebufalgo_paste(ImageBuf& dst, int xbegin, int ybegin, int zbegin,
                    int chbegin, const ImageBuf& src, const ROI& srcroi,
                    int nthreads)
 {
-    return OIIO::ImageBufAlgo::paste(dst, xbegin, ybegin, zbegin, chbegin, src,
-                                     srcroi, nthreads);
+    if (refuse_mixed_deep(dst, src, "paste"))
+        return false;
+
+    // chbegin offsets the source's channels into the destination and is not
+    // clamped anywhere. Far enough negative and the destination's channel
+    // count goes negative too, at which point IBAprep hands it to
+    // default_channel_names(), which is noexcept and reserves that many —
+    // std::terminate, with nothing printed.
+    const ROI source = srcroi.defined() ? srcroi : src.roi();
+    if (chbegin + source.chend <= 0) {
+        dst.errorfmt("paste: a first channel of {} leaves the source's {} "
+                     "channels entirely outside the destination",
+                     chbegin, source.nchannels());
+        return false;
+    }
+
+    if (!OIIO::ImageBufAlgo::paste(dst, xbegin, ybegin, zbegin, chbegin, src,
+                                   srcroi, nthreads))
+        return false;
+    if (!dst.initialized()) {
+        // OpenImageIO can leave the destination unallocated and still report
+        // success, having recorded its complaint through an assertion rather
+        // than an error.
+        dst.errorfmt("paste: the destination could not be sized from a first "
+                     "channel of {}",
+                     chbegin);
+        return false;
+    }
+    return true;
 }
 
 bool

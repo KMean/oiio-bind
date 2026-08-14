@@ -196,23 +196,42 @@ fn a_written_texture_can_be_looked_up() {
     println!("centre of a texture we made: {rgb:?}");
     assert!(rgb.iter().all(|value| (0.0..=1.0).contains(value)));
 
-    // A lookup with a wide footprint reads a coarse mip level, which for a
-    // checkerboard averages towards the mean of its two colours.
-    let mut wide = [0.0_f32; 3];
-    textures
-        .texture(
-            &output,
-            &oiio::TextureOptions::default(),
-            0.5,
-            0.5,
-            oiio::Derivatives::uniform(0.5),
-            &mut wide,
-        )
-        .unwrap();
-    println!("the same point, filtered across half the texture: {wide:?}");
+    // A lookup with a wide footprint reads a coarse mip level. Asserting only
+    // that the result is near the checkerboard's mean would prove nothing —
+    // the point sampled above happens to sit on a bright square whose value is
+    // already near it. What distinguishes the levels is that the coarse one
+    // has averaged the squares away, so neighbouring lookups agree with each
+    // other where fine ones do not.
+    let sample = |footprint: f32, s: f32| {
+        let mut rgb = [0.0_f32; 3];
+        textures
+            .texture(
+                &output,
+                &oiio::TextureOptions::default(),
+                s,
+                0.5,
+                oiio::Derivatives::uniform(footprint),
+                &mut rgb,
+            )
+            .unwrap();
+        rgb[0]
+    };
+
+    let fine_spread = (0..8)
+        .map(|i| sample(1.0 / 64.0, 0.1 + i as f32 * 0.1))
+        .fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)));
+    let coarse_spread = (0..8)
+        .map(|i| sample(0.5, 0.1 + i as f32 * 0.1))
+        .fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)));
+
+    let fine = fine_spread.1 - fine_spread.0;
+    let coarse = coarse_spread.1 - coarse_spread.0;
+    println!("spread across the texture: fine {fine:.4}, coarse {coarse:.4}");
     assert!(
-        (wide[0] - 0.45).abs() < 0.15,
-        "a coarse level should approach the average of 0.9 and 0.0, got {wide:?}"
+        coarse < fine * 0.5,
+        "a coarse mip level should have averaged the squares away, so its \
+         samples vary less than the finest level's: fine {fine}, coarse \
+         {coarse}"
     );
 }
 

@@ -1,9 +1,23 @@
 //! Operations on [`ImageBuf`], mirroring OpenImageIO's `ImageBufAlgo`.
 //!
-//! Every operation writes into a destination buffer and takes an optional
+//! Most operations write into a destination buffer and take an optional
 //! region; `None` means the whole image, which is OpenImageIO's own default.
 //! Because the destination is `&mut` and the sources are `&`, Rust rejects at
 //! compile time the aliasing cases these functions are not written for.
+//!
+//! The measurements ([`pixel_stats`], [`histogram`], [`constant_color`],
+//! [`is_constant_channel`], [`is_monochrome`], [`nonzero_region`],
+//! [`pixel_hash_sha1`] and [`compare`]) return what they found rather than
+//! filling a buffer, [`make_kernel`] and [`text_size`] return a new value, and
+//! [`reorient`] takes no region because it always works on the whole image.
+//!
+//! # Which region, whose
+//!
+//! A region normally names part of the **destination**. Six operations read it
+//! as part of the **source** instead: [`paste`], the three right-angle
+//! rotations, and [`flip`], [`flop`] and [`transpose`], each of which derives
+//! where the result lands from where the region sat. Their parameter is named
+//! `src_roi` where the distinction is theirs to make.
 //!
 //! ```no_run
 //! use oiio::{algo, ImageBuf, ImageSpec, PixelFormat};
@@ -49,7 +63,10 @@ pub fn zero(dst: &mut ImageBuf, roi: Option<Roi>) -> Result<()> {
 
 /// Fill the region with one value per channel.
 ///
-/// Fewer values than the image has channels fills only those channels.
+/// Fewer values than the image has channels repeats the last one across the
+/// rest — so filling an RGBA image with three values sets alpha to the blue
+/// value, not to nothing. Narrow the region's channel range to fill only some
+/// channels.
 pub fn fill(dst: &mut ImageBuf, values: &[f32], roi: Option<Roi>) -> Result<()> {
     if values.is_empty() {
         return Err(Error::InvalidImageSpec(
@@ -1144,9 +1161,9 @@ pub fn histogram(
 /// `None` means the image varies. The colour is one value per channel of the
 /// source, with channels outside the region zeroed.
 ///
-/// A `threshold` of zero compares the stored values exactly, in the image's own
-/// format, so two `half` values that differ only after conversion to `f32` still
-/// count as equal.
+/// A `threshold` of zero compares the stored values exactly, in the image's
+/// own format, without converting each to `f32` first. That is faster; it is
+/// not a different answer, since conversion from a narrower format is exact.
 ///
 /// The region must begin at channel zero. OpenImageIO sizes its reference
 /// buffer to the region's channel count but fills it by absolute channel
@@ -1288,9 +1305,9 @@ pub fn pixel_hash_sha1(src: &ImageBuf, extra_info: &str, roi: Option<Roi>) -> Re
 
 /// Rotate a quarter turn clockwise.
 ///
-/// The region selects part of the **source**, not of the destination — the
-/// three right-angle rotations and [`paste`] are the only operations here that
-/// work that way. Prefer an empty destination: OpenImageIO installs the rotated
+/// The region selects part of the **source**, not of the destination; the
+/// module documentation lists the six operations that do, `flip`, `flop` and
+/// `transpose` among them. Prefer an empty destination: OpenImageIO installs the rotated
 /// display window only when it allocates one itself, and reads a pre-allocated
 /// destination's display window while writing, so one that disagrees with the
 /// source's yields silently offset pixels.
@@ -1755,13 +1772,19 @@ pub fn saturate(
 
 /// Copy part of one image into another at a given position.
 ///
-/// `src_roi` selects part of the **source**, not of the destination — this is
-/// the one region argument here that does. The destination position is an
-/// offset applied to the source's own coordinates, so a source whose data
-/// window begins at x=100 pasted at `x = 0` lands at x=100, not at the origin.
+/// `src_roi` selects part of the **source**, not of the destination; the
+/// module documentation lists the six operations that do. The destination
+/// position is an offset applied to the source's own coordinates, so a source
+/// whose data window begins at x=100 pasted at `x = 0` lands at x=100, not at
+/// the origin.
 ///
 /// Pixels and channels that fall outside the destination are dropped silently,
 /// so a paste can be partial without reporting anything.
+///
+/// `first_channel` may be negative, which lands a later source channel on the
+/// destination's first. It may not be negative enough to put every source
+/// channel outside the destination: OpenImageIO would size the destination
+/// from a negative channel count and terminate the process.
 pub fn paste(
     dst: &mut ImageBuf,
     position: [i32; 3],
@@ -1786,10 +1809,11 @@ pub fn paste(
 /// Extract a region and move it to the origin.
 ///
 /// This is [`crop`] followed by a reposition: the result's display window
-/// covers exactly the extracted rectangle, starting at 0,0. Unlike `crop`, and
-/// unlike the rest of this module, the destination is always discarded first,
-/// so it cannot be pre-allocated to choose an output format — the result takes
-/// the source's.
+/// covers exactly the extracted rectangle, starting at 0,0.
+///
+/// As with `crop`, and unlike the rest of this module, the destination is
+/// discarded before anything is written, so pre-allocating one does not choose
+/// the output format — the result always takes the source's.
 ///
 /// A channel range narrows which channels survive but does not renumber them:
 /// the result keeps the source's channel count with the others blacked out.
@@ -1842,6 +1866,10 @@ pub fn copy(
 }
 
 /// Crop to a region, keeping the pixels' original coordinates.
+///
+/// The destination is discarded first, so unlike most of this module it cannot
+/// be pre-allocated to choose the result's pixel format; the result takes the
+/// source's. [`cut`] additionally moves the result to the origin.
 pub fn crop(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region(roi);
     let succeeded =
@@ -2006,7 +2034,12 @@ pub fn unpremult(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result
     finish(dst, "unpremultiply", succeeded)
 }
 
-/// Sum the channels into a single-channel image, optionally weighted.
+/// Sum the channels into a single-channel image, weighted.
+///
+/// There must be exactly one weight per source channel. OpenImageIO pads a
+/// short list against the *destination's* channel count, which is one, and
+/// then reads it across the source's channels — past the end of the caller's
+/// own slice. Pass ones for an unweighted sum.
 pub fn channel_sum(
     dst: &mut ImageBuf,
     src: &ImageBuf,
@@ -2151,20 +2184,32 @@ pub fn color_convert(
 /// `fail_threshold` and `warn_threshold` are per-channel absolute differences.
 /// The result reports the mean and maximum error, where the worst pixel is,
 /// and how many values exceeded each threshold.
+///
+/// This fails rather than reporting nonsense when the comparison cannot be
+/// made — one image deep and the other flat, or either holding no pixels. In
+/// those cases OpenImageIO returns a result whose measurements were never
+/// assigned, so there is nothing to hand back.
 pub fn compare(
     a: &ImageBuf,
     b: &ImageBuf,
     fail_threshold: f32,
     warn_threshold: f32,
     roi: Option<Roi>,
-) -> CompareSummary {
+) -> Result<CompareSummary> {
     let roi = region(roi);
-    sys::imagebufalgo::imagebufalgo_compare(
+    let mut message = String::new();
+    let summary = sys::imagebufalgo::imagebufalgo_compare(
         a.inner(),
         b.inner(),
         fail_threshold,
         warn_threshold,
         &roi,
         ALL_THREADS,
-    )
+        &mut message,
+    );
+    if message.is_empty() {
+        Ok(summary)
+    } else {
+        Err(Error::operation("compare", message))
+    }
 }

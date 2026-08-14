@@ -186,12 +186,68 @@ fn rotating_by_zero_changes_nothing() {
     let values = all_values(&result);
     let original = all_values(&source);
     assert_eq!(values.len(), original.len());
+    assert!(!values.is_empty(), "the result should not be empty");
     for (got, want) in values.iter().zip(&original) {
         assert!(
             (got - want).abs() < 1e-3,
             "a rotation by zero should be the identity"
         );
     }
+}
+
+/// The module claims `rotate` turns clockwise. Zero and pi are the two angles
+/// that cannot show it — both look the same either way round — so this pins
+/// the direction with a quarter turn, against the right-angle operation whose
+/// own direction is already established.
+#[test]
+fn rotating_by_a_quarter_turn_goes_the_same_way_as_rotate_90() {
+    let source = positional(8, 4);
+
+    let mut by_angle = ImageBuf::empty().unwrap();
+    algo::rotate(
+        &mut by_angle,
+        &source,
+        std::f32::consts::FRAC_PI_2,
+        None,
+        &WarpOptions {
+            filter: Some("box"),
+            filter_width: Some(1.0),
+            recompute_region: true,
+            ..WarpOptions::default()
+        },
+        None,
+    )
+    .unwrap();
+
+    let mut by_quarter = ImageBuf::empty().unwrap();
+    algo::rotate_90(&mut by_quarter, &source, None).unwrap();
+
+    // rotate keeps the display window, so the two differ in placement; what
+    // must agree is which corner the source's top-left ended up nearest.
+    let corner = value(&source, 0, 0);
+    let angled = all_values(&by_angle);
+    let quartered = all_values(&by_quarter);
+
+    let position = |values: &[f32], width: usize| {
+        values
+            .iter()
+            .position(|v| (v - corner).abs() < 0.5)
+            .map(|i| (i % width, i / width))
+    };
+
+    let angled_width = by_angle.spec().unwrap().dimensions()[0] as usize;
+    let quartered_width = by_quarter.spec().unwrap().dimensions()[0] as usize;
+    let a = position(&angled, angled_width).expect("the corner should survive");
+    let q = position(&quartered, quartered_width).expect("and here too");
+    println!("top-left landed at {a:?} by angle and {q:?} by rotate_90");
+
+    // Both should put it in the upper half and towards the right; a
+    // counter-clockwise turn would put it on the left.
+    assert!(
+        a.0 * 2 >= angled_width && q.0 * 2 >= quartered_width,
+        "a clockwise quarter turn sends the top-left corner to the right side, \
+         got {a:?} of {angled_width} wide and {q:?} of {quartered_width}"
+    );
 }
 
 /// A half turn expressed in radians matches the dedicated operation.
@@ -242,8 +298,19 @@ fn warp_with_the_identity_matrix_changes_nothing() {
     let mut result = ImageBuf::empty().unwrap();
     algo::warp(&mut result, &source, &identity, &box_filter(), None).unwrap();
 
+    assert_eq!(
+        result.spec().unwrap().dimensions(),
+        source.spec().unwrap().dimensions(),
+        "an identity warp should not change the shape"
+    );
+
     let values = all_values(&result);
     let original = all_values(&source);
+    assert_eq!(
+        values.len(),
+        original.len(),
+        "zip would hide a short result, so the lengths are checked first"
+    );
     for (got, want) in values.iter().zip(&original) {
         assert!(
             (got - want).abs() < 1e-3,

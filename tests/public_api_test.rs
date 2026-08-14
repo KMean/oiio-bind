@@ -62,7 +62,7 @@ fn a_dependent_can_use_the_whole_surface() -> Result<()> {
     )?;
     assert_eq!(swapped.spec()?.channel_names(), ["B", "G", "R", "A"]);
 
-    let summary: CompareSummary = algo::compare(&smaller, &smaller, 0.0, 0.0, None);
+    let summary: CompareSummary = algo::compare(&smaller, &smaller, 0.0, 0.0, None)?;
     assert_eq!(summary.max_error, 0.0);
     assert!(!summary.failed);
 
