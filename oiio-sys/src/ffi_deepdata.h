@@ -69,7 +69,7 @@ deepdata_ag_channel(const DeepData& deepdata);
 int
 deepdata_ab_channel(const DeepData& deepdata);
 
-rust::Str
+rust::String
 deepdata_channelname(const DeepData& deepdata, int c);
 
 TypeDesc
@@ -87,22 +87,25 @@ deepdata_same_channeltypes(const DeepData& deepdata, const DeepData& other);
 int
 deepdata_samples(const DeepData& deepdata, int64_t pixel);
 
-void
-deepdata_set_samples(DeepData& deepdata, int64_t pixel, int samps);
+bool
+deepdata_set_samples(DeepData& deepdata, int64_t pixel, int samps,
+                     rust::String& error);
 
-void
+bool
 deepdata_set_all_samples(DeepData& deepdata,
-                         rust::Slice<const unsigned int> samples);
+                         rust::Slice<const unsigned int> samples,
+                         rust::String& error);
 
-void
-deepdata_set_capacity(DeepData& deepdata, int64_t pixel, int samps);
+bool
+deepdata_set_capacity(DeepData& deepdata, int64_t pixel, int samps,
+                      rust::String& error);
 
 int
 deepdata_capacity(const DeepData& deepdata, int64_t pixel);
 
-void
-deepdata_insert_samples(DeepData& deepdata, int64_t pixel, int samplepos,
-                        int n);
+bool
+deepdata_insert_samples(DeepData& deepdata, int64_t pixel, int samplepos, int n,
+                        rust::String& error);
 
 void
 deepdata_erase_samples(DeepData& deepdata, int64_t pixel, int samplepos, int n);
@@ -115,13 +118,13 @@ uint32_t
 deepdata_deep_value_uint(const DeepData& deepdata, int64_t pixel, int channel,
                          int sample);
 
-void
+bool
 deepdata_set_deep_value(DeepData& deepdata, int64_t pixel, int channel,
-                        int sample, float value);
+                        int sample, float value, rust::String& error);
 
-void
+bool
 deepdata_set_deep_value_uint(DeepData& deepdata, int64_t pixel, int channel,
-                             int sample, uint32_t value);
+                             int sample, uint32_t value, rust::String& error);
 
 uint8_t*
 deepdata_mut_data_ptr(DeepData& deepdata, int64_t pixel, int channel,

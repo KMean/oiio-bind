@@ -2,6 +2,31 @@
 #include <OpenImageIO/span.h>
 
 namespace oiio {
+
+// DeepData allocates its sample storage lazily: set_samples records the
+// count, and the first write (or a capacity change) does the real
+// m_data.resize with no try/catch of its own. Every shim below that can
+// reach that resize is wrapped noexcept by cxx, so an escaping bad_alloc
+// would be std::terminate -- the same hazard deepdata_init_from_spec already
+// guards for the pixel axis. This helper catches and reports for the
+// sample axis.
+template<typename Mutation>
+static bool
+guarded_deep_mutation(rust::String& error, Mutation&& mutation)
+{
+    error = rust::String();
+    try {
+        mutation();
+        return true;
+    } catch (const std::exception& exception) {
+        const std::string recorded = exception.what();
+        error = rust::String::lossy(
+            recorded.empty() ? "OpenImageIO could not allocate the deep samples"
+                             : recorded.c_str());
+        return false;
+    }
+}
+
 std::unique_ptr<DeepData>
 deepdata_default()
 {
@@ -141,14 +166,19 @@ deepdata_ab_channel(const DeepData& deepdata)
     return deepdata.AB_channel();
 }
 
-// channelname() returns a string_view. Passing it directly to rust::Str picks
-// the std::string constructor, so the Str would point into a temporary that is
-// already destroyed; build it from the view's own data and size instead.
-rust::Str
+// channelname() returns a string_view over bytes copied verbatim from the
+// file: OpenEXR checks channel names only for null-termination and length,
+// never encoding. A borrowed rust::Str would validate UTF-8 in a throwing
+// constructor inside a noexcept wrapper -- reading a deep file with one high
+// byte in a channel name would be std::terminate -- and rust::Str has no
+// lossy form, so the name is returned owned and lossy like the error
+// strings. (An earlier version borrowed, which also risked pointing into a
+// destroyed temporary via the std::string constructor.)
+rust::String
 deepdata_channelname(const DeepData& deepdata, int c)
 {
     const OIIO::string_view name = deepdata.channelname(c);
-    return rust::Str(name.data(), name.size());
+    return rust::String::lossy(name.data(), name.size());
 }
 
 TypeDesc
@@ -181,24 +211,33 @@ deepdata_samples(const DeepData& deepdata, int64_t pixel)
     return deepdata.samples(pixel);
 }
 
-void
-deepdata_set_samples(DeepData& deepdata, int64_t pixel, int samps)
+bool
+deepdata_set_samples(DeepData& deepdata, int64_t pixel, int samps,
+                     rust::String& error)
 {
-    deepdata.set_samples(pixel, samps);
+    // On an already-allocated DeepData this becomes an insert, whose
+    // capacity growth resizes the sample storage; see the helper.
+    return guarded_deep_mutation(error,
+                                 [&] { deepdata.set_samples(pixel, samps); });
 }
 
-void
+bool
 deepdata_set_all_samples(DeepData& deepdata,
-                         rust::Slice<const unsigned int> samples)
+                         rust::Slice<const unsigned int> samples,
+                         rust::String& error)
 {
-    deepdata.set_all_samples(
-        OIIO::cspan<unsigned int>(samples.data(), samples.size()));
+    return guarded_deep_mutation(error, [&] {
+        deepdata.set_all_samples(
+            OIIO::cspan<unsigned int>(samples.data(), samples.size()));
+    });
 }
 
-void
-deepdata_set_capacity(DeepData& deepdata, int64_t pixel, int samps)
+bool
+deepdata_set_capacity(DeepData& deepdata, int64_t pixel, int samps,
+                      rust::String& error)
 {
-    deepdata.set_capacity(pixel, samps);
+    return guarded_deep_mutation(error,
+                                 [&] { deepdata.set_capacity(pixel, samps); });
 }
 
 int
@@ -207,17 +246,21 @@ deepdata_capacity(const DeepData& deepdata, int64_t pixel)
     return deepdata.capacity(pixel);
 }
 
-void
-deepdata_insert_samples(DeepData& deepdata, int64_t pixel, int samplepos, int n)
+bool
+deepdata_insert_samples(DeepData& deepdata, int64_t pixel, int samplepos, int n,
+                        rust::String& error)
 {
     // Unlike samples()/capacity()/data_ptr()/deep_value(), which range-check
     // the pixel index and return 0/NULL, insert_samples and erase_samples index
     // m_nsamples[pixel] and m_capacity[pixel] with no check of their own, so an
     // out-of-range pixel is a heap read and write past those vectors. Bound it
     // here, which keeps these two callable safely like their guarded siblings.
+    error = rust::String();
     if (pixel < 0 || pixel >= deepdata.pixels())
-        return;
-    deepdata.insert_samples(pixel, samplepos, n);
+        return true;
+    // Growth can reach set_capacity's storage resize; see the helper.
+    return guarded_deep_mutation(
+        error, [&] { deepdata.insert_samples(pixel, samplepos, n); });
 }
 
 void
@@ -242,25 +285,37 @@ deepdata_deep_value_uint(const DeepData& deepdata, int64_t pixel, int channel,
     return deepdata.deep_value_uint(pixel, channel, sample);
 }
 
-void
+bool
 deepdata_set_deep_value(DeepData& deepdata, int64_t pixel, int channel,
-                        int sample, float value)
+                        int sample, float value, rust::String& error)
 {
-    deepdata.set_deep_value(pixel, channel, sample, value);
+    // The first write is what performs the deferred sample allocation.
+    return guarded_deep_mutation(error, [&] {
+        deepdata.set_deep_value(pixel, channel, sample, value);
+    });
 }
 
-void
+bool
 deepdata_set_deep_value_uint(DeepData& deepdata, int64_t pixel, int channel,
-                             int sample, uint32_t value)
+                             int sample, uint32_t value, rust::String& error)
 {
-    deepdata.set_deep_value(pixel, channel, sample, value);
+    return guarded_deep_mutation(error, [&] {
+        deepdata.set_deep_value(pixel, channel, sample, value);
+    });
 }
 
 uint8_t*
 deepdata_mut_data_ptr(DeepData& deepdata, int64_t pixel, int channel,
                       int sample)
 {
-    return (uint8_t*)deepdata.data_ptr(pixel, channel, sample);
+    // The mutable data_ptr performs the deferred sample allocation, so it can
+    // throw bad_alloc; null already means "nothing at this address", and a
+    // failed allocation is exactly that.
+    try {
+        return (uint8_t*)deepdata.data_ptr(pixel, channel, sample);
+    } catch (const std::exception&) {
+        return nullptr;
+    }
 }
 
 const uint8_t*
@@ -289,8 +344,14 @@ deepdata_all_samples(const DeepData& deepdata)
 rust ::Slice<const char>
 deepdata_all_data(const DeepData& deepdata)
 {
-    OIIO::cspan<char> c_all_data = deepdata.all_data();
-    return rust::Slice<const char>(c_all_data.data(), c_all_data.size());
+    // all_data also performs the deferred allocation despite being const;
+    // an empty slice is the honest answer when it cannot be made.
+    try {
+        OIIO::cspan<char> c_all_data = deepdata.all_data();
+        return rust::Slice<const char>(c_all_data.data(), c_all_data.size());
+    } catch (const std::exception&) {
+        return rust::Slice<const char>();
+    }
 }
 
 size_t
@@ -301,8 +362,16 @@ deepdata_get_pointers(const DeepData& deepdata, rust::Slice<uint8_t*> pointers)
     // rather than an in-out one. Copying the caller's slice in was pointless
     // and, worse, nothing was ever copied back: the function looked like an
     // out-parameter fill and was a guaranteed no-op.
+    //
+    // It also performs the deferred sample allocation, so it can throw; zero
+    // pointers is the honest answer then, and distinguishable, since a deep
+    // image with pixels always produces at least one entry.
     std::vector<void*> c_pointers;
-    deepdata.get_pointers(c_pointers);
+    try {
+        deepdata.get_pointers(c_pointers);
+    } catch (const std::exception&) {
+        return 0;
+    }
 
     const size_t available = c_pointers.size();
     const size_t copied    = std::min(available, pointers.size());
@@ -317,26 +386,51 @@ bool
 deepdata_copy_deep_sample(DeepData& deepdata, int64_t pixel, int sample,
                           const DeepData& src, int64_t srcpixel, int srcsample)
 {
-    return deepdata.copy_deep_sample(pixel, sample, src, srcpixel, srcsample);
+    // Copying grows the destination pixel, which can reach the storage
+    // resize; false already means the copy did not happen.
+    try {
+        return deepdata.copy_deep_sample(pixel, sample, src, srcpixel,
+                                         srcsample);
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 bool
 deepdata_copy_deep_pixel(DeepData& deepdata, int64_t pixel, const DeepData& src,
                          int64_t srcpixel)
 {
-    return deepdata.copy_deep_pixel(pixel, src, srcpixel);
+    // Sizes the destination pixel with set_samples, which can reach the
+    // storage resize; false already means the copy did not happen.
+    try {
+        return deepdata.copy_deep_pixel(pixel, src, srcpixel);
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 bool
 deepdata_split(DeepData& deepdata, int64_t pixel, float depth)
 {
-    return deepdata.split(pixel, depth);
+    // Splitting inserts samples, which can grow the pixel's capacity; false
+    // already means nothing was split.
+    try {
+        return deepdata.split(pixel, depth);
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 void
 deepdata_sort(DeepData& deepdata, int64_t pixel)
 {
-    deepdata.sort(pixel);
+    // Sorting builds a per-pixel temporary, so under memory pressure it can
+    // throw; the pixel is then simply left unsorted, which is the state the
+    // caller already had.
+    try {
+        deepdata.sort(pixel);
+    } catch (const std::exception&) {
+    }
 }
 
 void
@@ -349,7 +443,12 @@ void
 deepdata_merge_deep_pixels(DeepData& deepdata, int64_t pixel,
                            const DeepData& src, int srcpixel)
 {
-    deepdata.merge_deep_pixels(pixel, src, srcpixel);
+    // Merging grows the destination pixel, which can reach the storage
+    // resize; on failure the pixel keeps its previous samples.
+    try {
+        deepdata.merge_deep_pixels(pixel, src, srcpixel);
+    } catch (const std::exception&) {
+    }
 }
 
 float

@@ -321,6 +321,11 @@ impl ImageBuf {
     /// Shrinking a pixel drops the samples past the new end but keeps the room
     /// they occupied, so growing it again within that room brings their old
     /// values back rather than zeroes. Write every sample you intend to read.
+    ///
+    /// The storage the counts describe is allocated on the first value
+    /// written, so a total too large for the machine is reported there — or
+    /// here, once the samples are already allocated and this call has to
+    /// grow them.
     pub fn set_deep_sample_count(&mut self, x: i32, y: i32, count: u32) -> Result<()> {
         self.require_deep("set deep sample count")?;
         // OpenImageIO's setter indexes the pixel without checking the range,
@@ -330,7 +335,10 @@ impl ImageBuf {
         let count = i32::try_from(count).map_err(|_| {
             Error::InvalidImageSpec("deep sample count exceeds i32::MAX".to_owned())
         })?;
-        sys::imagebuf::imagebuf_set_deep_samples(self.inner_mut(), x, y, 0, count);
+        let mut error = String::new();
+        if !sys::imagebuf::imagebuf_set_deep_samples(self.inner_mut(), x, y, 0, count, &mut error) {
+            return Err(Error::operation("set deep sample count", error));
+        }
         Ok(())
     }
 
@@ -373,7 +381,19 @@ impl ImageBuf {
         value: f32,
     ) -> Result<()> {
         let (channel, sample) = self.deep_index("write deep value", x, y, channel, sample)?;
-        sys::imagebuf::imagebuf_set_deep_value(self.inner_mut(), x, y, 0, channel, sample, value);
+        let mut error = String::new();
+        if !sys::imagebuf::imagebuf_set_deep_value(
+            self.inner_mut(),
+            x,
+            y,
+            0,
+            channel,
+            sample,
+            value,
+            &mut error,
+        ) {
+            return Err(Error::operation("write deep value", error));
+        }
         Ok(())
     }
 
@@ -387,7 +407,8 @@ impl ImageBuf {
         value: u32,
     ) -> Result<()> {
         let (channel, sample) = self.deep_index("write deep value", x, y, channel, sample)?;
-        sys::imagebuf::imagebuf_set_deep_value_uint(
+        let mut error = String::new();
+        if !sys::imagebuf::imagebuf_set_deep_value_uint(
             self.inner_mut(),
             x,
             y,
@@ -395,7 +416,10 @@ impl ImageBuf {
             channel,
             sample,
             value,
-        );
+            &mut error,
+        ) {
+            return Err(Error::operation("write deep value", error));
+        }
         Ok(())
     }
 
@@ -574,6 +598,25 @@ impl ImageBuf {
         }
     }
 
+    /// Copy this buffer, reporting failure instead of handing back a copy
+    /// that cannot serve pixels.
+    ///
+    /// OpenImageIO's copy constructor catches its own allocation failure,
+    /// records an error on the copy, and returns it anyway — with the
+    /// source's valid-pixels flag still set, so the first read of the broken
+    /// copy would reach a division by zero or a null cache inside
+    /// OpenImageIO. [`Clone`] uses this and panics on failure, which is the
+    /// convention for `Clone` under memory pressure; call this directly to
+    /// handle the failure instead.
+    pub fn try_clone(&self) -> Result<Self> {
+        let mut error = String::new();
+        let inner = sys::imagebuf::imagebuf_clone_checked(self.inner(), &mut error);
+        if inner.is_null() {
+            return Err(Error::operation("copy image buffer", error));
+        }
+        Ok(Self { inner })
+    }
+
     pub(crate) fn inner(&self) -> &sys::imagebuf::ImageBuf {
         self.inner
             .as_ref()
@@ -588,10 +631,11 @@ impl ImageBuf {
 }
 
 impl Clone for ImageBuf {
+    /// Panics when the copy cannot be allocated; use
+    /// [`ImageBuf::try_clone`] to handle that as an error instead.
     fn clone(&self) -> Self {
-        Self {
-            inner: sys::imagebuf::imagebuf_clone(self.inner()),
-        }
+        self.try_clone()
+            .expect("copying this image buffer failed; ImageBuf::try_clone reports the reason")
     }
 }
 

@@ -90,7 +90,13 @@ mod ffi {
             zstride: i64,
         ) -> UniquePtr<ImageBuf>;
 
-        pub fn imagebuf_clone(imagebuf: &ImageBuf) -> UniquePtr<ImageBuf>;
+        /// Null with `error` set when the copy's pixels could not be
+        /// allocated; the raw copy constructor returns the broken copy with
+        /// the source's valid flag still set.
+        pub fn imagebuf_clone_checked(
+            imagebuf: &ImageBuf,
+            error: &mut String,
+        ) -> UniquePtr<ImageBuf>;
 
         pub fn imagebuf_reset(imagebuf: Pin<&mut ImageBuf>);
 
@@ -482,13 +488,17 @@ mod ffi {
             s: i32,
         ) -> u32;
 
+        /// The deep mutators report `false` with an error message when the
+        /// deferred sample allocation cannot be made; see the DeepData
+        /// siblings for the mechanism.
         pub fn imagebuf_set_deep_samples(
             imagebuf: Pin<&mut ImageBuf>,
             x: i32,
             y: i32,
             z: i32,
             nsamples: i32,
-        );
+            error: &mut String,
+        ) -> bool;
 
         pub fn imagebuf_deep_insert_samples(
             imagebuf: Pin<&mut ImageBuf>,
@@ -497,7 +507,8 @@ mod ffi {
             z: i32,
             samplepos: i32,
             nsamples: i32,
-        );
+            error: &mut String,
+        ) -> bool;
 
         pub fn imagebuf_deep_erase_samples(
             imagebuf: Pin<&mut ImageBuf>,
@@ -516,7 +527,8 @@ mod ffi {
             c: i32,
             s: i32,
             value: f32,
-        );
+            error: &mut String,
+        ) -> bool;
 
         pub fn imagebuf_set_deep_value_uint(
             imagebuf: Pin<&mut ImageBuf>,
@@ -526,7 +538,8 @@ mod ffi {
             c: i32,
             s: i32,
             value: u32,
-        );
+            error: &mut String,
+        ) -> bool;
 
         pub fn imagebuf_copy_deep_pixel(
             imagebuf: Pin<&mut ImageBuf>,

@@ -99,9 +99,33 @@ imagebuf_new_from_buffer(const ImageSpec& spec, uint8_t* buffer,
 }
 
 std::unique_ptr<ImageBuf>
-imagebuf_clone(const ImageBuf& imagebuf)
+imagebuf_clone_checked(const ImageBuf& imagebuf, rust::String& error)
 {
-    return std::make_unique<ImageBuf>(imagebuf);
+    // The copy constructor catches its own allocation failure, records an
+    // error on the copy, and returns it anyway — with the source's
+    // pixels_valid flag still set and its pixels null, a shape whose first
+    // read divides by a zero tile width or dereferences a null cache. Check
+    // the error state here so the broken copy never crosses into Rust. The
+    // try/catch covers what the constructor does not: a throw while copying
+    // the specification's own storage.
+    error = rust::String();
+    try {
+        auto copy = std::make_unique<ImageBuf>(imagebuf);
+        if (copy->has_error()) {
+            const std::string recorded = copy->geterror(true);
+            error = rust::String::lossy(
+                recorded.empty() ? "OpenImageIO could not copy the image"
+                                 : recorded.c_str());
+            return {};
+        }
+        return copy;
+    } catch (const std::exception& exception) {
+        const std::string recorded = exception.what();
+        error = rust::String::lossy(
+            recorded.empty() ? "OpenImageIO could not copy the image"
+                             : recorded.c_str());
+        return {};
+    }
 }
 
 void
@@ -782,17 +806,42 @@ imagebuf_deep_value_uint(const ImageBuf& imagebuf, int x, int y, int z, int c,
     return imagebuf.deep_value_uint(x, y, z, c, s);
 }
 
-void
-imagebuf_set_deep_samples(ImageBuf& imagebuf, int x, int y, int z, int nsamples)
+// The deep mutators below reach DeepData's deferred sample allocation — an
+// unguarded vector resize sized from the recorded sample counts — inside
+// shims cxx wraps noexcept, so a count too large for the machine would be
+// std::terminate. Report it instead, as the DeepData shims do.
+template<typename Mutation>
+static bool
+guarded_deep_buf_mutation(rust::String& error, Mutation&& mutation)
 {
-    imagebuf.set_deep_samples(x, y, z, nsamples);
+    error = rust::String();
+    try {
+        mutation();
+        return true;
+    } catch (const std::exception& exception) {
+        const std::string recorded = exception.what();
+        error = rust::String::lossy(
+            recorded.empty() ? "OpenImageIO could not allocate the deep samples"
+                             : recorded.c_str());
+        return false;
+    }
 }
 
-void
-imagebuf_deep_insert_samples(ImageBuf& imagebuf, int x, int y, int z,
-                             int samplepos, int nsamples)
+bool
+imagebuf_set_deep_samples(ImageBuf& imagebuf, int x, int y, int z, int nsamples,
+                          rust::String& error)
 {
-    imagebuf.deep_insert_samples(x, y, z, samplepos, nsamples);
+    return guarded_deep_buf_mutation(
+        error, [&] { imagebuf.set_deep_samples(x, y, z, nsamples); });
+}
+
+bool
+imagebuf_deep_insert_samples(ImageBuf& imagebuf, int x, int y, int z,
+                             int samplepos, int nsamples, rust::String& error)
+{
+    return guarded_deep_buf_mutation(error, [&] {
+        imagebuf.deep_insert_samples(x, y, z, samplepos, nsamples);
+    });
 }
 
 void
@@ -802,25 +851,33 @@ imagebuf_deep_erase_samples(ImageBuf& imagebuf, int x, int y, int z,
     imagebuf.deep_erase_samples(x, y, z, samplepos, nsamples);
 }
 
-void
+bool
 imagebuf_set_deep_value(ImageBuf& imagebuf, int x, int y, int z, int c, int s,
-                        float value)
+                        float value, rust::String& error)
 {
-    imagebuf.set_deep_value(x, y, z, c, s, value);
+    return guarded_deep_buf_mutation(
+        error, [&] { imagebuf.set_deep_value(x, y, z, c, s, value); });
 }
 
-void
+bool
 imagebuf_set_deep_value_uint(ImageBuf& imagebuf, int x, int y, int z, int c,
-                             int s, uint32_t value)
+                             int s, uint32_t value, rust::String& error)
 {
-    imagebuf.set_deep_value(x, y, z, c, s, value);
+    return guarded_deep_buf_mutation(
+        error, [&] { imagebuf.set_deep_value(x, y, z, c, s, value); });
 }
 
 bool
 imagebuf_copy_deep_pixel(ImageBuf& imagebuf, int x, int y, int z,
                          const ImageBuf& src, int srcx, int srcy, int srcz)
 {
-    return imagebuf.copy_deep_pixel(x, y, z, src, srcx, srcy, srcz);
+    // Copying sizes the destination pixel, which can reach the deep storage
+    // resize; false already means the copy did not happen.
+    try {
+        return imagebuf.copy_deep_pixel(x, y, z, src, srcx, srcy, srcz);
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 DeepData*

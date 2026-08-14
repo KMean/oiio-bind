@@ -27,14 +27,31 @@ fn out_of_range_pixel_is_a_noop_not_a_heap_write() {
     assert_eq!(deepdata::deepdata_pixels(deep.as_ref().unwrap()), 16);
 
     // A valid pixel: set two samples so there is state to protect.
-    deepdata::deepdata_set_samples(deep.pin_mut(), 3, 2);
+    assert!(deepdata::deepdata_set_samples(
+        deep.pin_mut(),
+        3,
+        2,
+        &mut error
+    ));
     assert_eq!(deepdata::deepdata_samples(deep.as_ref().unwrap(), 3), 2);
 
     // Out-of-range pixels, on both operations. If the guard were absent these
     // would index far past the 16-entry vectors; with it they are no-ops and
     // the process survives.
-    deepdata::deepdata_insert_samples(deep.pin_mut(), 1_000_000, 0, 4);
-    deepdata::deepdata_insert_samples(deep.pin_mut(), -1, 0, 4);
+    assert!(deepdata::deepdata_insert_samples(
+        deep.pin_mut(),
+        1_000_000,
+        0,
+        4,
+        &mut error
+    ));
+    assert!(deepdata::deepdata_insert_samples(
+        deep.pin_mut(),
+        -1,
+        0,
+        4,
+        &mut error
+    ));
     deepdata::deepdata_erase_samples(deep.pin_mut(), 1_000_000, 0, 1);
     deepdata::deepdata_erase_samples(deep.pin_mut(), -5, 0, 1);
 
@@ -43,6 +60,12 @@ fn out_of_range_pixel_is_a_noop_not_a_heap_write() {
     assert_eq!(deepdata::deepdata_samples(deep.as_ref().unwrap(), 3), 2);
 
     // An in-range insert still works.
-    deepdata::deepdata_insert_samples(deep.pin_mut(), 3, 2, 3);
+    assert!(deepdata::deepdata_insert_samples(
+        deep.pin_mut(),
+        3,
+        2,
+        3,
+        &mut error
+    ));
     assert_eq!(deepdata::deepdata_samples(deep.as_ref().unwrap(), 3), 5);
 }

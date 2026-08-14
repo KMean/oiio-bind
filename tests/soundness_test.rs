@@ -778,6 +778,92 @@ fn an_empty_string_array_attribute_is_an_error_not_a_silent_drop() {
     }
 }
 
+/// A deep pixel's sample storage is allocated on the first write, sized from
+/// the recorded counts, by a vector resize OpenImageIO does not guard —
+/// inside shims cxx wraps `noexcept`, so a total too large for the machine
+/// used to be `std::terminate`. The third review capped the pixel axis; this
+/// is the sample axis, which no pixel cap can bound.
+#[test]
+fn a_deep_sample_count_too_large_is_an_error_not_an_abort() {
+    // Enough channels that the byte count sails past any address space:
+    // 65,536 channels of f64 make each sample half a megabyte, so i32::MAX
+    // samples ask for about a petabyte — refused by the allocator before a
+    // page is touched, on every platform.
+    let names: Vec<String> = (0..65_536).map(|index| format!("c{index}")).collect();
+    let spec = ImageSpec::new(1, 1, 65_536, PixelFormat::F64)
+        .unwrap()
+        .with_channel_names(names)
+        .unwrap()
+        .as_deep();
+
+    let mut deep = DeepImage::new(&spec).unwrap();
+    deep.set_sample_count(0, 0, i32::MAX as usize).unwrap();
+    assert!(
+        deep.set_value(0, 0, 0, 0, 1.0).is_err(),
+        "a petabyte of deep samples should be an error, not an abort"
+    );
+
+    // The ImageBuf route reaches the same allocation.
+    let mut buffer = ImageBuf::new(&spec).unwrap();
+    buffer.set_deep_sample_count(0, 0, i32::MAX as u32).unwrap();
+    assert!(buffer.set_deep_value(0, 0, 0, 0, 1.0).is_err());
+}
+
+/// A deep channel name is copied verbatim from the file, and OpenEXR checks
+/// names only for termination and length — never encoding. Handing those
+/// bytes to a borrowed `&str` meant one high byte in a channel name aborted
+/// the read through a throwing constructor inside a `noexcept` wrapper; the
+/// name comes back owned and lossy now.
+#[test]
+fn a_deep_channel_name_that_is_not_utf8_is_read_lossily_not_fatally() {
+    let scratch = common::ScratchDir::new("deepname");
+
+    // Write a well-formed deep file whose second channel has a distinctive
+    // name, then patch that name's bytes to ones no UTF-8 sequence allows.
+    // 0xE9 sorts after every ASCII byte, and "QQQQ" already sorts last, so
+    // the patched channel list stays ordered the way EXR requires.
+    let spec = ImageSpec::new(1, 1, 2, PixelFormat::F32)
+        .unwrap()
+        .with_channel_names(["A", "QQQQ"])
+        .unwrap()
+        .as_deep();
+    let mut deep = DeepImage::new(&spec).unwrap();
+    deep.set_sample_count(0, 0, 1).unwrap();
+    deep.set_value(0, 0, 0, 0, 0.25).unwrap();
+    deep.set_value(0, 0, 1, 0, 0.75).unwrap();
+    let clean = scratch.file("clean.exr");
+    let mut output = oiio::ImageOutput::create(&clean, &spec).unwrap();
+    output.write_deep_image(&deep).unwrap();
+    output.close().unwrap();
+
+    let mut bytes = std::fs::read(&clean).unwrap();
+    let mut patched_sites = 0;
+    for start in 0..bytes.len().saturating_sub(4) {
+        if &bytes[start..start + 4] == b"QQQQ" {
+            bytes[start..start + 4].copy_from_slice(&[0xE9; 4]);
+            patched_sites += 1;
+        }
+    }
+    assert!(
+        patched_sites > 0,
+        "the channel name should be in the header"
+    );
+    let patched = scratch.file("patched.exr");
+    std::fs::write(&patched, &bytes).unwrap();
+
+    // The read must survive; the invalid name comes back as replacement
+    // characters rather than taking the process down.
+    let mut input = ImageInput::from_path(&patched).unwrap();
+    let read = input.read_deep_image().unwrap();
+    let lossy = read
+        .channels()
+        .iter()
+        .find(|channel| channel.name().contains('\u{FFFD}'))
+        .expect("the patched channel name should read back lossily");
+    assert_eq!(lossy.name(), "\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}");
+    assert_eq!(read.value(0, 0, 0, 0).unwrap(), 0.25);
+}
+
 /// `mad` with two image sources of different channel counts.
 ///
 /// The destination is sized from the wider source, and `IBAprep` allocates it

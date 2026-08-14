@@ -125,18 +125,35 @@ impl DeepImage {
         Self::from_parts(inner, spec)
     }
 
-    /// Give a pixel a number of samples, discarding any it already had.
+    /// Give a pixel a number of samples.
     ///
-    /// Samples start zeroed; set their values with [`DeepImage::set_value`].
+    /// A pixel's first samples start zeroed. Shrinking a pixel drops the
+    /// samples past the new end but keeps the room they occupied, so growing
+    /// it again within that room brings their old values back rather than
+    /// zeroes — OpenImageIO leaves holes for speed. Write every sample you
+    /// intend to read, as [`ImageBuf::set_deep_sample_count`](crate::ImageBuf)
+    /// documents for the same underlying storage.
+    ///
+    /// The storage all the counts describe is allocated on the first value
+    /// written, so a total too large for the machine is reported there — or
+    /// here, once the image's samples are already allocated and this call has
+    /// to grow them.
     pub fn set_sample_count(&mut self, x: i32, y: i32, count: usize) -> Result<()> {
         let pixel = self.pixel_index(x, y)?;
         let count = i32::try_from(count)
             .map_err(|_| Error::InvalidRoi("sample count exceeds i32::MAX".to_owned()))?;
-        sys::deepdata::deepdata_set_samples(self.inner_mut(), pixel, count);
+        let mut error = String::new();
+        if !sys::deepdata::deepdata_set_samples(self.inner_mut(), pixel, count, &mut error) {
+            return Err(Error::operation("set deep sample count", error));
+        }
         Ok(())
     }
 
     /// Set one sample's value.
+    ///
+    /// The first write allocates the storage every pixel's sample count
+    /// describes, so this is where counts too large for the machine are
+    /// reported.
     pub fn set_value(
         &mut self,
         x: i32,
@@ -146,7 +163,17 @@ impl DeepImage {
         value: f32,
     ) -> Result<()> {
         let (pixel, channel, sample) = self.address(x, y, channel, sample)?;
-        sys::deepdata::deepdata_set_deep_value(self.inner_mut(), pixel, channel, sample, value);
+        let mut error = String::new();
+        if !sys::deepdata::deepdata_set_deep_value(
+            self.inner_mut(),
+            pixel,
+            channel,
+            sample,
+            value,
+            &mut error,
+        ) {
+            return Err(Error::operation("set deep value", error));
+        }
         Ok(())
     }
 
@@ -160,13 +187,17 @@ impl DeepImage {
         value: u32,
     ) -> Result<()> {
         let (pixel, channel, sample) = self.address(x, y, channel, sample)?;
-        sys::deepdata::deepdata_set_deep_value_uint(
+        let mut error = String::new();
+        if !sys::deepdata::deepdata_set_deep_value_uint(
             self.inner_mut(),
             pixel,
             channel,
             sample,
             value,
-        );
+            &mut error,
+        ) {
+            return Err(Error::operation("set deep value", error));
+        }
         Ok(())
     }
 
@@ -196,7 +227,7 @@ impl DeepImage {
         for index in 0..channel_count {
             let native = inner.as_ref().expect("non-null");
             channels.push(DeepChannel {
-                name: sys::deepdata::deepdata_channelname(native, index).to_owned(),
+                name: sys::deepdata::deepdata_channelname(native, index),
                 format: PixelFormat::from_sys(&sys::deepdata::deepdata_channeltype(native, index)),
             });
         }

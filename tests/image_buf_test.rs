@@ -198,6 +198,14 @@ fn cloning_copies_the_pixels() {
     let mut from_copy = vec![1.0_f32; roi.element_count().unwrap()];
     copy.get_pixels_into(roi, &mut from_copy).unwrap();
     assert!(from_copy.iter().all(|&value| value == 0.0));
+
+    // try_clone is the same copy with the failure reportable: OpenImageIO's
+    // copy constructor swallows its own allocation failure and hands back a
+    // copy whose first read would crash, so the crate checks for it.
+    let fallible = original.try_clone().unwrap();
+    let mut from_fallible = vec![0.0_f32; roi.element_count().unwrap()];
+    fallible.get_pixels_into(roi, &mut from_fallible).unwrap();
+    assert_eq!(from_fallible, values);
 }
 
 #[test]

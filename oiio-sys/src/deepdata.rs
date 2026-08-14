@@ -58,7 +58,11 @@ mod ffi {
 
         pub fn deepdata_ab_channel(deepdata: &DeepData) -> i32;
 
-        pub fn deepdata_channelname(deepdata: &DeepData, c: i32) -> &str;
+        /// Owned rather than borrowed: the name's bytes come verbatim from the
+        /// file and may not be UTF-8, which a borrowed `&str` would turn into
+        /// `std::terminate` inside the noexcept wrapper. The shim converts
+        /// lossily instead.
+        pub fn deepdata_channelname(deepdata: &DeepData, c: i32) -> String;
 
         pub fn deepdata_channeltype(deepdata: &DeepData, c: i32) -> TypeDesc;
 
@@ -70,11 +74,29 @@ mod ffi {
 
         pub fn deepdata_samples(deepdata: &DeepData, pixel: i64) -> i32;
 
-        pub fn deepdata_set_samples(deepdata: Pin<&mut DeepData>, pixel: i64, samps: i32);
+        /// The mutators below report `false` with an error message when the
+        /// deferred sample allocation cannot be made; DeepData sizes its
+        /// storage from the recorded sample counts on the first write or
+        /// capacity change, with no try/catch of its own.
+        pub fn deepdata_set_samples(
+            deepdata: Pin<&mut DeepData>,
+            pixel: i64,
+            samps: i32,
+            error: &mut String,
+        ) -> bool;
 
-        pub fn deepdata_set_all_samples(deepdata: Pin<&mut DeepData>, samples: &[u32]);
+        pub fn deepdata_set_all_samples(
+            deepdata: Pin<&mut DeepData>,
+            samples: &[u32],
+            error: &mut String,
+        ) -> bool;
 
-        pub fn deepdata_set_capacity(deepdata: Pin<&mut DeepData>, pixel: i64, samps: i32);
+        pub fn deepdata_set_capacity(
+            deepdata: Pin<&mut DeepData>,
+            pixel: i64,
+            samps: i32,
+            error: &mut String,
+        ) -> bool;
 
         pub fn deepdata_capacity(deepdata: &DeepData, pixel: i64) -> i32;
 
@@ -83,7 +105,8 @@ mod ffi {
             pixel: i64,
             samplepos: i32,
             n: i32,
-        );
+            error: &mut String,
+        ) -> bool;
 
         pub fn deepdata_erase_samples(
             deepdata: Pin<&mut DeepData>,
@@ -112,7 +135,8 @@ mod ffi {
             channel: i32,
             sample: i32,
             value: f32,
-        );
+            error: &mut String,
+        ) -> bool;
 
         pub fn deepdata_set_deep_value_uint(
             deepdata: Pin<&mut DeepData>,
@@ -120,7 +144,8 @@ mod ffi {
             channel: i32,
             sample: i32,
             value: u32,
-        );
+            error: &mut String,
+        ) -> bool;
 
         pub fn deepdata_mut_data_ptr(
             deepdata: Pin<&mut DeepData>,

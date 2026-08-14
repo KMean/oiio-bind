@@ -43,7 +43,7 @@ imagebuf_new_from_buffer(const ImageSpec& spec, uint8_t* buffer,
                          int64_t xstride, int64_t ystride, int64_t zstride);
 
 std::unique_ptr<ImageBuf>
-imagebuf_clone(const ImageBuf& imagebuf);
+imagebuf_clone_checked(const ImageBuf& imagebuf, rust::String& error);
 
 void
 imagebuf_reset(ImageBuf& imagebuf);
@@ -375,25 +375,25 @@ uint32_t
 imagebuf_deep_value_uint(const ImageBuf& imagebuf, int x, int y, int z, int c,
                          int s);
 
-void
-imagebuf_set_deep_samples(ImageBuf& imagebuf, int x, int y, int z,
-                          int nsamples);
+bool
+imagebuf_set_deep_samples(ImageBuf& imagebuf, int x, int y, int z, int nsamples,
+                          rust::String& error);
 
-void
+bool
 imagebuf_deep_insert_samples(ImageBuf& imagebuf, int x, int y, int z,
-                             int samplepos, int nsamples);
+                             int samplepos, int nsamples, rust::String& error);
 
 void
 imagebuf_deep_erase_samples(ImageBuf& imagebuf, int x, int y, int z,
                             int samplepos, int nsamples);
 
-void
+bool
 imagebuf_set_deep_value(ImageBuf& imagebuf, int x, int y, int z, int c, int s,
-                        float value);
+                        float value, rust::String& error);
 
-void
+bool
 imagebuf_set_deep_value_uint(ImageBuf& imagebuf, int x, int y, int z, int c,
-                             int s, uint32_t value);
+                             int s, uint32_t value, rust::String& error);
 
 bool
 imagebuf_copy_deep_pixel(ImageBuf& imagebuf, int x, int y, int z,
