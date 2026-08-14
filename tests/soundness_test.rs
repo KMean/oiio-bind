@@ -508,16 +508,18 @@ fn the_contiguous_pixel_api_refuses_a_deep_buffer() {
 /// for this machine" request, and the threshold is machine-dependent.
 #[test]
 fn a_spec_too_large_to_allocate_is_an_error_not_an_abort() {
-    let spec = ImageSpec::new(2_000_000_000, 13, 4, PixelFormat::F32).unwrap();
-    assert!(
-        ImageBuf::new(&spec).is_err(),
-        "416 GB should not have been allocated"
-    );
-
-    // The arithmetic-overflow variant: element_count multiplies without
-    // accounting for the format's byte size, so this used to reach C++.
+    // A size that overflows the byte count rather than one that merely exceeds
+    // the machine's memory. Both take the same path -- `new_pixels` catches the
+    // exception, records the error and leaves the pixels null -- but this one
+    // is refused by `new char[]` before a single page is touched. Asking for a
+    // realistic-but-too-large 416 GB instead is machine-dependent: it fails
+    // cleanly here and on Linux, and on macOS the allocator tries to back it
+    // and the process is killed before it can fail.
     let huge = ImageSpec::new(i32::MAX as u32, i32::MAX as u32, 4, PixelFormat::F32).unwrap();
-    assert!(ImageBuf::new(&huge).is_err());
+    assert!(
+        ImageBuf::new(&huge).is_err(),
+        "a spec whose byte count does not fit should not have been allocated"
+    );
 
     // A deep spec is indexed by an int inside DeepData::init, so more pixels
     // than that can hold must be refused rather than allowed to truncate.

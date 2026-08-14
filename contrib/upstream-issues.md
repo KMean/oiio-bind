@@ -680,3 +680,63 @@ Unchanged on 3.1.9, 3.1.12.0 and current `main`.
 
 Found while binding these for Rust. The binding always passes a real
 ColorConfig, so it cannot reach this.
+
+---
+
+## Issue 10 — `copy_image(image_span, image_span)` loops on the wrong variable and writes off the end of the destination
+
+`src/libOpenImageIO/imageio.cpp:1234` (`copy_image`, defined at `:1164`), in the
+"General case -- have to do item by item copy" block:
+
+```cpp
+for (uint32_t c = 0; x < src.nchannels(); ++c) {
+    memcpy(dpel + c * dst.chanstride(),
+           spel + c * src.chanstride(), chunksize);
+}
+```
+
+The channel loop tests `x`, the enclosing pixel index, rather than `c`. `x` is
+not modified in the body, so for `x == 0` the loop never terminates: it memcpys
+to `dpel + c * dst.chanstride()` for c = 0, 1, 2, ... until it walks out of the
+address space. The stride multiplier is caller-supplied, so there is no bound on
+how far past the destination it writes.
+
+The branch is entered whenever the destination's channels are not adjacent
+within a pixel. The three predicates guarding it collapse to exactly one,
+because `is_contiguous` and `is_contiguous_scanline` are both defined in terms
+of `is_contiguous_pixel`: `dst.chanstride() != chansize`.
+
+`image_span::getptr` does bounds-check, but the general case calls it once per
+scanline and then does raw pointer arithmetic into `memcpy`, so the check is
+bypassed.
+
+Reproduced against the shipped OpenImageIO 3.1.12.0 on Windows, with the
+destination placed at the base of a 1 MiB `VirtualAlloc` region filled with a
+canary so the damage could be measured rather than only observed as a fault:
+
+| case | `chanstride` | channels | branch | result |
+| --- | --- | --- | --- | --- |
+| control | 4 (adjacent) | 3 | per-pixel memcpy | returns, 0 bytes past the extent |
+| 1 | 8 | 3 | general | faulted, 26,392 bytes past a 272-byte extent |
+| 2 | 8 | 1 | general | faulted, 46,261 bytes past a 144-byte extent |
+
+Where the destination sits inside a larger mapping, more can be corrupted with
+no fault at all.
+
+Present in `v3.1.4.0-beta` (`:1190`), `v3.1.9.0` (`:1200`), `v3.1.12.0`
+(`:1201`), `v3.1.16.0` (`:1218`), `v3.2.0.0-dev` (`:1199`), `v3.2.0.2-dev`, and
+`main`.
+
+`src/libOpenImageIO/image_span_test.cpp:165` `test_image_span_copy_image` builds
+its destination with all-`AutoStride` in all three of its cases, so the
+destination is always contiguous-pixel and the general branch has never been
+executed by the test suite.
+
+The fix is `c < src.nchannels()`, plus a non-contiguous destination case in
+`test_image_span_copy_image`.
+
+The only in-tree caller, `pvt::contiguize` at `imageio.cpp:827`, always builds a
+contiguous destination, so this is reached through the public API rather than
+through OpenImageIO's own paths — but `copy_image` is `OIIO_API` and the header
+recommends it over the pointer form. This binding uses the pointer overload and
+is not affected.
