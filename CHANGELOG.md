@@ -109,8 +109,85 @@ before the fork, but nothing was ever published under it, so starting both at
 - Tests against OpenImageIO's and OpenEXR's own image corpora, opt-in through
   `OIIO_BIND_TEST_IMAGES` and `OIIO_BIND_TEST_EXR_IMAGES`, including
   OpenEXR's `Damaged` directory of reader crash cases.
+- `ImageBuf::pixels_valid`, which says whether the pixels in memory were ever
+  filled in. OpenImageIO allocates before it opens the file, so a failed read
+  leaves the allocation behind untouched, and nothing exposed the difference.
+- `ImageSpec::pixel_count`, and `TextureConfig::MAX_CHANNELS`.
+- `tests/soundness_test.rs` and `tests/property_test.rs`: one test per
+  reproduced crash, a sweep that hands deep and empty buffers to every
+  operation, and a proptest harness over structurally awkward image shapes.
+  `contrib/fuzzing.md` explains why the second layer is proptest rather than
+  cargo-fuzz.
 
 ### Fixed
+
+- A second review, against the surface the first one did not cover, found
+  forty more. All of them are closed, and each has a regression test that
+  fails without its fix.
+
+  Reading a corrupt file could abort the process. OpenImageIO quotes the
+  file's own bytes back at you when a header will not parse, and every error
+  shim built its string with cxx's throwing `rust::String` constructor while
+  being declared `noexcept`, so an attribute name that was not valid UTF-8
+  was `std::terminate` rather than an error. Thirty of the OpenEXR project's
+  fuzzer fixtures did exactly that. Every one of the thirty-four sites builds
+  its string with `rust::String::lossy` now.
+
+- The image cache no longer hands out memory it has freed. `TileGuard` records
+  its region and pixel format when the tile is borrowed rather than asking the
+  cache afterwards, because OpenImageIO derives a tile's region from the
+  *file's* current spec, which invalidation frees, and `pixels()` took the
+  length of its slice from it. Reads through an `ImageHandle` validate their
+  channel range: OpenImageIO does not clamp it, so asking for eight channels
+  of a three channel image read 8/3 past every tile row and reported success.
+  A caller-supplied `Perthread` is routed through `get_perthread_info` before
+  use, which is what the header requires and where the cache acts on the purge
+  flag an invalidation sets, and one belonging to a different cache is refused
+  outright — a shared lifetime is not a shared identity.
+
+- `ImageBuf` refuses what it cannot do rather than crashing or guessing.
+  A deep buffer reports local storage but has no flat pixels, and its
+  iterator leaves the proxy pointer null, so the contiguous pixel API read and
+  wrote through null; reading a deep EXR back was enough to reach it. A region
+  whose channels start at or past the end left `IBAprep`'s intersection
+  inverted and reached `memcpy` with a negative length. A buffer whose read
+  failed handed back the uninitialised allocation and called it success.
+  `ImageBuf::new` on a specification too large for the machine died inside the
+  zero-fill instead of returning the allocation failure.
+
+- The same inverted channel range reached six `algo` operations directly.
+  `zero`, `fill`, `copy`, `crop`, `premult` and `unpremult` all crashed on
+  a region starting past the destination's last channel.
+
+- Texture lookups are bounded by what the texture has. `subimageinfo` indexes
+  a vector behind an assert that release builds compile out, and while the
+  samplers clamp the channel count they compute texel addresses from the raw
+  first channel, so a subimage or first channel the file does not have walked
+  off a cached tile. Asking for more channels than exist still works and still
+  fills with the fill value, but the shim supplies the padding rather than
+  letting OpenImageIO recurse with an unbounded first channel.
+  `TextureConfig::with_channel_count` is clamped: it reaches an `alloca` sized
+  from the argument, so a large count overflowed the stack.
+
+- `write_scanlines` requires rows in order for formats that say they need
+  them. OpenEXR's scanline writer biases the caller's pointer backwards by the
+  requested row and then writes at its own cursor, so starting half way down a
+  1024 row image read 8 MB before the buffer.
+
+- An attribute whose type is an array with no concrete length is refused.
+  `TypeDesc::fromstring` presets the length to -1 and `size()` clamps it to
+  one, so `"float[]"` measured four bytes and passed every guard; nothing
+  clamps it on the way back out, where `size_t(-1)` walked off the end of the
+  stored value. Building one took safe Rust and no `unsafe`.
+
+- Results that were wrong rather than fatal are errors now: a region outside
+  the data window read as zeros and was indistinguishable from a black one,
+  a write outside it went nowhere and reported success, `TileGuard::format`
+  named the file's format where `pixels()` requires the cache's, an `Other`
+  attribute that could not be carried vanished silently, `has_color_space`
+  rejected names a conversion accepts, and `deepdata_get_pointers` returned
+  the caller's buffer untouched.
+
 
 - Safe Rust can no longer crash the process or read memory it does not own.
   A pre-publication review found, and reproduced, several inputs that did:
@@ -186,6 +263,27 @@ before the fork, but nothing was ever published under it, so starting both at
   alone and always evaluates false.
 
 ### Changed
+
+- Several signatures moved to `&mut self`, and one option is gone, because the
+  old shapes could not be made sound. `ImageCache::invalidate`,
+  `invalidate_all`, and `TextureSystem`'s invalidation and attribute setters
+  are exclusive: invalidation is the one operation OpenImageIO does not make
+  thread-safe, and it frees state that a live `TileGuard`, `ImageHandle` or
+  `Perthread` still points into, so both hazards are compile errors now rather
+  than reads of freed memory. `ImageCacheBuilder::shared` is removed: two Rust
+  values over OpenImageIO's process-wide cache would let `&mut` on one alias
+  `&` on the other, and every lifetime claim in that module is written against
+  a single value.
+- `TileGuard::roi` returns `Roi` rather than `Result<Roi>`, since it can no
+  longer fail, and reports the region recorded when the tile was borrowed.
+- `ImageOutput::spec` reports the specification the file was opened with
+  rather than the caller's. `check_open` rewrites it — the origin is zeroed
+  for formats that cannot carry one, the display window is filled in, a zero
+  depth is raised to one — and a caller had no way to see any of it.
+- The `imagebufalgo_*` declarations in `oiio-sys` are `unsafe fn`. In a cxx
+  bridge, `unsafe extern "C++"` only asserts that the signatures are right, so
+  they were callable from safe Rust with a hand-built `ROI`; the contract is
+  stated once at the top of that module.
 
 - `ImageSpec` is constructible from Rust, carries its `PixelFormat`, and
   exposes metadata; it is no longer only something a reader hands back.
