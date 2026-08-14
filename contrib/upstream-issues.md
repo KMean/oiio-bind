@@ -10,7 +10,9 @@ is never shown a second unrelated API behaviour:
 
 Both use only public OpenImageIO API — no Rust and no binding code — and exit
 non-zero when two overloads of the same call disagree, given the same
-`ImageSpec` and the same buffer.
+`ImageSpec` and the same buffer. Both check only return values, so for issue 1
+they understate the problem; issue 1 carries a separate table of measured
+pixel values.
 
 Issues 4–9 were found by reading the source while binding it, and are stated
 as code review rather than as runnable reproductions. Where a reproduction is
@@ -36,33 +38,74 @@ request is the right channel.
 
 Shared environment block, applying to every issue below:
 
+Unabridged `oiiotool --buildinfo`, as the bug template asks:
+
 ```
 OIIO 3.2.0.2dev | Windows/x86_64
     Build compiler: MSVS 1951 | C++17/199711
-Dependencies: fmt 12.1.0, Imath 3.2.2, OpenColorIO 2.5.1, OpenEXR 3.4.7,
-              TIFF 4.7.1, ZLIB 1.3.1, libjpeg-turbo 3.1.3, PNG 1.6.55
+    HW features enabled at build: sse2
+    No CUDA support (disabled / unavailable at build time)
+Dependencies: BZip2 1.0.8, DCMTK NONE, FFmpeg NONE, fmt 12.1.0, Freetype 2.13.3, GIF 5.2.2, Imath 3.2.2, JXL NONE, libdeflate 1.25, Libheif NONE, libjpeg-turbo 3.1.3, LibRaw 0.22.0, libuhdr NONE, OpenColorIO 2.5.1, OpenCV NONE, OpenEXR 3.4.7, OpenJPEG 2.5.4, openjph 0.26.3, PNG 1.6.55, Ptex NONE, Ptex NONE, Robinmap 1.4.1, TBB NONE, TIFF 4.7.1, WebP 1.6.0, ZLIB 1.3.1
 ```
 
 Also reproduced identically on the released 3.1.12.0 (vcpkg, same machine and
-compiler), so this is not new in 3.2.
+compiler), so this is not new in 3.2. Where an issue below cites line numbers,
+they are given for `main` and for 3.1.16.0, the latest 3.1 release; the code in
+question is unchanged across the whole 3.1 series.
 
 ---
 
-## Issue 1
+## Issue 1 — filed as #5400, needs a correcting follow-up
 
-**Title:** `bug: ImageInput::read_image() with an image_span fails silently for tiled images with partial edge tiles`
+**Title:** `bug: ImageInput::read_image() with an image_span transposes x and y for tiled images`
 
 **Describe the bug**
 
-`ImageInput::read_image(subimage, miplevel, chbegin, chend, format, image_span)`
-returns `false` whenever a tiled image's width or height is not an exact
-multiple of the tile size. No error is recorded, so `geterror()` returns an
-empty string. The pointer overload reads the same files correctly.
+The `image_span` overload of `ImageInput::read_tiles` forwards its arguments to
+the pointer overload with the x and y ranges swapped, so every tiled read
+through an `image_span` requests the wrong rectangle. `read_image` with an
+`image_span` drives that call one tile row at a time, so it inherits the fault.
 
-Since the destination buffer is exactly `width * height * nchannels` values,
-there is no buffer size a caller could pass that would work, so tiled images
-with partial edge tiles cannot be read through the `image_span` overload at
-all. Most real tiled images have partial edge tiles.
+`src/libOpenImageIO/imageinput.cpp:719` on `main`, `:702` in 3.1.16.0, `:694`
+in 3.1.12.0 — the text is identical in all of them:
+
+```c++
+// Default implementation (for now): call the old pointer+stride
+return read_tiles(subimage, miplevel, ybegin, yend, xbegin, xend, zbegin,
+                  zend, chbegin, chend, format, data.data(),
+                  data.xstride());
+```
+
+against a pointer overload declared
+`read_tiles(subimage, miplevel, xbegin, xend, ybegin, yend, ...)`.
+
+`ImageOutput::write_tiles` does the same job in the same shape, under the same
+comment, and forwards its ranges in order — so the read side looks like a slip
+rather than a convention.
+
+Depending on the geometry this surfaces in three different ways, none of them
+diagnosed:
+
+1. **Silent wrong data.** When the transposed rectangle still satisfies
+   `ImageSpec::valid_tile_range`, the read returns `true` with an empty
+   `geterror()` and the buffer holds a transposed image. This happens for every
+   square image, and for every image whose dimensions are an exact multiple of
+   the tile size.
+2. **Silent success over half-uninitialised memory.** `valid_tile_range` checks
+   divisibility by the tile size and the two `== width` / `== height` escape
+   hatches, but never checks that the range lies inside the image. A 32×16
+   image is asked for `y` in `[0,32)`, a 64×32 image for `y` in `[0,64)`. The
+   request is accepted, no data comes back for the region that does not exist,
+   and the call still returns `true` — leaving exactly half the destination
+   buffer untouched.
+3. **Silent failure.** When the transposed rectangle fails `valid_tile_range`,
+   the pointer overload returns `false` without recording an error, so
+   `geterror()` is empty. The buffer may already be partly written by earlier
+   tile rows.
+
+There is no buffer overrun in any case: the transposed rectangle has the same
+value count as the intended one, so the damage is misplacement and
+non-placement rather than a write past the end.
 
 I expected the `image_span` overload to read the same images the pointer
 overload reads, and on failure to record an error explaining why.
@@ -73,10 +116,13 @@ overload reads, and on failure to record an error explaining why.
 
 **To Reproduce**
 
-Build and run the attached `span_tiled_read_repro.cpp`. It writes tiled OpenEXR files
-with `write_image`, then reads each back three ways. Output on 3.2.0.2dev:
+Build and run the attached `span_tiled_read_repro.cpp`. It writes tiled OpenEXR
+files with `write_image`, then reads each back three ways. Verbatim output on
+3.2.0.2dev:
 
 ```
+OpenImageIO 3.2.0.2dev
+
 32x32, 16x16 tiles (exact multiple)
   read_image(image_span, explicit strides) : ok
   read_image(image_span, default strides)  : ok
@@ -91,20 +137,83 @@ with `write_image`, then reads each back three ways. Output on 3.2.0.2dev:
   read_image(image_span, explicit strides) : FAILED
   read_image(image_span, default strides)  : FAILED
   read_image(pointer)                      : ok
+  >>> MISMATCH: the overloads disagree on the same file
 
-32x24, 16x16 tiles (PARTIAL edge tiles)   -> same as above
-40x24, 16x16 tiles (PARTIAL edge tiles)   -> same as above
+32x24, 16x16 tiles (PARTIAL edge tiles)
+  read_image(image_span, explicit strides) : FAILED
+  read_image(image_span, default strides)  : FAILED
+  read_image(pointer)                      : ok
+  >>> MISMATCH: the overloads disagree on the same file
+
+40x24, 16x16 tiles (PARTIAL edge tiles)
+  read_image(image_span, explicit strides) : FAILED
+  read_image(image_span, default strides)  : FAILED
+  read_image(pointer)                      : ok
+  >>> MISMATCH: the overloads disagree on the same file
+
+3 mismatch(es)
 ```
+
+Note this reproduction only checks the return value, so the cases it prints as
+`ok` are **not** clean — they return `true` with transposed or partly
+uninitialised data. The table below measures pixel values instead.
 
 Both `image_span` forms are covered: the `image_span<std::byte>` plus
 `TypeDesc::FLOAT` overload with strides spelled out, and the typed
-`image_span<float>` overload with OpenImageIO computing every stride itself.
-They fail identically, so the result does not depend on the caller's stride
-arithmetic. Images whose dimensions are an exact multiple of the tile size are
-unaffected.
+`image_span<float>` overload with the strides left to `image_span`'s defaults.
+They behave identically, so the result does not depend on the caller's stride
+arithmetic.
 
-I have not tried to identify the cause in the reading code, so the summary
-above is only what is observable from outside.
+**Evidence**
+
+Writing float tiled EXRs whose pixel values are separable in x and y
+(`ch0 = x + y/1000`, `ch1 = y + x/1000`, `ch2 = x*1000 + y`), reading each back
+through both overloads, and pre-filling the destination with a sentinel to tell
+"written wrongly" from "never written". All 16×16 tiles, 3 channels, on
+3.2.0.2dev. The pointer read matches the generator exactly in every case, so
+the files on disk are correct:
+
+| dims  | span returns | geterror | values differing from pointer read | left uninitialised |
+|-------|--------------|----------|------------------------------------|--------------------|
+| 16×16 | true         | (empty)  | 0 / 768                            | 0                  |
+| 32×32 | true         | (empty)  | 2976 / 3072                        | 0                  |
+| 32×16 | true         | (empty)  | 1488 / 1536                        | 768                |
+| 64×32 | true         | (empty)  | 6048 / 6144                        | 3072               |
+| 40×32 | **false**    | (empty)  | 3840 / 3840                        | 3840               |
+| 32×24 | **false**    | (empty)  | 2256 / 2304                        | 1152               |
+| 40×40 | true         | (empty)  | 4680 / 4800                        | 0                  |
+| 24×24 | true         | (empty)  | 1656 / 1728                        | 0                  |
+| 17×17 | true         | (empty)  | 816 / 867                          | 0                  |
+
+Every tile row the span path actually executed matches the transposed-rectangle
+prediction on 100% of in-bounds values. The values that happen to agree are
+exactly the fixed points of a transposition: for the square cases the count is
+three channels times the main diagonal — 32×32 agrees on 96 = 3 × 32, 40×40 on
+120 = 3 × 40, 17×17 on 51 = 3 × 17.
+
+Only a single square tile (16×16 with 16×16 tiles) is correct, because there
+the swapped arguments are equal.
+
+**The fix**
+
+Forward the ranges in declaration order, and pass all three strides as the
+write side does:
+
+```c++
+return read_tiles(subimage, miplevel, xbegin, xend, ybegin, yend, zbegin,
+                  zend, chbegin, chend, format, data.data(),
+                  data.xstride(), data.ystride(), data.zstride());
+```
+
+Separately, `ImageSpec::valid_tile_range` accepting a range outside the image
+is what turns cases 1 and 2 into silent successes, and the unannotated
+`return false` under the guard at `imageinput.cpp:737` on `main` (`:720` in
+3.1.16.0) is what makes case 3 silent. Both are worth addressing on their own.
+
+Introduced in PR #4748, which added the `image_span` methods, and unchanged
+since — 3.1.9.0, 3.1.12.0, 3.1.14.1, 3.1.16.0 and current `main` all carry the
+same text. No format plugin overrides these methods, so the base implementation
+is always the one that runs.
 
 ---
 
@@ -122,16 +231,32 @@ the data window. The pointer overload
 `write_scanlines(ybegin, yend, z, format, void*, ...)` accepts the same range
 with the same specification and buffer.
 
-Passing `0..4` instead is accepted, which suggests the `image_span` overload
-takes rows relative to the data window origin. However, reading both files
-back shows the same data window origin but **different pixel values**, so the
-accepted call does not write the same data to the same rows — it writes
-something else. That is the part I would flag: a caller who responds to the
-rejection by subtracting the origin gets no error and incorrect output.
+Passing `0..4` instead is accepted. That is not a second, relative convention
+— it is the same absolute convention with a zero-based bounds test in front of
+it. `ybegin`/`yend` are forwarded verbatim to the absolute-coordinate pointer
+overload, so the accepted call is interpreted downstream as absolute rows
+`0..3`, which lie outside the data window entirely.
 
-I could not tell from the documentation which coordinate convention the
-`image_span` overload intends, so I do not know whether the bug is the
-rejection, the acceptance, or both.
+The documentation is not ambiguous about which convention is intended.
+`imageoutput.rst` states that the pixel indices passed to the write functions
+are coordinates relative to the full image rather than to the crop window, and
+its own example loops `for (int y = yorigin; y < yorigin+croplength; ++y)`.
+The overload's doxygen repeats the pointer overload's wording. So the bounds
+test is simply comparing against the wrong bound.
+
+The accepted call is worse than a wrong write. Because the buffer is handed
+through unchanged, the OpenEXR writer sets its slice base to the buffer start
+and then fills data-window rows 5..8 by addressing `base + y * ystride`,
+reading past the end of a buffer that only holds four rows. The differing
+pixels reported below are heap garbage, and ASan reports a
+heap-buffer-overflow read. That is the part I would flag: a caller who
+responds to the rejection by subtracting the origin gets no error, incorrect
+output, and an out-of-bounds read.
+
+For context, PR #5004 has already corrected one round of incorrect
+`image_span` size checks in `imageoutput.cpp`; this looks like a second
+instance in the same family, in the range check rather than the size check.
+The overload itself arrived in PR #4727.
 
 **OpenImageIO version and dependencies**
 
@@ -139,15 +264,29 @@ rejection, the acceptance, or both.
 
 **To Reproduce**
 
-The attached `span_scanline_origin_repro.cpp`. Output on 3.2.0.2dev:
+The attached `span_scanline_origin_repro.cpp`. Verbatim output on 3.2.0.2dev:
 
 ```
-data window origin y=5, writing scanlines 5..9
+OpenImageIO 3.2.0.2dev
+
+data window origin y=5, height 4
+
   write_scanlines(image_span), rows 5..9 : FAILED, error: write_scanlines: Invalid scanline range 5-9
-  write_scanlines(image_span), rows 0..4 : ok
+  write_scanlines(image_span), rows 0..4  : ok
   write_scanlines(pointer),   rows 5..9 : ok
+
+  >>> MISMATCH: the two overloads disagree about the same range
+
   read back: origins 5 and 5 (same), pixels DIFFER
+  >>> the accepted 0-based call wrote different data, so this is not simply a different
+      coordinate convention
+
+2 mismatch(es)
 ```
+
+Because the accepted call reads out of bounds, "pixels DIFFER" is what happens
+in practice rather than something the standard guarantees; the out-of-bounds
+read is the reliable symptom.
 
 ---
 
@@ -273,9 +412,10 @@ cannot otherwise keep its safety promise.
 
 ## Issue 5 — `isConstantColor` writes past its reference buffer
 
-**Title:** `ImageBufAlgo::isConstantColor` heap overflow when `roi.chbegin > 0`
+**Title:** `ImageBufAlgo::isConstantColor` writes and reads past its reference
+vector when `roi.chbegin > 0`
 
-`imagebufalgo_compare.cpp`, in `isConstantColor_`:
+`src/libOpenImageIO/imagebufalgo_compare.cpp`, in `isConstantColor_`:
 
 ```c++
 std::vector<T> constval(roi.nchannels());
@@ -384,6 +524,7 @@ v3.1.9.0, 3.1.12.0 and current `main`.
 
 ```c++
 int nblocks = (roi.height() + blocksize - 1) / blocksize;
+OIIO_ASSERT(nblocks > 1);
 std::vector<std::string> results(nblocks);
 parallel_for_chunked(roi.ybegin, roi.yend, blocksize,
                      [&](int64_t ybegin, int64_t yend) {
@@ -394,8 +535,11 @@ parallel_for_chunked(roi.ybegin, roi.yend, blocksize,
 ```
 
 `results` is sized from the ROI's height, but the block index is computed from
-the *image's* first row. The chunked loop walks `[roi.ybegin, roi.yend)`, so the
-two agree only when `roi.ybegin == src.ybegin()`.
+the *image's* first row. The chunked loop walks `[roi.ybegin, roi.yend)`, so
+chunk *k* starts at `roi.ybegin + k * blocksize` and gets index
+`k + (roi.ybegin - src.ybegin()) / blocksize`. The indices are therefore right
+only while `roi.ybegin - src.ybegin()` is smaller than one block; from
+`roi.ybegin - src.ybegin() >= blocksize` onward every index is shifted.
 
 With `src.ybegin() == 0`, `roi.ybegin == 10`, `roi.yend == 30` and
 `blocksize == 4`: `nblocks == 5`, while `b` takes the values 2, 3, 4, 5, 6.
@@ -403,16 +547,24 @@ With `src.ybegin() == 0`, `roi.ybegin == 10`, `roi.yend == 30` and
 
 The index should be `(ybegin - roi.ybegin) / blocksize`.
 
-Found while binding these for Rust. The binding does not expose `blocksize` at
-all, partly for this and partly because the two paths give different digests
-for identical pixels.
+This is a different defect from #5324: that one was an `ImageBuf` race fixed in
+#5325, and its reproduction hashed whole images, where
+`roi.ybegin == src.ybegin()` and these indices coincide. This survives #5325
+and needs an ROI that starts at least one block below the image's first row.
+
+Note also that `blocksize > 0` is not on its own enough to take the blocked
+path — it also falls back to `simplePixelHashSHA1` whenever
+`blocksize >= roi.height()`.
+
+Found while binding these for Rust; the binding does not expose `blocksize`.
 
 ## Issue 8 — the colour engine corrupts channels past the fourth
 
 **Title:** `colorconvert` and friends write `0.5 + 10 * src` into channels 4 and
 above instead of copying them
 
-In `color_ocio.cpp`, at the end of `colorconvert_impl`:
+In `src/libOpenImageIO/color_ocio.cpp`, at the end of the per-scanline body in
+`colorconvert_impl`:
 
 ```c++
 if (channelsToCopy < roi.chend && (&R != &A)) {
@@ -427,19 +579,36 @@ if (channelsToCopy < roi.chend && (&R != &A)) {
 ```
 
 The comment says the leftover channels are copied unaltered. The loop scales
-and offsets them instead. It has the shape of debugging code that was committed
-by accident.
+and offsets them instead.
+
+This is not a guess about intent. The block entered the file in PR #2987,
+"Clarify behavior of color conversion on image with > 4 channels" — and the
+line was `0.5 + 10 * a[c]` in that PR's diff as merged. The same pull request
+added to `imagebufalgo.h` the promise that additional channels "will be copied
+unaltered from source to destination (not set to black)", a sentence that now
+appears six times in the public header, once for each affected operation.
+`git log -L` shows the line has never been touched since. It has shipped in
+every release from v2.3.7.2 onwards — roughly five years.
 
 Every operation built on this engine is affected — `colorconvert`,
 `colormatrixtransform`, `ociolook`, `ociodisplay`, `ociofiletransform`,
 `ocionamedtransform` — for any image with more than four channels, which in
-practice means most multi-AOV EXRs. It only triggers in the generic template
-path with a destination distinct from the source, so the RGBA fast path hides
-it, which is presumably why it has lasted.
+practice means most multi-AOV EXRs.
 
-Measured on 3.1.9: converting a six-channel image whose fifth and sixth
-channels hold 0.125 and 0.875 gives 1.75 and 9.25, exactly `0.5 + 10 * x`.
-The line is identical on 3.2.0.2dev.
+Three conditions are needed together, which is presumably why it has lasted:
+more than four channels in the ROI, a destination distinct from the source, and
+a processor that is not a no-op. An identity conversion returns through
+`ImageBufAlgo::copy` before reaching the engine, and images of four channels or
+fewer skip the block because `channelsToCopy == roi.chend` makes its guard
+false. The RGBA fast path is gated on both buffers having exactly four
+channels, so it never carries an image that would trigger this — it does not
+mask the bug so much as never meet it.
+
+Measured on 3.1.9 with a float destination: converting a six-channel image
+whose fifth and sixth channels hold 0.125 and 0.875 gives 1.75 and 9.25,
+exactly `0.5 + 10 * x`. Both are exactly representable in float and half; an
+integer destination would quantise or clamp them. The line is identical on
+3.1.12.0 and on current `main`.
 
 The fix is what the comment already says:
 
@@ -467,13 +636,30 @@ if (from.empty() || from == "current") {
         colorconfig = &ColorConfig::default_colorconfig();
 ```
 
-The null check is fifteen lines below the first dereference. `colorconfig`
-defaults to `nullptr`, and an empty `fromspace` is the documented way to say
-"use the source's own colour space", so the combination is neither exotic nor
-discouraged — it is the default call.
+The null check is thirteen lines below the first dereference, and there is a
+second, identical dereference in the `to` block between them. `colorconfig`
+defaults to `nullptr`. The trigger is `from.empty() || from == "current"`, so
+the literal string `"current"` reaches it too.
 
-`ColorConfig::resolve` dereferences `getImpl()`, so this is an immediate crash
+An empty `fromspace` is accepted and, per the implementation — it reads
+`oiio:Colorspace` from the source's own spec — and per what `--ociolook from=`
+promises in the `oiiotool` documentation, means "deduce from the source's
+metadata". (`ociolook`'s own doxygen says an empty string means `scene_linear`,
+which is a separate inconsistency and not what this report is about.) So this
+is a perfectly ordinary call, not an exotic one. `fromspace` and `tospace` are
+required parameters, so a caller must pass `""` explicitly; only `colorconfig`
+defaults.
+
+`ColorConfig::resolve` is a non-static member that immediately reads `m_impl`
+through `getImpl()`, with no null test on either, so this is an immediate crash
 rather than a bad answer.
+
+No C++ is needed to reach it. OpenImageIO's own Python bindings pass a literal
+`NULL` for the config, so this crashes the shipped bindings:
+
+```python
+ImageBufAlgo.ociolook(dst, src, "look", "", "")
+```
 
 `ociodisplay` does the same job in the correct order, which is what the fix
 should look like: hoist the
@@ -484,6 +670,13 @@ if (!colorconfig)
 ```
 
 above the two `from`/`to` resolution blocks.
+
+`ImageBufAlgo::colorconvert` avoids the problem a second way, by defaulting
+with a literal — `get_string_attribute("oiio:Colorspace", "scene_linear")` —
+so it never touches `colorconfig` before its own null check. Either shape would
+do; `ociolook` is simply the one that was missed.
+
+Unchanged on 3.1.9, 3.1.12.0 and current `main`.
 
 Found while binding these for Rust. The binding always passes a real
 ColorConfig, so it cannot reach this.

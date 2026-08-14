@@ -13,6 +13,9 @@ use std::path::{Path, PathBuf};
 
 use oiio::{ImageBuf, ImageCache, ImageInput, PixelFormat};
 
+mod common;
+use common::ScratchDir;
+
 /// The corpus root, or `None` when the suite should be skipped.
 fn corpus() -> Option<PathBuf> {
     let path = PathBuf::from(std::env::var_os("OIIO_BIND_TEST_IMAGES")?);
@@ -453,6 +456,22 @@ fn rejects_damaged_exrs_without_crashing() {
             .is_some_and(|name| name.ends_with("_exr") || name.ends_with(".exr"))
     });
     assert!(!files.is_empty(), "no damaged EXRs found");
+
+    // The extension matters more than it looks. Without one, OpenImageIO
+    // identifies the file by content and takes a different reporting path;
+    // with `.exr` it goes through the EXR reader, whose error messages quote
+    // the attribute names it choked on. Those are arbitrary bytes, and
+    // building a Rust string from them used to abort the process rather than
+    // return an error. So every fixture is also opened under an `.exr` name.
+    let scratch = ScratchDir::new("damagedexr");
+    let mut renamed = Vec::new();
+    for (index, path) in files.iter().enumerate() {
+        let copy = scratch.file(&format!("damaged{index}.exr"));
+        if std::fs::copy(path, &copy).is_ok() {
+            renamed.push(copy);
+        }
+    }
+    files.extend(renamed);
 
     let mut rejected = 0usize;
     let mut survived = 0usize;

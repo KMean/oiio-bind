@@ -15,7 +15,7 @@
 mod common;
 
 use oiio::algo::{FitMode, Operand};
-use oiio::{algo, ImageBuf, ImageSpec, PixelFormat, Roi};
+use oiio::{algo, ImageBuf, ImageInput, ImageSpec, PixelFormat, Roi};
 
 fn flat(width: u32, height: u32, channels: u32) -> ImageBuf {
     let spec = ImageSpec::new(width, height, channels, PixelFormat::F32).unwrap();
@@ -417,4 +417,34 @@ fn no_operation_crashes_on_an_empty_or_deep_input() {
     let _ = algo::pixel_hash_sha1(&source, "", Some(huge));
     let _ = algo::nonzero_region(&source, Some(huge));
     let _ = algo::histogram(&source, 0, 4, 0.0..1.0, true, Some(huge));
+}
+
+/// An error message OpenImageIO built out of bytes it read from the file.
+///
+/// The EXR reader quotes attribute names back at you when a header will not
+/// parse, and a name in a corrupt file is whatever bytes happened to be there.
+/// Handing those to cxx's `rust::String(std::string)` throws, and it throws
+/// inside a shim declared `noexcept`, so the process aborted with
+/// `STATUS_STACK_BUFFER_OVERRUN` instead of returning an error. Thirty of the
+/// OpenEXR project's own fuzzer fixtures did this. Every shim now goes through
+/// `rust::String::lossy`, which substitutes U+FFFD and cannot throw.
+#[test]
+fn error_message_with_invalid_utf8_is_an_error_not_an_abort() {
+    // A 19-byte EXR: the magic number, a version, then an attribute whose name
+    // is three bytes that are not valid UTF-8 in any encoding.
+    let mut bytes = vec![0x76u8, 0x2f, 0x31, 0x01, 0x02, 0x00, 0x00, 0x00];
+    bytes.extend_from_slice(b"\xff\xfe\xfd\0chlist\0");
+
+    let error = ImageInput::from_memory("invalid-utf8.exr", bytes)
+        .err()
+        .expect("a 19-byte truncated header is not a readable image");
+
+    // The point is that we got here at all. That the replacement character
+    // survives into the message confirms the lossy path ran rather than the
+    // reader having failed earlier for an unrelated reason.
+    let text = error.to_string();
+    assert!(
+        text.contains('\u{fffd}'),
+        "expected the undecodable attribute name to be replaced, got {text:?}"
+    );
 }

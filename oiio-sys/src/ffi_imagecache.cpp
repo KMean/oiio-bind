@@ -6,7 +6,7 @@ namespace {
 rust::String
 take_cache_error(ImageCache& imagecache)
 {
-    return rust::String(imagecache.geterror(true));
+    return rust::String::lossy(imagecache.geterror(true));
 }
 }  // namespace
 
@@ -162,7 +162,7 @@ imagecache_good(ImageCache& imagecache, ImageHandle* file)
 rust::String
 imagecache_filename_from_handle(ImageCache& imagecache, ImageHandle* handle)
 {
-    return rust::String(imagecache.filename_from_handle(handle).c_str());
+    return rust::String::lossy(imagecache.filename_from_handle(handle).c_str());
 }
 
 bool
@@ -357,7 +357,7 @@ imagecache_get_pixels_span_with_error(
     detail::PixelLayout layout;
     if (!detail::bounded_pixel_layout(channels, width, height, depth, format,
                                       result.size(), layout)) {
-        error = rust::String(
+        error = rust::String::lossy(
             "invalid pixel layout or destination buffer byte length");
         return false;
     }
@@ -377,7 +377,7 @@ imagecache_get_pixels_handle_span_with_error(
 {
     error = rust::String();
     if (file == nullptr) {
-        error = rust::String("null image handle");
+        error = rust::String::lossy("null image handle");
         return false;
     }
 
@@ -389,7 +389,7 @@ imagecache_get_pixels_handle_span_with_error(
     detail::PixelLayout layout;
     if (!detail::bounded_pixel_layout(channels, width, height, depth, format,
                                       result.size(), layout)) {
-        error = rust::String(
+        error = rust::String::lossy(
             "invalid pixel layout or destination buffer byte length");
         return false;
     }
@@ -551,13 +551,13 @@ imagecache_has_error(ImageCache& imagecache)
 rust::String
 imagecache_geterror(ImageCache& imagecache, bool clear)
 {
-    return rust::String(imagecache.geterror(clear).c_str());
+    return rust::String::lossy(imagecache.geterror(clear).c_str());
 }
 
 rust::String
 imagecache_getstats(ImageCache& imagecache, int level)
 {
-    return rust::String(imagecache.getstats(level).c_str());
+    return rust::String::lossy(imagecache.getstats(level).c_str());
 }
 
 void

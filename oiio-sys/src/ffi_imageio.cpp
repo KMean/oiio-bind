@@ -873,7 +873,11 @@ imageinput_has_error(const ImageInput& imageinput)
 rust::String
 imageinput_geterror(ImageInput& imageinput)
 {
-    return rust::String(imageinput.geterror());
+// OpenImageIO builds its error text from the file: a damaged EXR whose
+// attribute name is arbitrary bytes comes back quoted verbatim. cxx's
+// throwing rust::String constructor would turn that into std::terminate,
+// because the shim it is called from is noexcept. Never assume UTF-8.
+    return rust::String::lossy(imageinput.geterror());
 }
 
 void
@@ -1145,7 +1149,11 @@ imageoutput_has_error(const ImageOutput& imageoutput)
 rust::String
 imageoutput_geterror(const ImageOutput& imageoutput, bool clear)
 {
-    return rust::String(imageoutput.geterror(clear));
+// OpenImageIO builds its error text from the file: a damaged EXR whose
+// attribute name is arbitrary bytes comes back quoted verbatim. cxx's
+// throwing rust::String constructor would turn that into std::terminate,
+// because the shim it is called from is noexcept. Never assume UTF-8.
+    return rust::String::lossy(imageoutput.geterror(clear));
 }
 
 void
@@ -1195,7 +1203,12 @@ has_error()
 rust::String
 get_error(bool clear)
 {
-    return OIIO::geterror(clear);
+    // Returning the std::string directly would convert through cxx's throwing
+    // constructor, and this shim is noexcept, so a message OpenImageIO built
+    // out of bytes taken from the file would be std::terminate rather than an
+    // error. Every constructor called from these shims must be the lossy one.
+    const std::string error = OIIO::geterror(clear);
+    return rust::String::lossy(error.data(), error.size());
 }
 
 bool
@@ -1248,7 +1261,7 @@ getattribute_string(const rust::Str name, rust::String& value)
     bool result
         = OIIO::getattribute(std::string_view(name.data(), name.length()),
                              c_value);
-    value = rust::String(c_value);
+    value = rust::String::lossy(c_value);
     return result;
 }
 
@@ -1273,7 +1286,7 @@ get_string_attribute(const rust::Str name, const rust::Str defaultval)
     std::string c_defaultval(defaultval.data(), defaultval.length());
     std::string c_value = OIIO::get_string_attribute(
         std::string_view(name.data(), name.length()), c_defaultval);
-    return rust::String(c_value);
+    return rust::String::lossy(c_value);
 }
 
 // void
@@ -1329,10 +1342,10 @@ get_extension_map()
         rust::Vec<rust::String> values {};
 
         for (auto& value : item.second) {
-            values.push_back(rust::String(value));
+            values.push_back(rust::String::lossy(value));
         }
 
-        i.key   = rust::String(item.first);
+        i.key   = rust::String::lossy(item.first);
         i.value = values;
         result.push_back(i);
     }

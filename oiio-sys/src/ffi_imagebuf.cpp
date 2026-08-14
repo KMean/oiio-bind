@@ -675,7 +675,11 @@ imagebuf_has_error(const ImageBuf& imagebuf)
 rust::String
 imagebuf_geterror(const ImageBuf& imagebuf, bool clear)
 {
-    return rust::String(imagebuf.geterror(clear));
+// OpenImageIO builds its error text from the file: a damaged EXR whose
+// attribute name is arbitrary bytes comes back quoted verbatim. cxx's
+// throwing rust::String constructor would turn that into std::terminate,
+// because the shim it is called from is noexcept. Never assume UTF-8.
+    return rust::String::lossy(imagebuf.geterror(clear));
 }
 
 bool

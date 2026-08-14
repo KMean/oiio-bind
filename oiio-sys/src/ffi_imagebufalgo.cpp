@@ -48,7 +48,7 @@ collect_texture_failure(const std::ostringstream& printed, rust::String& error)
             message += '\n';
         message += logged;
     }
-    error = rust::String(message);
+    error = rust::String::lossy(message);
 }
 
 // Every colour operation shares one pixel engine, and that engine corrupts
@@ -106,7 +106,7 @@ reject_deep(const ImageBuf& src, const char* operation, rust::String& error)
 {
     if (!src.deep())
         return false;
-    error = rust::String(std::string(operation)
+    error = rust::String::lossy(std::string(operation)
                          + ": deep images have no contiguous pixels to measure");
     return true;
 }
@@ -359,7 +359,7 @@ imagebufalgo_pixel_stats(const ImageBuf& src, const ROI& roi, int nthreads)
     result.ok = false;
 
     if (src.deep()) {
-        result.error = rust::String(
+        result.error = rust::String::lossy(
             "pixel statistics: deep images are measured per sample, which this "
             "call does not report");
         return result;
@@ -377,7 +377,7 @@ imagebufalgo_pixel_stats(const ImageBuf& src, const ROI& roi, int nthreads)
         std::string message = src.geterror(true);
         if (message.empty())
             message = "OpenImageIO reported no statistics and no reason";
-        result.error = rust::String(message);
+        result.error = rust::String::lossy(message);
         return result;
     }
 
@@ -423,7 +423,7 @@ imagebufalgo_histogram(const ImageBuf& src, int channel, int bins, float min,
         std::string message = src.geterror(true);
         if (message.empty())
             message = "OpenImageIO produced no histogram and no reason";
-        error = rust::String(message);
+        error = rust::String::lossy(message);
         return result;
     }
 
@@ -446,7 +446,7 @@ imagebufalgo_is_constant_color(const ImageBuf& src, float threshold,
         // imagebufalgo_compare.cpp sizes the reference vector to the region's
         // channel count but indexes it with absolute channel numbers, so a
         // region starting above channel zero writes past its end.
-        error = rust::String(
+        error = rust::String::lossy(
             "is_constant_color: the region must begin at channel zero; "
             "OpenImageIO writes past its own buffer otherwise");
         return false;
@@ -462,7 +462,7 @@ imagebufalgo_is_constant_color(const ImageBuf& src, float threshold,
     if (!constant) {
         const std::string message = src.geterror(true);
         if (!message.empty())
-            error = rust::String(message);
+            error = rust::String::lossy(message);
     }
     return constant;
 }
@@ -477,7 +477,7 @@ imagebufalgo_is_constant_channel(const ImageBuf& src, int channel, float value,
     if (channel < 0 || channel >= src.nchannels()) {
         // OpenImageIO returns false here and records nothing, which is
         // indistinguishable from "the channel is not constant".
-        error = rust::String("is_constant_channel: channel "
+        error = rust::String::lossy("is_constant_channel: channel "
                              + std::to_string(channel) + " is outside the "
                              + std::to_string(src.nchannels())
                              + " the image has");
@@ -492,7 +492,7 @@ imagebufalgo_is_constant_channel(const ImageBuf& src, int channel, float value,
     if (!constant) {
         const std::string message = src.geterror(true);
         if (!message.empty())
-            error = rust::String(message);
+            error = rust::String::lossy(message);
     }
     return constant;
 }
@@ -512,7 +512,7 @@ imagebufalgo_is_monochrome(const ImageBuf& src, float threshold, const ROI& roi,
     if (!monochrome) {
         const std::string message = src.geterror(true);
         if (!message.empty())
-            error = rust::String(message);
+            error = rust::String::lossy(message);
     }
     return monochrome;
 }
@@ -525,7 +525,7 @@ imagebufalgo_nonzero_region(const ImageBuf& src, const ROI& roi, int nthreads,
     if (bounded.chbegin != 0) {
         // nonzero_region trims by calling isConstantColor, so it inherits that
         // function's out-of-bounds write for a region above channel zero.
-        error = rust::String(
+        error = rust::String::lossy(
             "nonzero_region: the region must begin at channel zero; "
             "OpenImageIO writes past its own buffer otherwise");
         return ROI();
@@ -547,7 +547,7 @@ imagebufalgo_pixel_hash_sha1(const ImageBuf& src, const rust::Str extrainfo,
         // checking it, so an empty region takes the process down with an
         // integer division by zero. That includes a region clamped to nothing
         // because it never overlapped the image.
-        error = rust::String(
+        error = rust::String::lossy(
             "pixel_hash_sha1: the region holds no pixels to hash");
         return rust::String();
     }
@@ -564,9 +564,9 @@ imagebufalgo_pixel_hash_sha1(const ImageBuf& src, const rust::Str extrainfo,
         std::string message = src.geterror(true);
         if (message.empty())
             message = "OpenImageIO produced no digest and no reason";
-        error = rust::String(message);
+        error = rust::String::lossy(message);
     }
-    return rust::String(digest);
+    return rust::String::lossy(digest);
 }
 
 bool
@@ -1019,12 +1019,12 @@ imagebufalgo_compare(const ImageBuf& a, const ImageBuf& b, float failthresh,
         // images disagree about deepness, compare sets only `error` and
         // returns, leaving every measurement indeterminate — so there is
         // nothing here worth handing back.
-        error = rust::String(
+        error = rust::String::lossy(
             "compare: one image is deep and the other is not");
         return refused;
     }
     if (!a.initialized() || !b.initialized()) {
-        error = rust::String("compare: both images must hold pixels");
+        error = rust::String::lossy("compare: both images must hold pixels");
         return refused;
     }
 
@@ -1039,7 +1039,7 @@ imagebufalgo_compare(const ImageBuf& a, const ImageBuf& b, float failthresh,
         std::string message = a.geterror(true);
         if (message.empty())
             message = "OpenImageIO could not compare these images";
-        error = rust::String(message);
+        error = rust::String::lossy(message);
         return refused;
     }
     CompareSummary summary;
@@ -1853,7 +1853,7 @@ imagebufalgo_make_texture_from_buffer(int32_t mode, const ImageBuf& input,
 {
     OIIO::ImageBufAlgo::MakeTextureMode texture_mode;
     if (!to_texture_mode(mode, texture_mode)) {
-        error = rust::String("unknown make_texture mode");
+        error = rust::String::lossy("unknown make_texture mode");
         return false;
     }
 
@@ -1876,7 +1876,7 @@ imagebufalgo_make_texture_from_file(int32_t mode, const rust::Str filename,
 {
     OIIO::ImageBufAlgo::MakeTextureMode texture_mode;
     if (!to_texture_mode(mode, texture_mode)) {
-        error = rust::String("unknown make_texture mode");
+        error = rust::String::lossy("unknown make_texture mode");
         return false;
     }
 
