@@ -109,6 +109,16 @@ before the fork, but nothing was ever published under it, so starting both at
 - Tests against OpenImageIO's and OpenEXR's own image corpora, opt-in through
   `OIIO_BIND_TEST_IMAGES` and `OIIO_BIND_TEST_EXR_IMAGES`, including
   OpenEXR's `Damaged` directory of reader crash cases.
+- `oiio::algo` quality control and texture preparation from the binding gap
+  map: `color_range_check` returning its three counters as a struct (and
+  refusing the channel range OpenImageIO would answer with zeroes under a
+  success return), `color_map`/`color_map_named` with the knot table
+  validated in `u64` — upstream's own room check multiplies in `int`, where
+  a large pair overflows into an out-of-bounds read — plus
+  `compare_with_relative`, `normalize` (draining the source's error stack,
+  where OpenImageIO records the 3/4-channel refusal) and
+  `fillholes_pushpull`, whose internal failures upstream discards into a
+  silently black success.
 - `oiio::algo` channel layout from the binding gap map: `channel_append`
   (which requires an empty destination and refuses deep images, since
   OpenImageIO shapes the union result itself with no `IBAprep` in sight) and
