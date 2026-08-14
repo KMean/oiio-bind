@@ -216,6 +216,77 @@ fn repremult_needs_alpha_and_round_trips() {
 }
 
 #[test]
+fn demosaic_decodes_a_flat_mosaic_and_names_its_limits() {
+    use oiio::algo::MosaicPattern;
+
+    // A flat mosaic decodes to the same flat grey whatever the cell layout.
+    let mosaic = filled(8, 8, &[0.5]);
+    let mut decoded = ImageBuf::empty().unwrap();
+    algo::demosaic(
+        &mut decoded,
+        &mosaic,
+        MosaicPattern::Bayer,
+        "linear",
+        "RGGB",
+        None,
+    )
+    .unwrap();
+    assert_eq!(decoded.channel_count(), 3);
+    let centre = pixels_of(&decoded);
+    assert!(
+        centre.iter().all(|value| (value - 0.5).abs() < 1e-5),
+        "a flat mosaic decodes flat"
+    );
+
+    // A layout OpenImageIO does not know is an error, as is a pre-allocated
+    // destination, a negative origin, and a lopsided white balance.
+    let mut result = ImageBuf::empty().unwrap();
+    assert!(algo::demosaic(
+        &mut result,
+        &mosaic,
+        MosaicPattern::Bayer,
+        "linear",
+        "QQQQ",
+        None
+    )
+    .is_err());
+    let mut allocated = ImageBuf::new(&spec(8, 8, 3)).unwrap();
+    assert!(algo::demosaic(
+        &mut allocated,
+        &mosaic,
+        MosaicPattern::Bayer,
+        "linear",
+        "RGGB",
+        None
+    )
+    .is_err());
+    let offset = ImageSpec::new(8, 8, 1, PixelFormat::F32)
+        .unwrap()
+        .with_origin([-4, 0, 0]);
+    let shifted = ImageBuf::new(&offset).unwrap();
+    let mut result = ImageBuf::empty().unwrap();
+    assert!(algo::demosaic(
+        &mut result,
+        &shifted,
+        MosaicPattern::Bayer,
+        "linear",
+        "RGGB",
+        None
+    )
+    .is_err());
+    let mut result = ImageBuf::empty().unwrap();
+    assert!(algo::demosaic(
+        &mut result,
+        &mosaic,
+        MosaicPattern::Bayer,
+        "linear",
+        "RGGB",
+        Some(&[1.0, 2.0])
+    )
+    .is_err());
+}
+
+#[test]
 fn over_composites_using_alpha() {
     // Foreground: half-opaque white, premultiplied. Background: opaque black.
     let foreground = filled(4, 4, &[0.5, 0.5, 0.5, 0.5]);

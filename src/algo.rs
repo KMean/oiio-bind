@@ -2582,6 +2582,72 @@ pub fn compare(
     compare_with_relative(a, b, fail_threshold, warn_threshold, 0.0, 0.0, roi)
 }
 
+/// Which colour filter array a mosaic uses; see [`demosaic`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MosaicPattern {
+    /// The 2x2 Bayer pattern.
+    Bayer,
+    /// Fujifilm's 6x6 X-Trans pattern.
+    XTrans,
+}
+
+impl MosaicPattern {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Bayer => "bayer",
+            Self::XTrans => "xtrans",
+        }
+    }
+}
+
+/// Decode a one-channel camera mosaic into a three-channel colour image.
+///
+/// `layout` names the filter arrangement, `"RGGB"` and its rotations for
+/// Bayer; `algorithm` is `"linear"` or, for Bayer, the sharper `"MHC"`.
+/// `white_balance` optionally scales the channels during the decode, as
+/// `[r, g, b]` or `[r, g1, b, g2]`.
+///
+/// The destination must be empty — the decode shapes the result, and
+/// OpenImageIO ignores its own preparation verdict on a pre-allocated one —
+/// and the source's data window must not start at negative coordinates,
+/// which the decoders' pattern arithmetic does not survive.
+pub fn demosaic(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    pattern: MosaicPattern,
+    algorithm: &str,
+    layout: &str,
+    white_balance: Option<&[f32]>,
+) -> Result<()> {
+    if let Some(balance) = white_balance {
+        if balance.len() != 3 && balance.len() != 4 {
+            return Err(Error::InvalidRoi(format!(
+                "white balance is [r, g, b] or [r, g1, b, g2], got {} values",
+                balance.len()
+            )));
+        }
+    }
+    let mut error = String::new();
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_demosaic(
+            dst.inner_mut(),
+            src.inner(),
+            pattern.name(),
+            algorithm,
+            layout,
+            white_balance.unwrap_or(&[]),
+            ALL_THREADS,
+            &mut error,
+        )
+    };
+    if succeeded {
+        Ok(())
+    } else {
+        Err(Error::operation("demosaic", error))
+    }
+}
+
 /// Normalize the vectors a 3- or 4-channel image encodes, pixel by pixel.
 ///
 /// Each pixel is read as a vector around `in_center` — 0.5 for the usual

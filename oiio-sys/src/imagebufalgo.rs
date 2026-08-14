@@ -405,6 +405,17 @@ mod ffi {
             nthreads: i32,
         ) -> bool;
 
+        pub unsafe fn imagebufalgo_demosaic(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            pattern: &str,
+            algorithm: &str,
+            layout: &str,
+            white_balance: &[f32],
+            nthreads: i32,
+            error: &mut String,
+        ) -> bool;
+
         pub unsafe fn imagebufalgo_normalize(
             dst: Pin<&mut ImageBuf>,
             src: &ImageBuf,

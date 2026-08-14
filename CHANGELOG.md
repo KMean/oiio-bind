@@ -109,6 +109,12 @@ before the fork, but nothing was ever published under it, so starting both at
 - Tests against OpenImageIO's and OpenEXR's own image corpora, opt-in through
   `OIIO_BIND_TEST_IMAGES` and `OIIO_BIND_TEST_EXR_IMAGES`, including
   OpenEXR's `Damaged` directory of reader crash cases.
+- `algo::demosaic`, decoding a camera mosaic with a typed `MosaicPattern`.
+  The destination must be empty (OpenImageIO ignores its own preparation
+  verdict on a pre-allocated one), the source's data window must not start
+  at negative coordinates — the decoders' pattern arithmetic goes negative
+  there and indexes the decode dispatch table before its start — and a
+  queued destination error is a failure even under a success return.
 - `TextureSystem::environment`, the lat-long environment lookup by
   direction, carrying the plain lookup's bounds — subimage and first channel
   validated against the file before OpenImageIO trusts them unchecked — and

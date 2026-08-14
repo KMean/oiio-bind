@@ -1185,6 +1185,61 @@ imagebufalgo_minchan(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
 }
 
 bool
+imagebufalgo_demosaic(ImageBuf& dst, const ImageBuf& src, rust::Str pattern,
+                      rust::Str algorithm, rust::Str layout,
+                      rust::Slice<const float> white_balance, int nthreads,
+                      rust::String& error)
+{
+    error = rust::String();
+    if (src.deep()) {
+        error = rust::String::lossy("demosaic: deep images are not supported");
+        return false;
+    }
+    // The decoders fold the pixel coordinate into a channel-map cell with
+    // arithmetic that goes negative for a data window left of the origin,
+    // and the cell picks the decode routine — a negative index there is an
+    // indirect call through whatever sits before the table. Mosaics from
+    // cameras start at the origin; require that.
+    if (src.spec().x < 0 || src.spec().y < 0) {
+        error = rust::String::lossy(
+            "demosaic: the source's data window must not start at negative "
+            "coordinates");
+        return false;
+    }
+    // The result is three channels decoded from a one-channel mosaic, and
+    // IBAprep's verdict on a pre-allocated destination is ignored upstream;
+    // an empty destination sidesteps both.
+    if (dst.initialized()) {
+        error = rust::String::lossy(
+            "demosaic: use an empty destination; the result is shaped by the "
+            "decode");
+        return false;
+    }
+
+    OIIO::ParamValueList arguments;
+    arguments.attribute("pattern", to_string_view(pattern));
+    arguments.attribute("algorithm", to_string_view(algorithm));
+    arguments.attribute("layout", to_string_view(layout));
+    if (!white_balance.empty())
+        arguments.attribute("white_balance",
+                            OIIO::TypeDesc(OIIO::TypeDesc::FLOAT,
+                                           int(white_balance.size())),
+                            white_balance.data());
+
+    dst.geterror(true);
+    const bool ok = OIIO::ImageBufAlgo::demosaic(dst, src, arguments, {},
+                                                 nthreads);
+    if (!ok || dst.has_error()) {
+        std::string recorded = dst.geterror(true);
+        if (recorded.empty())
+            recorded = "OpenImageIO could not demosaic the image";
+        error = rust::String::lossy(recorded);
+        return false;
+    }
+    return true;
+}
+
+bool
 imagebufalgo_normalize(ImageBuf& dst, const ImageBuf& src, float in_center,
                        float out_center, float scale, const ROI& roi,
                        int nthreads, rust::String& error)

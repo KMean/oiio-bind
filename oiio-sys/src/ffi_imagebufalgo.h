@@ -273,6 +273,12 @@ imagebufalgo_minchan(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
                      int nthreads);
 
 bool
+imagebufalgo_demosaic(ImageBuf& dst, const ImageBuf& src, rust::Str pattern,
+                      rust::Str algorithm, rust::Str layout,
+                      rust::Slice<const float> white_balance, int nthreads,
+                      rust::String& error);
+
+bool
 imagebufalgo_normalize(ImageBuf& dst, const ImageBuf& src, float in_center,
                        float out_center, float scale, const ROI& roi,
                        int nthreads, rust::String& error);
