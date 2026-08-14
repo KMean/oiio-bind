@@ -41,6 +41,17 @@ pub use sys::imagebufalgo::CompareSummary;
 /// Use every thread OpenImageIO is configured for.
 const ALL_THREADS: i32 = 0;
 
+// SAFETY, for every `unsafe` block in this module.
+//
+// The `imagebufalgo_*` shims are declared `unsafe fn` because they hand their
+// arguments to OpenImageIO unchecked, and OpenImageIO trusts them: a region
+// whose channel range starts past the destination's last channel comes back
+// inverted out of `IBAprep`'s intersection and is then used as an unsigned
+// length. See `region_in`, which is what makes these calls sound and which
+// every one of them goes through. The other arguments are plain values, slices
+// whose lengths the shims re-derive, and `ImageBuf` references that cannot be
+// null because they come from `&`/`&mut` here.
+
 fn region(roi: Option<Roi>) -> sys::imageio::ROI {
     // An undefined ROI is how OpenImageIO spells "the whole image".
     roi.map_or_else(sys::imageio::roi_default, Roi::to_sys)
@@ -93,7 +104,8 @@ fn finish(dst: &mut ImageBuf, operation: &'static str, succeeded: bool) -> Resul
 /// Set every channel in the region to zero.
 pub fn zero(dst: &mut ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_zero(dst.inner_mut(), &roi, ALL_THREADS);
+    let succeeded =
+        unsafe { sys::imagebufalgo::imagebufalgo_zero(dst.inner_mut(), &roi, ALL_THREADS) };
     finish(dst, "zero", succeeded)
 }
 
@@ -111,7 +123,7 @@ pub fn fill(dst: &mut ImageBuf, values: &[f32], roi: Option<Roi>) -> Result<()> 
     }
     let roi = region_in(roi, dst)?;
     let succeeded =
-        sys::imagebufalgo::imagebufalgo_fill(dst.inner_mut(), values, &roi, ALL_THREADS);
+        unsafe { sys::imagebufalgo::imagebufalgo_fill(dst.inner_mut(), values, &roi, ALL_THREADS) };
     finish(dst, "fill", succeeded)
 }
 
@@ -125,7 +137,8 @@ macro_rules! binary_operation {
             roi: Option<Roi>,
         ) -> Result<()> {
             let roi = region_in(roi, dst)?;
-            let succeeded = $images(dst.inner_mut(), a.inner(), b.inner(), &roi, ALL_THREADS);
+            let succeeded =
+                unsafe { $images(dst.inner_mut(), a.inner(), b.inner(), &roi, ALL_THREADS) };
             finish(dst, $label, succeeded)
         }
 
@@ -142,7 +155,8 @@ macro_rules! binary_operation {
                 ));
             }
             let roi = region_in(roi, dst)?;
-            let succeeded = $constants(dst.inner_mut(), a.inner(), values, &roi, ALL_THREADS);
+            let succeeded =
+                unsafe { $constants(dst.inner_mut(), a.inner(), values, &roi, ALL_THREADS) };
             finish(dst, $label, succeeded)
         }
     };
@@ -189,13 +203,15 @@ pub fn fill_gradient(
     roi: Option<Roi>,
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_fill_vertical(
-        dst.inner_mut(),
-        top,
-        bottom,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_fill_vertical(
+            dst.inner_mut(),
+            top,
+            bottom,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "fill gradient", succeeded)
 }
 
@@ -209,15 +225,17 @@ pub fn fill_corners(
     roi: Option<Roi>,
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_fill_corners(
-        dst.inner_mut(),
-        top_left,
-        top_right,
-        bottom_left,
-        bottom_right,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_fill_corners(
+            dst.inner_mut(),
+            top_left,
+            top_right,
+            bottom_left,
+            bottom_right,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "fill corners", succeeded)
 }
 
@@ -239,19 +257,21 @@ pub fn checker(
             .map_err(|_| Error::InvalidImageSpec(format!("checker {name} exceeds i32::MAX")))
     };
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_checker(
-        dst.inner_mut(),
-        dimension("width", size[0])?,
-        dimension("height", size[1])?,
-        dimension("depth", size[2])?,
-        color1,
-        color2,
-        offset[0],
-        offset[1],
-        offset[2],
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_checker(
+            dst.inner_mut(),
+            dimension("width", size[0])?,
+            dimension("height", size[1])?,
+            dimension("depth", size[2])?,
+            color1,
+            color2,
+            offset[0],
+            offset[1],
+            offset[2],
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "checker", succeeded)
 }
 
@@ -324,16 +344,18 @@ pub fn noise(
 ) -> Result<()> {
     let (name, a, b) = kind.parts();
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_noise(
-        dst.inner_mut(),
-        name,
-        a,
-        b,
-        mono,
-        seed,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_noise(
+            dst.inner_mut(),
+            name,
+            a,
+            b,
+            mono,
+            seed,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "noise", succeeded)
 }
 
@@ -349,14 +371,16 @@ pub fn render_point(
     roi: Option<Roi>,
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_render_point(
-        dst.inner_mut(),
-        x,
-        y,
-        color,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_render_point(
+            dst.inner_mut(),
+            x,
+            y,
+            color,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "render point", succeeded)
 }
 
@@ -378,17 +402,19 @@ pub fn render_line(
     roi: Option<Roi>,
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_render_line(
-        dst.inner_mut(),
-        from[0],
-        from[1],
-        to[0],
-        to[1],
-        color,
-        skip_first_point,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_render_line(
+            dst.inner_mut(),
+            from[0],
+            from[1],
+            to[0],
+            to[1],
+            color,
+            skip_first_point,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "render line", succeeded)
 }
 
@@ -406,17 +432,19 @@ pub fn render_box(
     roi: Option<Roi>,
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_render_box(
-        dst.inner_mut(),
-        corner[0],
-        corner[1],
-        opposite[0],
-        opposite[1],
-        color,
-        fill,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_render_box(
+            dst.inner_mut(),
+            corner[0],
+            corner[1],
+            opposite[0],
+            opposite[1],
+            color,
+            fill,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "render box", succeeded)
 }
 
@@ -498,20 +526,22 @@ pub fn render_text(
 ) -> Result<()> {
     let (size, shadow) = text_metrics(options.size, options.shadow)?;
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_render_text(
-        dst.inner_mut(),
-        position[0],
-        position[1],
-        text,
-        size,
-        options.font,
-        options.color,
-        options.align_x as i32,
-        options.align_y as i32,
-        shadow,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_render_text(
+            dst.inner_mut(),
+            position[0],
+            position[1],
+            text,
+            size,
+            options.font,
+            options.color,
+            options.align_x as i32,
+            options.align_y as i32,
+            shadow,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "render text", succeeded)
 }
 
@@ -529,7 +559,7 @@ pub fn render_text(
 /// same, so the region that comes back is one you can actually pass on.
 pub fn text_size(text: &str, size: u32, font: &str) -> Result<Roi> {
     let (size, _) = text_metrics(size, 0)?;
-    let measured = sys::imagebufalgo::imagebufalgo_text_size(text, size, font);
+    let measured = unsafe { sys::imagebufalgo::imagebufalgo_text_size(text, size, font) };
     Roi::from_sys_optional(measured)?.ok_or_else(|| {
         Error::operation(
             "text size",
@@ -575,8 +605,9 @@ fn text_metrics(size: u32, shadow: u32) -> Result<(i32, i32)> {
 /// satisfy that gives a wrong answer rather than an error.
 pub fn flatten(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded =
-        sys::imagebufalgo::imagebufalgo_flatten(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_flatten(dst.inner_mut(), src.inner(), &roi, ALL_THREADS)
+    };
     finish(dst, "flatten", succeeded)
 }
 
@@ -592,13 +623,15 @@ pub fn flatten(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<(
 /// destination's shape and silently drop the writes that do not fit.
 pub fn deepen(dst: &mut ImageBuf, src: &ImageBuf, z_value: f32, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_deepen(
-        dst.inner_mut(),
-        src.inner(),
-        z_value,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_deepen(
+            dst.inner_mut(),
+            src.inner(),
+            z_value,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "deepen", succeeded)
 }
 
@@ -622,14 +655,16 @@ pub fn deep_merge(
     roi: Option<Roi>,
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_deep_merge(
-        dst.inner_mut(),
-        a.inner(),
-        b.inner(),
-        occlusion_cull,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_deep_merge(
+            dst.inner_mut(),
+            a.inner(),
+            b.inner(),
+            occlusion_cull,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "deep merge", succeeded)
 }
 
@@ -651,13 +686,15 @@ pub fn deep_holdout(
     roi: Option<Roi>,
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_deep_holdout(
-        dst.inner_mut(),
-        src.inner(),
-        holdout.inner(),
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_deep_holdout(
+            dst.inner_mut(),
+            src.inner(),
+            holdout.inner(),
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "deep holdout", succeeded)
 }
 
@@ -677,14 +714,16 @@ pub fn deep_holdout(
 /// is meant to sum to zero, such as `"laplacian"`.
 pub fn make_kernel(name: &str, width: f32, height: f32, normalize: bool) -> Result<ImageBuf> {
     let mut kernel = ImageBuf::empty()?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_make_kernel(
-        kernel.inner_mut(),
-        name,
-        width,
-        height,
-        1.0,
-        normalize,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_make_kernel(
+            kernel.inner_mut(),
+            name,
+            width,
+            height,
+            1.0,
+            normalize,
+        )
+    };
     if succeeded {
         Ok(kernel)
     } else {
@@ -705,14 +744,16 @@ pub fn convolve(
     roi: Option<Roi>,
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_convolve(
-        dst.inner_mut(),
-        src.inner(),
-        kernel.inner(),
-        normalize,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_convolve(
+            dst.inner_mut(),
+            src.inner(),
+            kernel.inner(),
+            normalize,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "convolve", succeeded)
 }
 
@@ -723,8 +764,9 @@ pub fn convolve(
 /// everything below zero away.
 pub fn laplacian(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded =
-        sys::imagebufalgo::imagebufalgo_laplacian(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_laplacian(dst.inner_mut(), src.inner(), &roi, ALL_THREADS)
+    };
     finish(dst, "laplacian", succeeded)
 }
 
@@ -749,16 +791,18 @@ pub fn unsharp_mask(
     roi: Option<Roi>,
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_unsharp_mask(
-        dst.inner_mut(),
-        src.inner(),
-        kernel,
-        width,
-        contrast,
-        threshold,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_unsharp_mask(
+            dst.inner_mut(),
+            src.inner(),
+            kernel,
+            width,
+            contrast,
+            threshold,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "unsharp mask", succeeded)
 }
 
@@ -779,14 +823,16 @@ pub fn median_filter(
 ) -> Result<()> {
     let (width, height) = window("median filter", width, height)?;
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_median_filter(
-        dst.inner_mut(),
-        src.inner(),
-        width,
-        height,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_median_filter(
+            dst.inner_mut(),
+            src.inner(),
+            width,
+            height,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "median filter", succeeded)
 }
 
@@ -803,14 +849,16 @@ pub fn dilate(
 ) -> Result<()> {
     let (width, height) = window("dilate", width, height)?;
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_dilate(
-        dst.inner_mut(),
-        src.inner(),
-        width,
-        height,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_dilate(
+            dst.inner_mut(),
+            src.inner(),
+            width,
+            height,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "dilate", succeeded)
 }
 
@@ -828,14 +876,16 @@ pub fn erode(
 ) -> Result<()> {
     let (width, height) = window("erode", width, height)?;
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_erode(
-        dst.inner_mut(),
-        src.inner(),
-        width,
-        height,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_erode(
+            dst.inner_mut(),
+            src.inner(),
+            width,
+            height,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "erode", succeeded)
 }
 
@@ -861,8 +911,9 @@ fn window(operation: &str, width: u32, height: Option<u32>) -> Result<(i32, i32)
 /// display window is transformed with the difference zero-padded.
 pub fn fft(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded =
-        sys::imagebufalgo::imagebufalgo_fft(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_fft(dst.inner_mut(), src.inner(), &roi, ALL_THREADS)
+    };
     finish(dst, "fft", succeeded)
 }
 
@@ -874,8 +925,9 @@ pub fn fft(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
 /// [`ImageBuf::read`](crate::ImageBuf::read) first if in doubt.
 pub fn ifft(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded =
-        sys::imagebufalgo::imagebufalgo_ifft(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_ifft(dst.inner_mut(), src.inner(), &roi, ALL_THREADS)
+    };
     finish(dst, "ifft", succeeded)
 }
 
@@ -888,12 +940,14 @@ pub fn ifft(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> 
 /// and the prose is wrong; this converts *from* polar.)
 pub fn polar_to_complex(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_polar_to_complex(
-        dst.inner_mut(),
-        src.inner(),
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_polar_to_complex(
+            dst.inner_mut(),
+            src.inner(),
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "polar to complex", succeeded)
 }
 
@@ -903,12 +957,14 @@ pub fn polar_to_complex(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) ->
 /// not `-π..π`.
 pub fn complex_to_polar(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_complex_to_polar(
-        dst.inner_mut(),
-        src.inner(),
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_complex_to_polar(
+            dst.inner_mut(),
+            src.inner(),
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "complex to polar", succeeded)
 }
 
@@ -968,14 +1024,16 @@ pub fn color_matrix_transform(
     roi: Option<Roi>,
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_colormatrixtransform(
-        dst.inner_mut(),
-        src.inner(),
-        matrix,
-        unpremult,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_colormatrixtransform(
+            dst.inner_mut(),
+            src.inner(),
+            matrix,
+            unpremult,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "colour matrix transform", succeeded)
 }
 
@@ -997,19 +1055,21 @@ pub fn ocio_look(
     roi: Option<Roi>,
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_ociolook(
-        dst.inner_mut(),
-        src.inner(),
-        looks,
-        from_space.unwrap_or_default(),
-        to_space.unwrap_or_default(),
-        options.unpremult,
-        options.inverse,
-        options.context_key,
-        options.context_value,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_ociolook(
+            dst.inner_mut(),
+            src.inner(),
+            looks,
+            from_space.unwrap_or_default(),
+            to_space.unwrap_or_default(),
+            options.unpremult,
+            options.inverse,
+            options.context_key,
+            options.context_value,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "OpenColorIO look", succeeded)
 }
 
@@ -1033,20 +1093,22 @@ pub fn ocio_display(
     roi: Option<Roi>,
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_ociodisplay(
-        dst.inner_mut(),
-        src.inner(),
-        display,
-        view,
-        from_space.unwrap_or_default(),
-        looks,
-        options.unpremult,
-        options.inverse,
-        options.context_key,
-        options.context_value,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_ociodisplay(
+            dst.inner_mut(),
+            src.inner(),
+            display,
+            view,
+            from_space.unwrap_or_default(),
+            looks,
+            options.unpremult,
+            options.inverse,
+            options.context_key,
+            options.context_value,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "OpenColorIO display", succeeded)
 }
 
@@ -1067,15 +1129,17 @@ pub fn ocio_file_transform(
 ) -> Result<()> {
     let name = crate::path_to_utf8(transform_path)?;
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_ociofiletransform(
-        dst.inner_mut(),
-        src.inner(),
-        name,
-        options.unpremult,
-        options.inverse,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_ociofiletransform(
+            dst.inner_mut(),
+            src.inner(),
+            name,
+            options.unpremult,
+            options.inverse,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "OpenColorIO file transform", succeeded)
 }
 
@@ -1088,17 +1152,19 @@ pub fn ocio_named_transform(
     roi: Option<Roi>,
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_ocionamedtransform(
-        dst.inner_mut(),
-        src.inner(),
-        name,
-        options.unpremult,
-        options.inverse,
-        options.context_key,
-        options.context_value,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_ocionamedtransform(
+            dst.inner_mut(),
+            src.inner(),
+            name,
+            options.unpremult,
+            options.inverse,
+            options.context_key,
+            options.context_value,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "OpenColorIO named transform", succeeded)
 }
 
@@ -1138,7 +1204,8 @@ pub struct PixelStats {
 /// per-pixel mean would not mean anything.
 pub fn pixel_stats(src: &ImageBuf, roi: Option<Roi>) -> Result<PixelStats> {
     let roi = region_in(roi, src)?;
-    let stats = sys::imagebufalgo::imagebufalgo_pixel_stats(src.inner(), &roi, ALL_THREADS);
+    let stats =
+        unsafe { sys::imagebufalgo::imagebufalgo_pixel_stats(src.inner(), &roi, ALL_THREADS) };
     if !stats.ok {
         return Err(Error::operation("pixel statistics", stats.error));
     }
@@ -1175,17 +1242,19 @@ pub fn histogram(
         .map_err(|_| Error::InvalidImageSpec("bin count exceeds i32::MAX".to_owned()))?;
     let roi = region_in(roi, src)?;
     let mut message = String::new();
-    let counts = sys::imagebufalgo::imagebufalgo_histogram(
-        src.inner(),
-        channel,
-        bins,
-        range.start,
-        range.end,
-        ignore_empty,
-        &roi,
-        ALL_THREADS,
-        &mut message,
-    );
+    let counts = unsafe {
+        sys::imagebufalgo::imagebufalgo_histogram(
+            src.inner(),
+            channel,
+            bins,
+            range.start,
+            range.end,
+            ignore_empty,
+            &roi,
+            ALL_THREADS,
+            &mut message,
+        )
+    };
     if counts.is_empty() {
         return Err(Error::operation("histogram", message));
     }
@@ -1213,14 +1282,16 @@ pub fn constant_color(
     let mut color = vec![0.0_f32; channels];
     let roi = region_in(roi, src)?;
     let mut message = String::new();
-    let constant = sys::imagebufalgo::imagebufalgo_is_constant_color(
-        src.inner(),
-        threshold,
-        &mut color,
-        &roi,
-        ALL_THREADS,
-        &mut message,
-    );
+    let constant = unsafe {
+        sys::imagebufalgo::imagebufalgo_is_constant_color(
+            src.inner(),
+            threshold,
+            &mut color,
+            &roi,
+            ALL_THREADS,
+            &mut message,
+        )
+    };
     if constant {
         return Ok(Some(color));
     }
@@ -1247,15 +1318,17 @@ pub fn is_constant_channel(
         .map_err(|_| Error::InvalidImageSpec("channel exceeds i32::MAX".to_owned()))?;
     let roi = region_in(roi, src)?;
     let mut message = String::new();
-    let constant = sys::imagebufalgo::imagebufalgo_is_constant_channel(
-        src.inner(),
-        channel,
-        value,
-        threshold,
-        &roi,
-        ALL_THREADS,
-        &mut message,
-    );
+    let constant = unsafe {
+        sys::imagebufalgo::imagebufalgo_is_constant_channel(
+            src.inner(),
+            channel,
+            value,
+            threshold,
+            &roi,
+            ALL_THREADS,
+            &mut message,
+        )
+    };
     if !constant && !message.is_empty() {
         return Err(Error::operation("constant channel", message));
     }
@@ -1271,13 +1344,15 @@ pub fn is_constant_channel(
 pub fn is_monochrome(src: &ImageBuf, threshold: f32, roi: Option<Roi>) -> Result<bool> {
     let roi = region_in(roi, src)?;
     let mut message = String::new();
-    let monochrome = sys::imagebufalgo::imagebufalgo_is_monochrome(
-        src.inner(),
-        threshold,
-        &roi,
-        ALL_THREADS,
-        &mut message,
-    );
+    let monochrome = unsafe {
+        sys::imagebufalgo::imagebufalgo_is_monochrome(
+            src.inner(),
+            threshold,
+            &roi,
+            ALL_THREADS,
+            &mut message,
+        )
+    };
     if !monochrome && !message.is_empty() {
         return Err(Error::operation("monochrome test", message));
     }
@@ -1299,12 +1374,9 @@ pub fn is_monochrome(src: &ImageBuf, threshold: f32, roi: Option<Roi>) -> Result
 pub fn nonzero_region(src: &ImageBuf, roi: Option<Roi>) -> Result<Option<Roi>> {
     let roi = region_in(roi, src)?;
     let mut message = String::new();
-    let found = sys::imagebufalgo::imagebufalgo_nonzero_region(
-        src.inner(),
-        &roi,
-        ALL_THREADS,
-        &mut message,
-    );
+    let found = unsafe {
+        sys::imagebufalgo::imagebufalgo_nonzero_region(src.inner(), &roi, ALL_THREADS, &mut message)
+    };
     if !message.is_empty() {
         return Err(Error::operation("nonzero region", message));
     }
@@ -1326,13 +1398,15 @@ pub fn nonzero_region(src: &ImageBuf, roi: Option<Roi>) -> Result<Option<Roi>> {
 pub fn pixel_hash_sha1(src: &ImageBuf, extra_info: &str, roi: Option<Roi>) -> Result<String> {
     let roi = region_in(roi, src)?;
     let mut message = String::new();
-    let digest = sys::imagebufalgo::imagebufalgo_pixel_hash_sha1(
-        src.inner(),
-        extra_info,
-        &roi,
-        ALL_THREADS,
-        &mut message,
-    );
+    let digest = unsafe {
+        sys::imagebufalgo::imagebufalgo_pixel_hash_sha1(
+            src.inner(),
+            extra_info,
+            &roi,
+            ALL_THREADS,
+            &mut message,
+        )
+    };
     if digest.is_empty() {
         return Err(Error::operation("pixel hash", message));
     }
@@ -1349,16 +1423,18 @@ pub fn pixel_hash_sha1(src: &ImageBuf, extra_info: &str, roi: Option<Roi>) -> Re
 /// source's yields silently offset pixels.
 pub fn rotate_90(dst: &mut ImageBuf, src: &ImageBuf, src_roi: Option<Roi>) -> Result<()> {
     let roi = region(src_roi);
-    let succeeded =
-        sys::imagebufalgo::imagebufalgo_rotate90(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_rotate90(dst.inner_mut(), src.inner(), &roi, ALL_THREADS)
+    };
     finish(dst, "rotate 90", succeeded)
 }
 
 /// Rotate a half turn. See [`rotate_90`] for how the region is read.
 pub fn rotate_180(dst: &mut ImageBuf, src: &ImageBuf, src_roi: Option<Roi>) -> Result<()> {
     let roi = region(src_roi);
-    let succeeded =
-        sys::imagebufalgo::imagebufalgo_rotate180(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_rotate180(dst.inner_mut(), src.inner(), &roi, ALL_THREADS)
+    };
     finish(dst, "rotate 180", succeeded)
 }
 
@@ -1366,8 +1442,9 @@ pub fn rotate_180(dst: &mut ImageBuf, src: &ImageBuf, src_roi: Option<Roi>) -> R
 /// read.
 pub fn rotate_270(dst: &mut ImageBuf, src: &ImageBuf, src_roi: Option<Roi>) -> Result<()> {
     let roi = region(src_roi);
-    let succeeded =
-        sys::imagebufalgo::imagebufalgo_rotate270(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_rotate270(dst.inner_mut(), src.inner(), &roi, ALL_THREADS)
+    };
     finish(dst, "rotate 270", succeeded)
 }
 
@@ -1379,8 +1456,9 @@ pub fn rotate_270(dst: &mut ImageBuf, src: &ImageBuf, src_roi: Option<Roi>) -> R
 ///
 /// An `Orientation` outside the eight EXIF values is an error.
 pub fn reorient(dst: &mut ImageBuf, src: &ImageBuf) -> Result<()> {
-    let succeeded =
-        sys::imagebufalgo::imagebufalgo_reorient(dst.inner_mut(), src.inner(), ALL_THREADS);
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_reorient(dst.inner_mut(), src.inner(), ALL_THREADS)
+    };
     finish(dst, "reorient", succeeded)
 }
 
@@ -1435,19 +1513,21 @@ pub fn rotate(
     }
     let roi = region_in(roi, dst)?;
     let [center_x, center_y] = center.unwrap_or([0.0, 0.0]);
-    let succeeded = sys::imagebufalgo::imagebufalgo_rotate(
-        dst.inner_mut(),
-        src.inner(),
-        angle,
-        center.is_some(),
-        center_x,
-        center_y,
-        options.filter.unwrap_or_default(),
-        options.filter_width.unwrap_or(0.0),
-        options.recompute_region,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_rotate(
+            dst.inner_mut(),
+            src.inner(),
+            angle,
+            center.is_some(),
+            center_x,
+            center_y,
+            options.filter.unwrap_or_default(),
+            options.filter_width.unwrap_or(0.0),
+            options.recompute_region,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "rotate", succeeded)
 }
 
@@ -1464,18 +1544,20 @@ pub fn warp(
     roi: Option<Roi>,
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_warp(
-        dst.inner_mut(),
-        src.inner(),
-        matrix,
-        options.filter.unwrap_or_default(),
-        options.filter_width.unwrap_or(0.0),
-        options.wrap.unwrap_or_default(),
-        options.edge_clamp,
-        options.recompute_region,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_warp(
+            dst.inner_mut(),
+            src.inner(),
+            matrix,
+            options.filter.unwrap_or_default(),
+            options.filter_width.unwrap_or(0.0),
+            options.wrap.unwrap_or_default(),
+            options.edge_clamp,
+            options.recompute_region,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "warp", succeeded)
 }
 
@@ -1506,19 +1588,21 @@ pub fn st_warp(
             .map_err(|_| Error::InvalidImageSpec(format!("{name} exceeds i32::MAX")))
     };
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_st_warp(
-        dst.inner_mut(),
-        src.inner(),
-        coordinates.inner(),
-        options.filter.unwrap_or_default(),
-        options.filter_width.unwrap_or(0.0),
-        index("s channel", channels[0])?,
-        index("t channel", channels[1])?,
-        flip[0],
-        flip[1],
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_st_warp(
+            dst.inner_mut(),
+            src.inner(),
+            coordinates.inner(),
+            options.filter.unwrap_or_default(),
+            options.filter_width.unwrap_or(0.0),
+            index("s channel", channels[0])?,
+            index("t channel", channels[1])?,
+            flip[0],
+            flip[1],
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "st_warp", succeeded)
 }
 
@@ -1570,38 +1654,46 @@ pub fn mad(
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
     let succeeded = match (b, c) {
-        (Operand::Image(b), Operand::Image(c)) => sys::imagebufalgo::imagebufalgo_mad_iii(
-            dst.inner_mut(),
-            a.inner(),
-            b.inner(),
-            c.inner(),
-            &roi,
-            ALL_THREADS,
-        ),
-        (Operand::Image(b), Operand::Constant(c)) => sys::imagebufalgo::imagebufalgo_mad_iic(
-            dst.inner_mut(),
-            a.inner(),
-            b.inner(),
-            c,
-            &roi,
-            ALL_THREADS,
-        ),
-        (Operand::Constant(b), Operand::Image(c)) => sys::imagebufalgo::imagebufalgo_mad_ici(
-            dst.inner_mut(),
-            a.inner(),
-            b,
-            c.inner(),
-            &roi,
-            ALL_THREADS,
-        ),
-        (Operand::Constant(b), Operand::Constant(c)) => sys::imagebufalgo::imagebufalgo_mad_icc(
-            dst.inner_mut(),
-            a.inner(),
-            b,
-            c,
-            &roi,
-            ALL_THREADS,
-        ),
+        (Operand::Image(b), Operand::Image(c)) => unsafe {
+            sys::imagebufalgo::imagebufalgo_mad_iii(
+                dst.inner_mut(),
+                a.inner(),
+                b.inner(),
+                c.inner(),
+                &roi,
+                ALL_THREADS,
+            )
+        },
+        (Operand::Image(b), Operand::Constant(c)) => unsafe {
+            sys::imagebufalgo::imagebufalgo_mad_iic(
+                dst.inner_mut(),
+                a.inner(),
+                b.inner(),
+                c,
+                &roi,
+                ALL_THREADS,
+            )
+        },
+        (Operand::Constant(b), Operand::Image(c)) => unsafe {
+            sys::imagebufalgo::imagebufalgo_mad_ici(
+                dst.inner_mut(),
+                a.inner(),
+                b,
+                c.inner(),
+                &roi,
+                ALL_THREADS,
+            )
+        },
+        (Operand::Constant(b), Operand::Constant(c)) => unsafe {
+            sys::imagebufalgo::imagebufalgo_mad_icc(
+                dst.inner_mut(),
+                a.inner(),
+                b,
+                c,
+                &roi,
+                ALL_THREADS,
+            )
+        },
     };
     finish(dst, "multiply and add", succeeded)
 }
@@ -1614,8 +1706,9 @@ pub fn mad(
 /// usual sequence.
 pub fn invert(dst: &mut ImageBuf, a: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded =
-        sys::imagebufalgo::imagebufalgo_invert(dst.inner_mut(), a.inner(), &roi, ALL_THREADS);
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_invert(dst.inner_mut(), a.inner(), &roi, ALL_THREADS)
+    };
     finish(dst, "invert", succeeded)
 }
 
@@ -1627,13 +1720,15 @@ pub fn invert(dst: &mut ImageBuf, a: &ImageBuf, roi: Option<Roi>) -> Result<()> 
 /// zero.
 pub fn pow(dst: &mut ImageBuf, a: &ImageBuf, exponents: &[f32], roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_pow(
-        dst.inner_mut(),
-        a.inner(),
-        exponents,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_pow(
+            dst.inner_mut(),
+            a.inner(),
+            exponents,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "power", succeeded)
 }
 
@@ -1655,15 +1750,17 @@ pub fn clamp(
     roi: Option<Roi>,
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_clamp(
-        dst.inner_mut(),
-        src.inner(),
-        min,
-        max,
-        clamp_alpha_to_unit,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_clamp(
+            dst.inner_mut(),
+            src.inner(),
+            min,
+            max,
+            clamp_alpha_to_unit,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "clamp", succeeded)
 }
 
@@ -1673,20 +1770,24 @@ pub fn clamp(
 pub fn min(dst: &mut ImageBuf, a: &ImageBuf, b: Operand<'_>, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
     let succeeded = match b {
-        Operand::Image(b) => sys::imagebufalgo::imagebufalgo_min_images(
-            dst.inner_mut(),
-            a.inner(),
-            b.inner(),
-            &roi,
-            ALL_THREADS,
-        ),
-        Operand::Constant(values) => sys::imagebufalgo::imagebufalgo_min_constant(
-            dst.inner_mut(),
-            a.inner(),
-            values,
-            &roi,
-            ALL_THREADS,
-        ),
+        Operand::Image(b) => unsafe {
+            sys::imagebufalgo::imagebufalgo_min_images(
+                dst.inner_mut(),
+                a.inner(),
+                b.inner(),
+                &roi,
+                ALL_THREADS,
+            )
+        },
+        Operand::Constant(values) => unsafe {
+            sys::imagebufalgo::imagebufalgo_min_constant(
+                dst.inner_mut(),
+                a.inner(),
+                values,
+                &roi,
+                ALL_THREADS,
+            )
+        },
     };
     finish(dst, "minimum", succeeded)
 }
@@ -1705,20 +1806,24 @@ pub fn min(dst: &mut ImageBuf, a: &ImageBuf, b: Operand<'_>, roi: Option<Roi>) -
 pub fn max(dst: &mut ImageBuf, a: &ImageBuf, b: Operand<'_>, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
     let succeeded = match b {
-        Operand::Image(b) => sys::imagebufalgo::imagebufalgo_max_images(
-            dst.inner_mut(),
-            a.inner(),
-            b.inner(),
-            &roi,
-            ALL_THREADS,
-        ),
-        Operand::Constant(values) => sys::imagebufalgo::imagebufalgo_max_constant(
-            dst.inner_mut(),
-            a.inner(),
-            values,
-            &roi,
-            ALL_THREADS,
-        ),
+        Operand::Image(b) => unsafe {
+            sys::imagebufalgo::imagebufalgo_max_images(
+                dst.inner_mut(),
+                a.inner(),
+                b.inner(),
+                &roi,
+                ALL_THREADS,
+            )
+        },
+        Operand::Constant(values) => unsafe {
+            sys::imagebufalgo::imagebufalgo_max_constant(
+                dst.inner_mut(),
+                a.inner(),
+                values,
+                &roi,
+                ALL_THREADS,
+            )
+        },
     };
     finish(dst, "maximum", succeeded)
 }
@@ -1761,18 +1866,20 @@ pub fn contrast_remap(
     roi: Option<Roi>,
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_contrast_remap(
-        dst.inner_mut(),
-        src.inner(),
-        remap.black,
-        remap.white,
-        remap.min,
-        remap.max,
-        remap.sigmoid_contrast,
-        remap.sigmoid_threshold,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_contrast_remap(
+            dst.inner_mut(),
+            src.inner(),
+            remap.black,
+            remap.white,
+            remap.min,
+            remap.max,
+            remap.sigmoid_contrast,
+            remap.sigmoid_threshold,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "contrast remap", succeeded)
 }
 
@@ -1795,14 +1902,16 @@ pub fn saturate(
     let first_channel = i32::try_from(first_channel)
         .map_err(|_| Error::InvalidImageSpec("first channel exceeds i32::MAX".to_owned()))?;
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_saturate(
-        dst.inner_mut(),
-        src.inner(),
-        scale,
-        first_channel,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_saturate(
+            dst.inner_mut(),
+            src.inner(),
+            scale,
+            first_channel,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "saturate", succeeded)
 }
 
@@ -1829,16 +1938,18 @@ pub fn paste(
     src_roi: Option<Roi>,
 ) -> Result<()> {
     let src_roi = region(src_roi);
-    let succeeded = sys::imagebufalgo::imagebufalgo_paste(
-        dst.inner_mut(),
-        position[0],
-        position[1],
-        position[2],
-        first_channel,
-        src.inner(),
-        &src_roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_paste(
+            dst.inner_mut(),
+            position[0],
+            position[1],
+            position[2],
+            first_channel,
+            src.inner(),
+            &src_roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "paste", succeeded)
 }
 
@@ -1856,29 +1967,33 @@ pub fn paste(
 /// Use [`channels`] to actually drop channels. Deep images are supported.
 pub fn cut(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded =
-        sys::imagebufalgo::imagebufalgo_cut(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_cut(dst.inner_mut(), src.inner(), &roi, ALL_THREADS)
+    };
     finish(dst, "cut", succeeded)
 }
 
 /// Take the absolute value of every channel.
 pub fn abs(dst: &mut ImageBuf, a: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded =
-        sys::imagebufalgo::imagebufalgo_abs(dst.inner_mut(), a.inner(), &roi, ALL_THREADS);
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_abs(dst.inner_mut(), a.inner(), &roi, ALL_THREADS)
+    };
     finish(dst, "absolute value", succeeded)
 }
 
 /// Compute the absolute difference between two images.
 pub fn absdiff(dst: &mut ImageBuf, a: &ImageBuf, b: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_absdiff_images(
-        dst.inner_mut(),
-        a.inner(),
-        b.inner(),
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_absdiff_images(
+            dst.inner_mut(),
+            a.inner(),
+            b.inner(),
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "absolute difference", succeeded)
 }
 
@@ -1891,13 +2006,15 @@ pub fn copy(
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
     let convert = convert_to.unwrap_or(crate::PixelFormat::Other).to_sys();
-    let succeeded = sys::imagebufalgo::imagebufalgo_copy(
-        dst.inner_mut(),
-        src.inner(),
-        convert,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_copy(
+            dst.inner_mut(),
+            src.inner(),
+            convert,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "copy", succeeded)
 }
 
@@ -1908,32 +2025,36 @@ pub fn copy(
 /// source's. [`cut`] additionally moves the result to the origin.
 pub fn crop(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded =
-        sys::imagebufalgo::imagebufalgo_crop(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_crop(dst.inner_mut(), src.inner(), &roi, ALL_THREADS)
+    };
     finish(dst, "crop", succeeded)
 }
 
 /// Mirror vertically, top to bottom.
 pub fn flip(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded =
-        sys::imagebufalgo::imagebufalgo_flip(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_flip(dst.inner_mut(), src.inner(), &roi, ALL_THREADS)
+    };
     finish(dst, "flip", succeeded)
 }
 
 /// Mirror horizontally, left to right.
 pub fn flop(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded =
-        sys::imagebufalgo::imagebufalgo_flop(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_flop(dst.inner_mut(), src.inner(), &roi, ALL_THREADS)
+    };
     finish(dst, "flop", succeeded)
 }
 
 /// Transpose, exchanging rows and columns.
 pub fn transpose(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded =
-        sys::imagebufalgo::imagebufalgo_transpose(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_transpose(dst.inner_mut(), src.inner(), &roi, ALL_THREADS)
+    };
     finish(dst, "transpose", succeeded)
 }
 
@@ -1983,14 +2104,16 @@ pub fn resize(
     roi: Option<Roi>,
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_resize(
-        dst.inner_mut(),
-        src.inner(),
-        filter_name.unwrap_or(""),
-        filter_width.unwrap_or(0.0),
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_resize(
+            dst.inner_mut(),
+            src.inner(),
+            filter_name.unwrap_or(""),
+            filter_width.unwrap_or(0.0),
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "resize", succeeded)
 }
 
@@ -2005,16 +2128,18 @@ pub fn fit(
     roi: Option<Roi>,
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_fit(
-        dst.inner_mut(),
-        src.inner(),
-        filter_name.unwrap_or(""),
-        filter_width.unwrap_or(0.0),
-        mode.name(),
-        exact,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_fit(
+            dst.inner_mut(),
+            src.inner(),
+            filter_name.unwrap_or(""),
+            filter_width.unwrap_or(0.0),
+            mode.name(),
+            exact,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "fit", succeeded)
 }
 
@@ -2029,13 +2154,15 @@ pub fn resample(
     roi: Option<Roi>,
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_resample(
-        dst.inner_mut(),
-        src.inner(),
-        interpolate,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_resample(
+            dst.inner_mut(),
+            src.inner(),
+            interpolate,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "resample", succeeded)
 }
 
@@ -2044,29 +2171,33 @@ pub fn resample(
 /// Both images must have an alpha channel and hold premultiplied values.
 pub fn over(dst: &mut ImageBuf, a: &ImageBuf, b: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_over(
-        dst.inner_mut(),
-        a.inner(),
-        b.inner(),
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_over(
+            dst.inner_mut(),
+            a.inner(),
+            b.inner(),
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "over", succeeded)
 }
 
 /// Multiply the colour channels by alpha.
 pub fn premult(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded =
-        sys::imagebufalgo::imagebufalgo_premult(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_premult(dst.inner_mut(), src.inner(), &roi, ALL_THREADS)
+    };
     finish(dst, "premultiply", succeeded)
 }
 
 /// Divide the colour channels by alpha, undoing [`premult`].
 pub fn unpremult(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded =
-        sys::imagebufalgo::imagebufalgo_unpremult(dst.inner_mut(), src.inner(), &roi, ALL_THREADS);
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_unpremult(dst.inner_mut(), src.inner(), &roi, ALL_THREADS)
+    };
     finish(dst, "unpremultiply", succeeded)
 }
 
@@ -2083,13 +2214,15 @@ pub fn channel_sum(
     roi: Option<Roi>,
 ) -> Result<()> {
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_channel_sum(
-        dst.inner_mut(),
-        src.inner(),
-        weights,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_channel_sum(
+            dst.inner_mut(),
+            src.inner(),
+            weights,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "channel sum", succeeded)
 }
 
@@ -2165,16 +2298,18 @@ pub fn channels(
         .map(|name| (*name).to_owned())
         .collect();
 
-    let succeeded = sys::imagebufalgo::imagebufalgo_channels(
-        dst.inner_mut(),
-        src.inner(),
-        order.len() as i32,
-        &order,
-        &values,
-        &names,
-        false,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_channels(
+            dst.inner_mut(),
+            src.inner(),
+            order.len() as i32,
+            &order,
+            &values,
+            &names,
+            false,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "channel layout", succeeded)
 }
 
@@ -2203,15 +2338,17 @@ pub fn color_convert(
         ));
     }
     let roi = region_in(roi, dst)?;
-    let succeeded = sys::imagebufalgo::imagebufalgo_colorconvert(
-        dst.inner_mut(),
-        src.inner(),
-        from_space,
-        to_space,
-        unpremult,
-        &roi,
-        ALL_THREADS,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_colorconvert(
+            dst.inner_mut(),
+            src.inner(),
+            from_space,
+            to_space,
+            unpremult,
+            &roi,
+            ALL_THREADS,
+        )
+    };
     finish(dst, "colour convert", succeeded)
 }
 
@@ -2234,15 +2371,17 @@ pub fn compare(
 ) -> Result<CompareSummary> {
     let roi = region_in(roi, a)?;
     let mut message = String::new();
-    let summary = sys::imagebufalgo::imagebufalgo_compare(
-        a.inner(),
-        b.inner(),
-        fail_threshold,
-        warn_threshold,
-        &roi,
-        ALL_THREADS,
-        &mut message,
-    );
+    let summary = unsafe {
+        sys::imagebufalgo::imagebufalgo_compare(
+            a.inner(),
+            b.inner(),
+            fail_threshold,
+            warn_threshold,
+            &roi,
+            ALL_THREADS,
+            &mut message,
+        )
+    };
     if message.is_empty() {
         Ok(summary)
     } else {

@@ -365,6 +365,10 @@ impl TextureConfig {
 /// Errors are reported as OpenImageIO gives them — it has no destination image
 /// to record them in, so the message comes from the global error channel and
 /// from whatever the operation printed while refusing.
+// SAFETY, for both `unsafe` blocks below: the `imagebufalgo_*` shims are
+// declared `unsafe fn` because OpenImageIO trusts their arguments. These two
+// take only file names, an already-built configuration spec, and an ImageBuf
+// reference that cannot be null; there is no region involved.
 pub fn make_texture(
     mode: TextureMode,
     input_path: &Path,
@@ -381,13 +385,15 @@ pub fn make_texture(
     };
 
     let mut message = String::new();
-    let succeeded = sys::imagebufalgo::imagebufalgo_make_texture_from_file(
-        mode.code(),
-        input,
-        output,
-        config,
-        &mut message,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_make_texture_from_file(
+            mode.code(),
+            input,
+            output,
+            config,
+            &mut message,
+        )
+    };
     if succeeded {
         Ok(())
     } else {
@@ -414,13 +420,15 @@ pub fn make_texture_from_buffer(
     };
 
     let mut message = String::new();
-    let succeeded = sys::imagebufalgo::imagebufalgo_make_texture_from_buffer(
-        mode.code(),
-        source.inner(),
-        output,
-        config,
-        &mut message,
-    );
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_make_texture_from_buffer(
+            mode.code(),
+            source.inner(),
+            output,
+            config,
+            &mut message,
+        )
+    };
     if succeeded {
         Ok(())
     } else {

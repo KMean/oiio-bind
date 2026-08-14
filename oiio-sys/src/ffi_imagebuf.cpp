@@ -271,6 +271,15 @@ imagebuf_setpixel(ImageBuf& imagebuf, int x, int y, int z,
 void
 imagebuf_setpixel_i(ImageBuf& imagebuf, int i, rust::Slice<const float> pixel)
 {
+    // ImageBuf::setpixel(int i, ..) resolves the linear index with
+    // `i % spec().width` and `i / spec().width`, so an image with no pixels
+    // divides by zero. Out-of-range coordinates are absorbed by the iterator
+    // it delegates to, but the division happens first.
+    const OIIO::ImageSpec& spec = imagebuf.spec();
+    if (spec.width <= 0 || spec.height <= 0)
+        return;
+    if (i < 0 || int64_t(i) >= int64_t(spec.width) * int64_t(spec.height))
+        return;
     OIIO::cspan<float> c_pixel(pixel.data(), pixel.size());
     imagebuf.setpixel(i, c_pixel);
 }
