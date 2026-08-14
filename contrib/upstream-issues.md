@@ -1,6 +1,7 @@
 # Draft reports for OpenImageIO
 
-Nine findings from building Rust bindings against OpenImageIO 3.1/3.2.
+Eleven issues from building Rust bindings against OpenImageIO 3.1/3.2, plus
+one open observation not yet settled enough to report.
 
 Issues 1 and 2 have self-contained reproductions, so a maintainer running one
 is never shown a second unrelated API behaviour:
@@ -14,14 +15,14 @@ non-zero when two overloads of the same call disagree, given the same
 they understate the problem; issue 1 carries a separate table of measured
 pixel values.
 
-Issues 4–9 were found by reading the source while binding it, and are stated
-as code review rather than as runnable reproductions. Where a reproduction is
-cheap it is noted in the issue.
+Issues 4–9 and 11 were found by reading the source while binding it, and are
+stated as code review rather than as runnable reproductions. Where a
+reproduction is cheap it is noted in the issue.
 
 **Issues or pull requests.** The repository's `.github/ISSUE_TEMPLATE/bug_report.md`
 ends with: "IF YOU ALREADY HAVE A CODE FIX: There is no need to file a
 separate issue, please just go straight to making a pull request." Issues 3,
-4, 5, 7, 8 and 9 each name a one- or two-line fix, so they belong as pull
+4, 5, 7, 8, 9 and 11 each name a one- or two-line fix, so they belong as pull
 requests, not issues. Issue 2 is genuinely a question about intended
 behaviour, so it is an issue. Issue 6 could be either.
 
@@ -31,10 +32,10 @@ can run. The `bug:` title prefix comes from the bug-report template's
 covers commits and pull requests — where it endorses a parenthesised
 subcategory, e.g. `fix(IBA):`, and names `IBA` for `ImageBufAlgo` explicitly.
 
-Issues 4–7 are out-of-bounds reads and writes. `SECURITY.md` invites judgement
-here, and each of those is an API-misuse hazard reachable only from a caller's
-own arguments rather than from untrusted file data, so a normal issue or pull
-request is the right channel.
+Issues 4–7 and 11 are out-of-bounds reads and writes. `SECURITY.md` invites
+judgement here, and each of those is an API-misuse hazard reachable only from
+a caller's own arguments rather than from untrusted file data, so a normal
+issue or pull request is the right channel.
 
 Shared environment block, applying to every issue below:
 
@@ -740,6 +741,92 @@ contiguous destination, so this is reached through the public API rather than
 through OpenImageIO's own paths — but `copy_image` is `OIIO_API` and the header
 recommends it over the pointer form. This binding uses the pointer overload and
 is not affected.
+
+---
+
+## Issue 11 — `DeepData::insert_samples` and `erase_samples` do not range-check the pixel index
+
+**Title:** `DeepData::insert_samples`/`erase_samples` read and write past the
+per-pixel vectors when `pixel` is out of range
+
+Every other pixel-indexed `DeepData` method checks its `pixel` argument and
+answers an out-of-range one with zero, null, or a return — in
+`src/libOpenImageIO/deepdata.cpp` at 3.1.16.0: `capacity` (`:496`),
+`set_capacity` (`:507`), `samples` (`:540`), `set_samples` (`:551`) and
+`data_ptr` (`:639`) all begin with
+
+```c++
+if (pixel < 0 || pixel >= m_npixels)
+```
+
+The two exceptions are `insert_samples` (`:592`) and `erase_samples` (`:618`),
+which index the bookkeeping vectors directly. In `insert_samples`:
+
+```c++
+int oldsamps = samples(pixel);                        // guarded, returns 0
+if (oldsamps + n > int(m_impl->m_capacity[pixel]))    // unguarded read
+    set_capacity(pixel, oldsamps + n);                // guarded, returns
+...
+m_impl->m_nsamples[pixel] += n;                       // unguarded write
+```
+
+and in `erase_samples`:
+
+```c++
+n = std::min(n, int(m_impl->m_nsamples[pixel]));      // unguarded read
+...
+m_impl->m_nsamples[pixel] -= n;                       // unguarded write
+```
+
+`m_nsamples` and `m_capacity` hold one `unsigned` per pixel, so any `pixel`
+outside `[0, m_npixels)` — negative included — reads and then writes heap at
+`vector data + pixel * 4`. When the data is allocated, `insert_samples` also
+reaches `data_offset(pixel, 0, samplepos)`, which reads `m_cumcapacity[pixel]`
+out of range and feeds the result into a `std::copy_backward` over `m_data`.
+
+Both methods are public API taking `int64_t pixel`, so the caller's own
+arithmetic slip lands here directly. `ImageBuf::deep_insert_samples` and
+`deep_erase_samples` widen the reach: they compute the pixel index with
+`pixelindex(x, y, z)` *without* `check_range` (`imagebuf.cpp:2939` and
+`:2950` on `main`, `:2883` and `:2894` in 3.1.9.0), so a coordinate outside
+the data window becomes exactly
+such an out-of-range — often negative — pixel. The other coordinate-taking
+deep accessors (`deep_samples`, `deep_value`, `set_deep_samples`) pass
+`check_range = true` or land in a guarded `DeepData` method, so the two
+editors are the odd ones out on that level too.
+
+`DeepData`'s own internal callers are safe by accident rather than by
+contract: `split` and the merge paths loop `s < samples(pixel)`, which is 0
+out of range, so the unguarded pair is never reached with a bad pixel from
+inside the library.
+
+The Python bindings expose all four (`py_deepdata.cpp:106` and
+`py_imagebuf.cpp:510` in 3.1.9.0), so no C++ is needed:
+
+```python
+dd = oiio.DeepData()
+dd.init(16, 2, (oiio.FLOAT, oiio.FLOAT), ("Z", "A"))
+dd.insert_samples(1_000_000, 0, 4)   # heap read and write past m_nsamples
+```
+
+The fix is the guard the five siblings already open with, at the top of each
+of the two methods:
+
+```c++
+if (pixel < 0 || pixel >= m_npixels)
+    return;
+```
+
+plus `check_range = true` in `ImageBuf::deep_insert_samples`/
+`deep_erase_samples` with the early return the other coordinate-taking
+accessors have.
+
+Both function bodies are identical at 3.1.9.0 and 3.1.12.0 (`:591`/`:617`),
+3.1.16.0 and current `main` (`:592`/`:618`).
+
+Found while binding `DeepData` for Rust. The binding's shims bound `pixel`
+themselves, and its `DeepImage` checks coordinates before computing an index,
+so it cannot reach either method out of range.
 
 ---
 

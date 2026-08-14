@@ -121,6 +121,39 @@ before the fork, but nothing was ever published under it, so starting both at
 
 ### Fixed
 
+- A third review — nine reviewers fanned across every module plus a
+  cross-cutting sweep, each finding verified against the OpenImageIO source —
+  found eight more. What it caught, again, were guards applied to one family
+  and not a sibling. All are closed, and each behavioural fix has a
+  regression test that fails without it.
+
+  The deep sample editors are bounded now. `DeepData::insert_samples` and
+  `erase_samples` are the only two `DeepData` operations OpenImageIO does not
+  range-check itself — every sibling answers an out-of-range pixel with zero
+  or null — and both index their per-pixel bookkeeping vectors directly, so a
+  pixel outside the image was a heap read and a heap write. The shims refuse
+  it, which keeps the pair callable like their guarded siblings. Recorded for
+  upstream as issue 11 in `contrib/upstream-issues.md`.
+
+  A deep image too large for the machine is an error rather than
+  `std::terminate`. `DeepData::init` resizes three per-pixel vectors with no
+  try/catch of its own, inside shims cxx wraps `noexcept`, on both paths that
+  reach it — `ImageBuf::new` on a deep specification, and `DeepImage::new`.
+  `DeepImage::new` also now applies the `i32::MAX` pixel cap `ImageBuf::new`
+  already had, since `DeepData` indexes pixels with an int and a larger count
+  truncated to a negative one.
+
+  `mad` checks the channel count of all three operands. `a*b+c` reads every
+  image operand to the union channel count, and the guard the second review
+  added lined up only `a` and `b`: the third image operand went unchecked,
+  and the variant whose `b` is a constant checked nothing at all.
+
+  An empty string array attribute is an error rather than a silent drop.
+  `"string[0]"` parses as a scalar string, so the shim declined to store it —
+  correctly — and the write arm discarded the refusal, leaving the attribute
+  missing from the file with nothing said: the same discarded-bool shape the
+  second review closed on the `Other` arm.
+
 - A second review, against the surface the first one did not cover, found
   forty more. All of them are closed, and each has a regression test that
   fails without its fix.
@@ -273,7 +306,12 @@ before the fork, but nothing was ever published under it, so starting both at
   than reads of freed memory. `ImageCacheBuilder::shared` is removed: two Rust
   values over OpenImageIO's process-wide cache would let `&mut` on one alias
   `&` on the other, and every lifetime claim in that module is written against
-  a single value.
+  a single value. The third review removed `TextureSystem::shared` for the
+  same reason — it was the one process-wide singleton still offered as
+  multiple Rust values, so invalidation through one could free the subimage
+  spec a lookup through another was reading, exactly the race the exclusive
+  receivers exist to prevent. A private system shared through `Arc` has no
+  such ambiguity.
 - `TileGuard::roi` returns `Roi` rather than `Result<Roi>`, since it can no
   longer fail, and reports the region recorded when the tile was borrowed.
 - `ImageOutput::spec` reports the specification the file was opened with
@@ -283,7 +321,12 @@ before the fork, but nothing was ever published under it, so starting both at
 - The `imagebufalgo_*` declarations in `oiio-sys` are `unsafe fn`. In a cxx
   bridge, `unsafe extern "C++"` only asserts that the signatures are right, so
   they were callable from safe Rust with a hand-built `ROI`; the contract is
-  stated once at the top of that module.
+  stated once at the top of that module. The third review found one straggler
+  in the raw-buffer read family — `imageinput_read_native_tiles`, which sizes
+  the read from caller-supplied ranges — and it is `unsafe fn` now like its
+  siblings, and `ImageSpec::to_sys`'s documentation now says what the code
+  deliberately does: an attribute that cannot be carried faithfully fails the
+  write rather than vanishing from it.
 
 - `ImageSpec` is constructible from Rust, carries its `PixelFormat`, and
   exposes metadata; it is no longer only something a reader hands back.
