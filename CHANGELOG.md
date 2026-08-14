@@ -109,6 +109,14 @@ before the fork, but nothing was ever published under it, so starting both at
 - Tests against OpenImageIO's and OpenEXR's own image corpora, opt-in through
   `OIIO_BIND_TEST_IMAGES` and `OIIO_BIND_TEST_EXR_IMAGES`, including
   OpenEXR's `Damaged` directory of reader crash cases.
+- `ImageBuf` point access from the binding gap map: `channel_at`,
+  `pixel_at_into`, `set_pixel_at` (a write outside the data window is an
+  error, where OpenImageIO skips it silently), and the four interpolators,
+  with `Wrap` as a closed enum. The periodic and mirror wraps require a
+  display window with positive size, since OpenImageIO divides by it; the
+  interpolators require a slice of exactly the channel count and cap the
+  count at 1024, because their scratch is `alloca`'d from it on a stack no
+  catch can save.
 - `ImageBuf` metadata mutation from the binding gap map: `set_origin`,
   `set_full_window` (validated positive and overflow-checked before
   OpenImageIO stores a window that would later divide the wrap modes and

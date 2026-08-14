@@ -178,6 +178,58 @@ fn writes_in_a_chosen_pixel_format() {
 }
 
 #[test]
+fn point_access_reads_writes_and_interpolates() {
+    use oiio::Wrap;
+
+    let spec = ImageSpec::new(4, 4, 3, PixelFormat::F32).unwrap();
+    let mut buffer = ImageBuf::new(&spec).unwrap();
+    buffer.set_pixel_at(1, 1, &[0.25, 0.5, 0.75]).unwrap();
+
+    // Point reads, inside and outside the window.
+    assert_eq!(buffer.channel_at(1, 1, 1, Wrap::Default).unwrap(), 0.5);
+    assert_eq!(
+        buffer.channel_at(100, 100, 1, Wrap::Black).unwrap(),
+        0.0,
+        "outside with black wrap is zero"
+    );
+
+    let mut pixel = [0.0_f32; 3];
+    buffer.pixel_at_into(1, 1, Wrap::Clamp, &mut pixel).unwrap();
+    assert_eq!(pixel, [0.25, 0.5, 0.75]);
+
+    // A write outside the window is an error, not a silent no-op.
+    assert!(buffer.set_pixel_at(10, 10, &[1.0, 1.0, 1.0]).is_err());
+
+    // Interpolation midway between the written pixel and its zero neighbour.
+    let mut mid = [0.0_f32; 3];
+    buffer
+        .interpolated_pixel_into(2.0, 1.5, Wrap::Black, &mut mid)
+        .unwrap();
+    assert!(
+        mid[1] > 0.0 && mid[1] < 0.5,
+        "halfway out of the bright pixel: {mid:?}"
+    );
+
+    // The slice must measure the channel count exactly.
+    let mut short = [0.0_f32; 2];
+    assert!(buffer
+        .interpolated_pixel_into(2.0, 1.5, Wrap::Black, &mut short)
+        .is_err());
+
+    // NDC addressing spans the display window.
+    let mut centre = [0.0_f32; 3];
+    buffer
+        .interpolated_pixel_ndc_into(0.375, 0.375, Wrap::Black, &mut centre)
+        .unwrap();
+
+    // Periodic wrap needs a real display window; a deep buffer is refused
+    // outright.
+    let deep_spec = ImageSpec::new(2, 2, 1, PixelFormat::F32).unwrap().as_deep();
+    let deep = ImageBuf::new(&deep_spec).unwrap();
+    assert!(deep.channel_at(0, 0, 0, Wrap::Black).is_err());
+}
+
+#[test]
 fn metadata_setters_move_windows_and_merge_attributes() {
     let spec = ImageSpec::new(4, 4, 3, PixelFormat::F32).unwrap();
     let mut buffer = ImageBuf::new(&spec).unwrap();

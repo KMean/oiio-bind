@@ -3,6 +3,39 @@ use std::path::Path;
 use crate::imageio::validate_buffer_len;
 use crate::{path_to_utf8, pixel, sys, Error, ImageSpec, Pixel, PixelFormat, Result, Roi};
 
+/// What a point read outside the data window answers with.
+///
+/// A closed set on purpose: OpenImageIO's iterator dispatches on the wrap
+/// mode through a table whose out-of-range entries are unchecked in release
+/// builds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Wrap {
+    /// Black, which is OpenImageIO's default.
+    Default,
+    /// Zero for every channel.
+    Black,
+    /// The nearest edge pixel.
+    Clamp,
+    /// The image tiled over the plane. Needs a display window with positive
+    /// size, whose dimensions the coordinate is folded by.
+    Periodic,
+    /// The image reflected at each edge. Needs a positive display window
+    /// too.
+    Mirror,
+}
+
+impl Wrap {
+    fn to_sys(self) -> sys::imagebuf::WrapMode {
+        match self {
+            Self::Default => sys::imagebuf::WrapMode::WrapDefault,
+            Self::Black => sys::imagebuf::WrapMode::WrapBlack,
+            Self::Clamp => sys::imagebuf::WrapMode::WrapClamp,
+            Self::Periodic => sys::imagebuf::WrapMode::WrapPeriodic,
+            Self::Mirror => sys::imagebuf::WrapMode::WrapMirror,
+        }
+    }
+}
+
 /// Where an [`ImageBuf`]'s pixels live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -624,6 +657,198 @@ impl ImageBuf {
         let count = i32::try_from(count)
             .map_err(|_| Error::InvalidImageSpec("thread count exceeds i32::MAX".to_owned()))?;
         sys::imagebuf::imagebuf_set_threads(self.inner_mut(), count);
+        Ok(())
+    }
+
+    /// One channel of one pixel, with out-of-window coordinates answered by
+    /// the wrap mode. Deep buffers are refused — their pixels are sample
+    /// lists, not values.
+    pub fn channel_at(&self, x: i32, y: i32, channel: u32, wrap: Wrap) -> Result<f32> {
+        self.require_flat("read a channel")?;
+        let channel = i32::try_from(channel)
+            .map_err(|_| Error::InvalidRoi("channel exceeds i32::MAX".to_owned()))?;
+        self.require_wrappable(wrap)?;
+        Ok(sys::imagebuf::imagebuf_getchannel(
+            self.inner(),
+            x,
+            y,
+            0,
+            channel,
+            wrap.to_sys(),
+        ))
+    }
+
+    /// Every channel of one pixel, written into `values`.
+    ///
+    /// A slice shorter than the channel count reads that many channels; a
+    /// longer one has its tail zeroed by OpenImageIO.
+    pub fn pixel_at_into(&self, x: i32, y: i32, wrap: Wrap, values: &mut [f32]) -> Result<()> {
+        self.require_flat("read a pixel")?;
+        self.require_wrappable(wrap)?;
+        let count = i32::try_from(values.len())
+            .map_err(|_| Error::InvalidRoi("channel count exceeds i32::MAX".to_owned()))?;
+        // SAFETY: the pointer and count describe exactly the caller's slice.
+        unsafe {
+            sys::imagebuf::imagebuf_getpixel(
+                self.inner(),
+                x,
+                y,
+                0,
+                values.as_mut_ptr(),
+                count,
+                wrap.to_sys(),
+            );
+        }
+        Ok(())
+    }
+
+    /// Set every channel of one pixel.
+    ///
+    /// The coordinate must lie inside the data window: OpenImageIO skips an
+    /// outside write silently, which this crate reports instead.
+    pub fn set_pixel_at(&mut self, x: i32, y: i32, values: &[f32]) -> Result<()> {
+        self.require_flat("write a pixel")?;
+        self.require_inside("write a pixel", x, y)?;
+        sys::imagebuf::imagebuf_setpixel(self.inner_mut(), x, y, 0, values);
+        Ok(())
+    }
+
+    /// A bilinearly interpolated pixel at a continuous coordinate, written
+    /// into `values`, whose length must equal the channel count.
+    pub fn interpolated_pixel_into(
+        &self,
+        x: f32,
+        y: f32,
+        wrap: Wrap,
+        values: &mut [f32],
+    ) -> Result<()> {
+        self.require_interpolatable(wrap, values)?;
+        // SAFETY: the slice holds exactly the channel count, checked above.
+        unsafe {
+            sys::imagebuf::imagebuf_interppixel(
+                self.inner(),
+                x,
+                y,
+                values.as_mut_ptr(),
+                wrap.to_sys(),
+            );
+        }
+        Ok(())
+    }
+
+    /// [`ImageBuf::interpolated_pixel_into`] with bicubic interpolation.
+    pub fn interpolated_pixel_bicubic_into(
+        &self,
+        x: f32,
+        y: f32,
+        wrap: Wrap,
+        values: &mut [f32],
+    ) -> Result<()> {
+        self.require_interpolatable(wrap, values)?;
+        // SAFETY: the slice holds exactly the channel count, checked above.
+        unsafe {
+            sys::imagebuf::imagebuf_interppixel_bicubic(
+                self.inner(),
+                x,
+                y,
+                values.as_mut_ptr(),
+                wrap.to_sys(),
+            );
+        }
+        Ok(())
+    }
+
+    /// A bilinearly interpolated pixel addressed in NDC — `0..1` across the
+    /// display window — written into `values`, whose length must equal the
+    /// channel count. The display window must have positive size, which
+    /// [`ImageBuf::set_full_window`] guarantees for windows set through it.
+    pub fn interpolated_pixel_ndc_into(
+        &self,
+        s: f32,
+        t: f32,
+        wrap: Wrap,
+        values: &mut [f32],
+    ) -> Result<()> {
+        self.require_interpolatable(wrap, values)?;
+        self.require_positive_display("interpolate in NDC")?;
+        // SAFETY: the slice holds exactly the channel count, checked above.
+        unsafe {
+            sys::imagebuf::imagebuf_interppixel_NDC(
+                self.inner(),
+                s,
+                t,
+                values.as_mut_ptr(),
+                wrap.to_sys(),
+            );
+        }
+        Ok(())
+    }
+
+    /// [`ImageBuf::interpolated_pixel_ndc_into`] with bicubic interpolation.
+    pub fn interpolated_pixel_bicubic_ndc_into(
+        &self,
+        s: f32,
+        t: f32,
+        wrap: Wrap,
+        values: &mut [f32],
+    ) -> Result<()> {
+        self.require_interpolatable(wrap, values)?;
+        self.require_positive_display("interpolate in NDC")?;
+        // SAFETY: the slice holds exactly the channel count, checked above.
+        unsafe {
+            sys::imagebuf::imagebuf_interppixel_bicubic_NDC(
+                self.inner(),
+                s,
+                t,
+                values.as_mut_ptr(),
+                wrap.to_sys(),
+            );
+        }
+        Ok(())
+    }
+
+    /// The shared preconditions of the interpolators: a flat buffer, a wrap
+    /// mode this buffer supports, a slice of exactly the channel count, and
+    /// a channel count OpenImageIO's per-call stack scratch can hold.
+    fn require_interpolatable(&self, wrap: Wrap, values: &[f32]) -> Result<()> {
+        self.require_flat("interpolate a pixel")?;
+        self.require_wrappable(wrap)?;
+        let channels = self.channel_count() as usize;
+        if values.len() != channels {
+            return Err(Error::BufferLength {
+                expected: channels,
+                actual: values.len(),
+            });
+        }
+        // The interpolators alloca their scratch from the channel count on
+        // OpenImageIO's stack frame; a four-figure channel count is fine, an
+        // unbounded one is a stack overflow no catch can reach.
+        if channels > 1024 {
+            return Err(Error::operation(
+                "interpolate a pixel",
+                format!("interpolation supports at most 1024 channels, this image has {channels}"),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Periodic and mirror wraps divide by the display window's size.
+    fn require_wrappable(&self, wrap: Wrap) -> Result<()> {
+        if matches!(wrap, Wrap::Periodic | Wrap::Mirror) {
+            self.require_positive_display("wrap periodically")?;
+        }
+        Ok(())
+    }
+
+    fn require_positive_display(&self, operation: &'static str) -> Result<()> {
+        let spec = self.spec()?;
+        let [width, height, _] = spec.full_dimensions();
+        if width == 0 || height == 0 {
+            return Err(Error::operation(
+                operation,
+                "the display window has zero size, which this operation divides by".to_owned(),
+            ));
+        }
         Ok(())
     }
 

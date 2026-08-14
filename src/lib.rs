@@ -88,7 +88,7 @@ pub use color::ColorConfig;
 pub use deep::{DeepChannel, DeepImage};
 pub use error::{Error, Result};
 pub use half::f16;
-pub use image_buf::{ImageBuf, Storage};
+pub use image_buf::{ImageBuf, Storage, Wrap};
 pub use image_cache::{ImageCache, ImageCacheBuilder, ImageHandle, Perthread, TileGuard};
 pub use image_spec::ImageSpec;
 pub use imageio::{ImageInput, ImageOutput};
