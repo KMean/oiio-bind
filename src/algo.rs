@@ -2398,6 +2398,43 @@ pub fn channel_sum(
     finish(dst, "channel sum", succeeded)
 }
 
+/// Concatenate the channels of two images into one buffer.
+///
+/// The result covers the union of the two data windows and holds `a`'s
+/// channels followed by `b`'s — the way AOVs are merged into one layered
+/// image. The destination must be empty: OpenImageIO shapes the result
+/// itself and disregards both a caller's region and a pre-allocated shape.
+/// Deep images are not supported.
+pub fn channel_append(dst: &mut ImageBuf, a: &ImageBuf, b: &ImageBuf) -> Result<()> {
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_channel_append(
+            dst.inner_mut(),
+            a.inner(),
+            b.inner(),
+            ALL_THREADS,
+        )
+    };
+    finish(dst, "channel append", succeeded)
+}
+
+/// The per-pixel maximum across channels, as a single-channel image.
+pub fn maxchan(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
+    let roi = region_in(roi, dst)?;
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_maxchan(dst.inner_mut(), src.inner(), &roi, ALL_THREADS)
+    };
+    finish(dst, "maxchan", succeeded)
+}
+
+/// The per-pixel minimum across channels, as a single-channel image.
+pub fn minchan(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
+    let roi = region_in(roi, dst)?;
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_minchan(dst.inner_mut(), src.inner(), &roi, ALL_THREADS)
+    };
+    finish(dst, "minchan", succeeded)
+}
+
 /// Build a new channel layout: reorder, drop, duplicate, or add channels.
 ///
 /// Each entry of `sources` produces one output channel, so the output has

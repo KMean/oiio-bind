@@ -1114,6 +1114,77 @@ imagebufalgo_rangeexpand(ImageBuf& dst, const ImageBuf& src, bool use_luma,
 }
 
 bool
+imagebufalgo_channel_append(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
+                            int nthreads)
+{
+    // channel_append never calls IBAprep: it derives the union region and
+    // writes both inputs' channels through iterators over the destination it
+    // shaped itself. A deep input has no flat pixels for those iterators, and
+    // a pre-allocated destination keeps its own shape while the kernel writes
+    // the union's — scratch writes into blackpixel storage shared across
+    // threads. Refuse both; the caller-supplied region is not forwarded
+    // because upstream disregards it.
+    if (a.deep() || b.deep() || dst.deep()) {
+        dst.errorfmt("channel_append: deep images are not supported");
+        return false;
+    }
+    if (dst.initialized()) {
+        dst.errorfmt("channel_append: use an empty destination; a "
+                     "pre-allocated one keeps its shape while the kernel "
+                     "writes the union of the sources");
+        return false;
+    }
+    if (refuse_distant_pair(dst, a, b, "channel_append"))
+        return false;
+    return OIIO::ImageBufAlgo::channel_append(dst, a, b, {}, nthreads);
+}
+
+// maxchan and minchan reduce across channels into one; neither is IBAprep'd
+// against a deep source, and both read a[roi.chbegin] unconditionally, so the
+// channel range must be real before OpenImageIO sees it.
+static bool
+refuse_bad_chan_reduce(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                       const char* operation)
+{
+    if (src.deep()) {
+        dst.errorfmt("{}: deep images are not supported", operation);
+        return true;
+    }
+    if (roi.defined()
+        && (roi.chbegin >= src.nchannels() || roi.chend <= roi.chbegin)) {
+        dst.errorfmt("{}: the channel range {}..{} names no channel of a "
+                     "{}-channel image",
+                     operation, roi.chbegin, roi.chend, src.nchannels());
+        return true;
+    }
+    if (dst.initialized() && !dst.deep() && dst.nchannels() != 1) {
+        dst.errorfmt("{}: the result has one channel and the destination is "
+                     "allocated with {}; use an empty destination",
+                     operation, dst.nchannels());
+        return true;
+    }
+    return false;
+}
+
+bool
+imagebufalgo_maxchan(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                     int nthreads)
+{
+    if (refuse_bad_chan_reduce(dst, src, roi, "maxchan"))
+        return false;
+    return OIIO::ImageBufAlgo::maxchan(dst, src, roi, nthreads);
+}
+
+bool
+imagebufalgo_minchan(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                     int nthreads)
+{
+    if (refuse_bad_chan_reduce(dst, src, roi, "minchan"))
+        return false;
+    return OIIO::ImageBufAlgo::minchan(dst, src, roi, nthreads);
+}
+
+bool
 imagebufalgo_channel_sum(ImageBuf& dst, const ImageBuf& src,
                          rust::Slice<const float> weights, const ROI& roi,
                          int nthreads)

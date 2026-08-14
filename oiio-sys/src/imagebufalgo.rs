@@ -373,6 +373,27 @@ mod ffi {
             nthreads: i32,
         ) -> bool;
 
+        pub unsafe fn imagebufalgo_channel_append(
+            dst: Pin<&mut ImageBuf>,
+            a: &ImageBuf,
+            b: &ImageBuf,
+            nthreads: i32,
+        ) -> bool;
+
+        pub unsafe fn imagebufalgo_maxchan(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub unsafe fn imagebufalgo_minchan(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
         pub unsafe fn imagebufalgo_channel_sum(
             dst: Pin<&mut ImageBuf>,
             src: &ImageBuf,

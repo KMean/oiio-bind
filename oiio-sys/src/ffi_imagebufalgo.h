@@ -260,6 +260,18 @@ imagebufalgo_rangeexpand(ImageBuf& dst, const ImageBuf& src, bool use_luma,
                          const ROI& roi, int nthreads);
 
 bool
+imagebufalgo_channel_append(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
+                            int nthreads);
+
+bool
+imagebufalgo_maxchan(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                     int nthreads);
+
+bool
+imagebufalgo_minchan(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                     int nthreads);
+
+bool
 imagebufalgo_channel_sum(ImageBuf& dst, const ImageBuf& src,
                          rust::Slice<const float> weights, const ROI& roi,
                          int nthreads);

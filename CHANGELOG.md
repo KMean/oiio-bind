@@ -109,6 +109,13 @@ before the fork, but nothing was ever published under it, so starting both at
 - Tests against OpenImageIO's and OpenEXR's own image corpora, opt-in through
   `OIIO_BIND_TEST_IMAGES` and `OIIO_BIND_TEST_EXR_IMAGES`, including
   OpenEXR's `Damaged` directory of reader crash cases.
+- `oiio::algo` channel layout from the binding gap map: `channel_append`
+  (which requires an empty destination and refuses deep images, since
+  OpenImageIO shapes the union result itself with no `IBAprep` in sight) and
+  the `maxchan`/`minchan` reductions, whose channel range is validated
+  before OpenImageIO reads `a[chbegin]` unconditionally. `Roi` gained its
+  algebra — `union`, `intersection` as an `Option`, and the two containment
+  tests — validated rather than inverted on disjoint inputs.
 - `oiio::algo` compositing and value hygiene from the binding gap map:
   `repremult` (which refuses a source with no alpha channel rather than
   degrading to OpenImageIO's silently misplaced paste), `zover` depth

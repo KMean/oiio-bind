@@ -160,6 +160,40 @@ fn zover_picks_the_closer_surface_and_scale_masks() {
 }
 
 #[test]
+fn channel_append_concatenates_and_chan_reductions_pick_extremes() {
+    let rgb = filled(4, 4, &[0.1, 0.2, 0.3]);
+    let alpha = filled(4, 4, &[0.9]);
+
+    // Append: three channels then one, into an empty destination only.
+    let mut layered = ImageBuf::empty().unwrap();
+    algo::channel_append(&mut layered, &rgb, &alpha).unwrap();
+    assert_eq!(layered.channel_count(), 4);
+    let values = pixels_of(&layered);
+    assert!((values[0] - 0.1).abs() < 1e-5 && (values[3] - 0.9).abs() < 1e-5);
+
+    let mut allocated = ImageBuf::new(&spec(4, 4, 4)).unwrap();
+    assert!(
+        algo::channel_append(&mut allocated, &rgb, &alpha).is_err(),
+        "a pre-allocated destination keeps its shape while the kernel writes another"
+    );
+
+    // maxchan/minchan reduce to one channel.
+    let mut maxed = ImageBuf::empty().unwrap();
+    algo::maxchan(&mut maxed, &rgb, None).unwrap();
+    assert_eq!(maxed.channel_count(), 1);
+    assert!((pixels_of(&maxed)[0] - 0.3).abs() < 1e-5);
+
+    let mut minned = ImageBuf::empty().unwrap();
+    algo::minchan(&mut minned, &rgb, None).unwrap();
+    assert!((pixels_of(&minned)[0] - 0.1).abs() < 1e-5);
+
+    // A channel range naming nothing is refused, not answered from a[chbegin].
+    let mut result = ImageBuf::empty().unwrap();
+    let bad = oiio::Roi::new(0..4, 0..4, 0..1, 5..8).unwrap();
+    assert!(algo::maxchan(&mut result, &rgb, Some(bad)).is_err());
+}
+
+#[test]
 fn repremult_needs_alpha_and_round_trips() {
     // Half-opaque premultiplied grey.
     let premultiplied = filled(4, 4, &[0.25, 0.25, 0.25, 0.5]);
