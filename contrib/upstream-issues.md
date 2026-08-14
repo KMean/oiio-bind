@@ -788,7 +788,7 @@ Both methods are public API taking `int64_t pixel`, so the caller's own
 arithmetic slip lands here directly. `ImageBuf::deep_insert_samples` and
 `deep_erase_samples` widen the reach: they compute the pixel index with
 `pixelindex(x, y, z)` *without* `check_range` (`imagebuf.cpp:2939` and
-`:2950` on `main`, `:2883` and `:2894` in 3.1.9.0), so a coordinate outside
+`:2950` on `main`, `:2923` and `:2934` in 3.1.16.0), so a coordinate outside
 the data window becomes exactly
 such an out-of-range — often negative — pixel. The other coordinate-taking
 deep accessors (`deep_samples`, `deep_value`, `set_deep_samples`) pass
@@ -800,8 +800,9 @@ contract: `split` and the merge paths loop `s < samples(pixel)`, which is 0
 out of range, so the unguarded pair is never reached with a bad pixel from
 inside the library.
 
-The Python bindings expose all four (`py_deepdata.cpp:106` and
-`py_imagebuf.cpp:510` in 3.1.9.0), so no C++ is needed:
+The Python bindings expose all four (`py_deepdata.cpp:115` and
+`py_imagebuf.cpp:529` on `main`; `:120` and `:510` in 3.1.16.0), so no C++
+is needed:
 
 ```python
 dd = oiio.DeepData()
