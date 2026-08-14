@@ -77,6 +77,11 @@ mod ffi {
             zero: InitializePixels,
         ) -> UniquePtr<ImageBuf>;
 
+        pub fn imagebuf_new_from_spec_checked(
+            spec: &ImageSpec,
+            error: &mut String,
+        ) -> UniquePtr<ImageBuf>;
+
         pub unsafe fn imagebuf_new_from_buffer(
             spec: &ImageSpec,
             buffer: *mut u8,

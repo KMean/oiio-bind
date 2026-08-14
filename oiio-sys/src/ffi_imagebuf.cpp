@@ -2,6 +2,7 @@
 #include "ffi_pixel.h"
 #include "oiio-sys/src/imagebuf.rs.h"
 #include <OpenImageIO/imagebuf.h>
+#include <OpenImageIO/imagebufalgo.h>
 #include <cstddef>
 #include <memory>
 #include <stdexcept>
@@ -30,6 +31,47 @@ std::unique_ptr<ImageBuf>
 imagebuf_new_from_spec(const ImageSpec& spec, InitializePixels zero)
 {
     return std::make_unique<ImageBuf>(spec, zero);
+}
+
+std::unique_ptr<ImageBuf>
+imagebuf_new_from_spec_checked(const ImageSpec& spec, rust::String& error)
+{
+    error = rust::String();
+
+    // Deliberately InitializePixels::No. When the allocation fails OpenImageIO
+    // does not propagate the bad_alloc: ImageBufImpl::new_pixels catches it,
+    // records the error on the buffer, leaves the pixels null and comments
+    // that it hopes this is "handled well downstream". With Yes, downstream is
+    // ImageBufAlgo::zero, which asserts on localpixels() and then divides by
+    // zero, so the constructor never returns and there is nothing to check.
+    // Allocating first and zeroing afterwards gives us the chance.
+    auto buffer = std::make_unique<ImageBuf>(spec, OIIO::InitializePixels::No);
+
+    // A deep image legitimately has no flat storage: realloc passes size 0 and
+    // the samples live in the DeepData. Only a flat image must have pixels.
+    if (!spec.deep && buffer->localpixels() == nullptr) {
+        std::string recorded = buffer->geterror(true);
+        if (recorded.empty())
+            recorded = OIIO::Strutil::fmt::format(
+                "OpenImageIO could not allocate {} bytes for the image",
+                spec.image_bytes());
+        error = rust::String::lossy(recorded.data(), recorded.size());
+        return {};
+    }
+    if (buffer->has_error()) {
+        const std::string recorded = buffer->geterror(true);
+        error = rust::String::lossy(recorded.data(), recorded.size());
+        return {};
+    }
+
+    if (!spec.deep && !OIIO::ImageBufAlgo::zero(*buffer)) {
+        const std::string recorded = buffer->geterror(true);
+        error = rust::String::lossy(
+            recorded.empty() ? "OpenImageIO could not clear the image"
+                             : recorded.c_str());
+        return {};
+    }
+    return buffer;
 }
 
 std::unique_ptr<ImageBuf>

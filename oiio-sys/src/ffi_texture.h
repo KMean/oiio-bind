@@ -22,7 +22,7 @@ bool
 texturesystem_texture(TextureSystem& texturesystem, const rust::Str filename,
                       const TextureLookupOptions& options, float s, float t,
                       float dsdx, float dtdx, float dsdy, float dtdy,
-                      rust::Slice<float> result);
+                      rust::Slice<float> result, rust::String& error);
 
 rust::String
 texturesystem_geterror(TextureSystem& texturesystem);

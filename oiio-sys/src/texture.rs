@@ -39,6 +39,7 @@ mod ffi {
             dsdy: f32,
             dtdy: f32,
             result: &mut [f32],
+            error: &mut String,
         ) -> bool;
 
         pub fn texturesystem_geterror(texturesystem: Pin<&mut TextureSystem>) -> String;

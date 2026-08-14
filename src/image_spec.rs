@@ -205,6 +205,11 @@ impl ImageSpec {
         element_count([self.width, self.height, self.depth, self.channels])
     }
 
+    /// Number of pixels in the data window, across all channels.
+    pub fn pixel_count(&self) -> Result<usize> {
+        element_count([self.width, self.height, self.depth, 1])
+    }
+
     /// The image's data window, including all channels.
     pub fn data_window(&self) -> Result<Roi> {
         Roi::from_spec(self)

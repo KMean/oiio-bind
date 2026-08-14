@@ -36,6 +36,9 @@ std::unique_ptr<ImageBuf>
 imagebuf_new_from_spec(const ImageSpec& spec, InitializePixels zero);
 
 std::unique_ptr<ImageBuf>
+imagebuf_new_from_spec_checked(const ImageSpec& spec, rust::String& error);
+
+std::unique_ptr<ImageBuf>
 imagebuf_new_from_buffer(const ImageSpec& spec, uint8_t* buffer,
                          int64_t xstride, int64_t ystride, int64_t zstride);
 

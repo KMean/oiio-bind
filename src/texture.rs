@@ -260,10 +260,20 @@ impl TextureConfig {
 
     /// How many channels the texture should have, padding with zeroes or
     /// dropping channels. Unset, it keeps the input's.
+    ///
+    /// Clamped to [`TextureConfig::MAX_CHANNELS`]. `make_texture` reaches
+    /// `ImageBufAlgo::channels`, which builds the default channel order with
+    /// `alloca`, so the count is four bytes of stack each and an unbounded one
+    /// overflows the stack rather than failing.
     pub fn with_channel_count(self, channels: u32) -> Self {
-        let channels = i32::try_from(channels).unwrap_or(i32::MAX);
+        let channels = i32::try_from(channels.min(Self::MAX_CHANNELS)).unwrap_or(i32::MAX);
         self.with_attribute("maketx:nchannels", channels)
     }
+
+    /// The largest channel count [`TextureConfig::with_channel_count`] will
+    /// pass on. Far above any real texture, and far below what would put a
+    /// stack-allocated channel order in danger.
+    pub const MAX_CHANNELS: u32 = 1024;
 
     /// Sharpen by this contrast metric when building mip levels.
     /// Default: 0.0, meaning no sharpening.
@@ -550,9 +560,20 @@ pub struct TextureSystem {
     inner: cxx::SharedPtr<sys::texture::TextureSystem>,
 }
 
-// SAFETY: as with ImageCache, OpenImageIO documents texture lookups as
-// thread-safe, every method here confines its pinned reference to one call,
-// and no Rust reference to the C++ object escapes.
+// SAFETY: OpenImageIO does not actually state a thread-safety contract for
+// TextureSystem anywhere -- texture.h says nothing, and the theory of operation
+// in the manual is still a placeholder. What it does say, in imagecache.rst, is
+// that the ImageCache underneath is thread-safe, and the lookup paths are built
+// on it: they take the cache's locks, confine their pinned reference to a
+// single call, and let no Rust reference to the C++ object escape.
+//
+// Invalidation is not on that footing and never was. `invalidate_all` calls
+// `ImageCacheFile::invalidate`, which clears the file's subimage and dimension
+// pools, while `TextureSystemImpl::texture` is holding a `const SubimageInfo&`
+// and a `const ImageSpec&` straight into that vector; the two paths do not
+// share a lock. So invalidation and the attribute setters take `&mut self`, and
+// `Sync` is only ever claiming the lookup paths. A caller who wants both across
+// threads writes `Arc<RwLock<TextureSystem>>`, which is exactly the contract.
 unsafe impl Send for TextureSystem {}
 unsafe impl Sync for TextureSystem {}
 
@@ -595,6 +616,7 @@ impl TextureSystem {
         let filename = path_to_utf8(texture_path)?;
         let options = options.to_sys()?;
 
+        let mut error = String::new();
         let succeeded = self.with_system(|system| {
             sys::texture::texturesystem_texture(
                 system,
@@ -607,15 +629,16 @@ impl TextureSystem {
                 derivatives.dsdy,
                 derivatives.dtdy,
                 result,
+                &mut error,
             )
         });
         if succeeded {
             Ok(())
         } else {
-            Err(Error::operation(
-                "texture lookup",
-                self.with_system(sys::texture::texturesystem_geterror),
-            ))
+            if error.is_empty() {
+                error = self.with_system(sys::texture::texturesystem_geterror);
+            }
+            Err(Error::operation("texture lookup", error))
         }
     }
 
@@ -636,7 +659,7 @@ impl TextureSystem {
     }
 
     /// Set the approximate memory budget for the underlying cache, in MB.
-    pub fn set_max_memory_mb(&self, megabytes: f32) -> Result<()> {
+    pub fn set_max_memory_mb(&mut self, megabytes: f32) -> Result<()> {
         if !megabytes.is_finite() || megabytes <= 0.0 {
             return Err(Error::InvalidCacheSetting {
                 name: "max_memory_MB",
@@ -657,7 +680,7 @@ impl TextureSystem {
     }
 
     /// Set the maximum number of simultaneously open files.
-    pub fn set_max_open_files(&self, count: u32) -> Result<()> {
+    pub fn set_max_open_files(&mut self, count: u32) -> Result<()> {
         let count = i32::try_from(count).map_err(|_| Error::InvalidCacheSetting {
             name: "max_open_files",
             value: count.to_string(),
@@ -676,7 +699,9 @@ impl TextureSystem {
     }
 
     /// Forget one texture, so the next lookup re-reads it.
-    pub fn invalidate(&self, texture_path: &Path, force: bool) -> Result<()> {
+    /// Exclusive because invalidation frees state a concurrent lookup is
+    /// holding references into; see the `Sync` justification on this type.
+    pub fn invalidate(&mut self, texture_path: &Path, force: bool) -> Result<()> {
         let filename = path_to_utf8(texture_path)?;
         self.with_system(|system| {
             sys::texture::texturesystem_invalidate(system, filename, force);
@@ -685,7 +710,8 @@ impl TextureSystem {
     }
 
     /// Forget every texture.
-    pub fn invalidate_all(&self, force: bool) {
+    /// Exclusive for the reasons given on [`TextureSystem::invalidate`].
+    pub fn invalidate_all(&mut self, force: bool) {
         self.with_system(|system| {
             sys::texture::texturesystem_invalidate_all(system, force);
         });

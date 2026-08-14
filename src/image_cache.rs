@@ -436,6 +436,19 @@ impl<'cache> ImageHandle<'cache> {
         roi: Roi,
         pixels: &mut [T],
     ) -> Result<()> {
+        // A shared lifetime is not a shared identity. Both types are covariant
+        // in `'cache`, so two caches alive in the same scope give a Perthread
+        // and a handle a common lifetime and this call type-checks. It must not
+        // go through: a record is registered only with the cache that created
+        // it, so the other cache's invalidation can never purge it, and at
+        // teardown the record still holds a tile reference into a cache that is
+        // gone.
+        if !std::ptr::eq(self.cache, thread_state.cache) {
+            return Err(Error::operation(
+                "read cached pixels",
+                "the per-thread state belongs to a different image cache".to_owned(),
+            ));
+        }
         self.read(Some(thread_state), subimage, mip_level, roi, pixels)
     }
 

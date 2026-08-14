@@ -448,3 +448,125 @@ fn error_message_with_invalid_utf8_is_an_error_not_an_abort() {
         "expected the undecodable attribute name to be replaced, got {text:?}"
     );
 }
+
+/// A channel range starting at or past the image's channel count.
+///
+/// `ImageBuf::get_pixels` clamps `chend` to the channel count but never
+/// `chbegin`, so `5..6` on a three channel image becomes `5..3`: a channel
+/// count of -2. `ROI::contains` still passes, so it takes the fast path into
+/// `copy_image`, which divides the pixel size by that count and memcpys with
+/// it. `chbegin` exactly equal to the channel count divides by zero instead.
+#[test]
+fn a_channel_range_past_the_end_is_refused_by_the_buffer() {
+    let spec = ImageSpec::new(4, 4, 3, PixelFormat::F32).unwrap();
+    let mut buffer = ImageBuf::new(&spec).unwrap();
+
+    // 5..6 was an access violation, 3..4 an integer divide by zero, and 2..3
+    // is the last range that genuinely exists.
+    for channels in [3..4_u32, 4..5, 5..6, 0..4] {
+        let roi = Roi::new(0..4, 0..4, 0..1, channels.clone()).unwrap();
+        let mut pixels = vec![-1.0_f32; roi.element_count().unwrap()];
+        assert!(
+            buffer.get_pixels_into(roi, &mut pixels).is_err(),
+            "channels {channels:?} do not exist in a 3 channel image"
+        );
+        assert!(buffer.set_pixels(roi, &pixels).is_err());
+    }
+
+    let roi = Roi::new(0..4, 0..4, 0..1, 2..3).unwrap();
+    let mut pixels = vec![-1.0_f32; roi.element_count().unwrap()];
+    buffer.get_pixels_into(roi, &mut pixels).unwrap();
+    assert_eq!(pixels, vec![0.0; 16]);
+}
+
+/// A deep `ImageBuf` reports `Storage::Local` but has no flat storage, and the
+/// iterator leaves its proxy pointer null, so the contiguous pixel API read and
+/// wrote through null. Reading a deep EXR back with `ImageBuf::read` is enough
+/// to reach it, which is exactly what the documentation used to suggest.
+#[test]
+fn the_contiguous_pixel_api_refuses_a_deep_buffer() {
+    let spec = ImageSpec::new(4, 4, 5, PixelFormat::F32)
+        .unwrap()
+        .with_channel_names(["R", "G", "B", "A", "Z"])
+        .unwrap()
+        .as_deep();
+    let mut deep = ImageBuf::new(&spec).unwrap();
+    assert!(deep.is_deep());
+
+    let roi = Roi::new(0..4, 0..4, 0..1, 0..5).unwrap();
+    let mut pixels = vec![0.0_f32; roi.element_count().unwrap()];
+    let error = deep
+        .get_pixels_into(roi, &mut pixels)
+        .expect_err("a deep image has no flat pixels to read");
+    assert!(error.to_string().contains("deep"), "{error}");
+    assert!(deep.set_pixels(roi, &pixels).is_err());
+}
+
+/// OpenImageIO does not propagate a failed pixel allocation. It records the
+/// error, leaves the buffer with null pixels, and hopes the caller notices; the
+/// caller is the zero-fill, which asserts on `localpixels()` and then divides
+/// by zero, so the constructor never returns. 416 GB is an ordinary "too big
+/// for this machine" request, and the threshold is machine-dependent.
+#[test]
+fn a_spec_too_large_to_allocate_is_an_error_not_an_abort() {
+    let spec = ImageSpec::new(2_000_000_000, 13, 4, PixelFormat::F32).unwrap();
+    assert!(
+        ImageBuf::new(&spec).is_err(),
+        "416 GB should not have been allocated"
+    );
+
+    // The arithmetic-overflow variant: element_count multiplies without
+    // accounting for the format's byte size, so this used to reach C++.
+    let huge = ImageSpec::new(i32::MAX as u32, i32::MAX as u32, 4, PixelFormat::F32).unwrap();
+    assert!(ImageBuf::new(&huge).is_err());
+
+    // A deep spec is indexed by an int inside DeepData::init, so more pixels
+    // than that can hold must be refused rather than allowed to truncate.
+    let deep = ImageSpec::new(65_536, 65_536, 1, PixelFormat::F32)
+        .unwrap()
+        .as_deep();
+    assert!(ImageBuf::new(&deep).is_err());
+}
+
+/// A buffer whose read failed handed back uninitialised heap and called it Ok.
+///
+/// OpenImageIO allocates the pixels before it opens the file, and does not zero
+/// them. When the decode then fails it records the error and clears the valid
+/// flag, but leaves the untouched allocation and the local storage in place;
+/// `ImageBuf::get_pixels` gates its fast path on `localpixels()` alone and never
+/// consults the flag. A caller who logged the read error and carried on got
+/// whatever the heap held, with no way to tell.
+#[test]
+fn a_buffer_whose_read_failed_does_not_hand_back_the_heap() {
+    let scratch = common::ScratchDir::new("failedread");
+    let spec = ImageSpec::new(64, 64, 3, PixelFormat::F32).unwrap();
+    let whole = scratch.file("whole.exr");
+    common::write_image(&whole, &spec, &common::f32_ramp(64 * 64 * 3)).unwrap();
+
+    // Header-valid, truncated part way through the pixel data: it opens, then
+    // the read fails.
+    let bytes = std::fs::read(&whole).unwrap();
+    let cut = scratch.file("cut.exr");
+    std::fs::write(&cut, &bytes[..bytes.len() * 2 / 3]).unwrap();
+
+    let mut buffer = ImageBuf::from_path(&cut).unwrap();
+    assert!(buffer.read().is_err(), "a truncated EXR should not read");
+
+    let roi = buffer.spec().unwrap().data_window().unwrap();
+    let mut pixels = vec![-1.0_f32; roi.element_count().unwrap()];
+    assert!(
+        buffer.get_pixels_into(roi, &mut pixels).is_err(),
+        "these pixels were never read"
+    );
+    assert!(
+        pixels.iter().all(|value| *value == 0.0),
+        "the destination still holds whatever the allocation held"
+    );
+
+    // The deferred read is the same shape and must keep working: a buffer
+    // attached to a good file and never explicitly read still serves pixels.
+    let lazy = ImageBuf::from_path(&whole).unwrap();
+    let mut through = vec![-1.0_f32; roi.element_count().unwrap()];
+    lazy.get_pixels_into(roi, &mut through).unwrap();
+    assert!(through.iter().any(|value| *value != -1.0));
+}

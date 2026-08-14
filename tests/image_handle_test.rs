@@ -383,3 +383,42 @@ fn per_thread_state_sees_an_invalidated_file() {
         "the read after invalidate returned the pre-invalidation pixels"
     );
 }
+
+/// A shared lifetime is not a shared identity.
+///
+/// `Perthread<'cache>` and `ImageHandle<'cache>` are both covariant in
+/// `'cache`, so two caches alive in the same scope can produce a record and a
+/// handle that share a lifetime parameter, and the call type-checks. It must
+/// still be refused: a record is registered only with the cache that created
+/// it, so the other cache's invalidation can never purge it and the microcache
+/// keeps serving tiles from a file that has since been re-read. At teardown the
+/// record also still holds a tile reference into a cache that is gone.
+#[test]
+fn per_thread_state_from_another_cache_is_refused() {
+    let scratch = ScratchDir::new("crosscache");
+    let (path, spec, whole) = tiled_fixture(&scratch, "tiled.exr");
+
+    let cache_a = ImageCache::new().unwrap();
+    let cache_b = ImageCache::new().unwrap();
+
+    let state_of_a = cache_a.thread_state().unwrap();
+    let handle_of_b = cache_b.handle(&path).unwrap();
+
+    let window = spec.data_window().unwrap();
+    let mut pixels = vec![0.0_f32; window.element_count().unwrap()];
+
+    let error = handle_of_b
+        .get_pixels_into_with(&state_of_a, 0, 0, window, &mut pixels)
+        .expect_err("the record belongs to a different cache");
+    assert!(
+        error.to_string().contains("different image cache"),
+        "{error}"
+    );
+
+    // The matching pair still works.
+    let state_of_b = cache_b.thread_state().unwrap();
+    handle_of_b
+        .get_pixels_into_with(&state_of_b, 0, 0, window, &mut pixels)
+        .unwrap();
+    assert_eq!(pixels, whole);
+}

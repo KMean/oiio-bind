@@ -28,7 +28,7 @@ fn a_texture() -> Option<PathBuf> {
 
 #[test]
 fn creates_a_texture_system() {
-    let textures = TextureSystem::new().unwrap();
+    let mut textures = TextureSystem::new().unwrap();
     textures.set_max_memory_mb(64.0).unwrap();
     textures.set_max_open_files(32).unwrap();
 
@@ -363,4 +363,102 @@ fn a_texture_system_can_be_shared_across_threads() {
             });
         }
     });
+}
+
+/// Build a real mipmapped `.tx` so the bounds tests do not need the corpus.
+fn a_built_texture(scratch: &ScratchDir) -> PathBuf {
+    let source = scratch.file("source.exr");
+    let spec = ImageSpec::new(64, 64, 3, PixelFormat::F32).unwrap();
+    write_image(&source, &spec, &f32_ramp(64 * 64 * 3)).unwrap();
+
+    let output = scratch.file("built.tx");
+    oiio::make_texture(
+        oiio::TextureMode::Texture,
+        &source,
+        &output,
+        &oiio::TextureConfig::new(),
+    )
+    .unwrap();
+    output
+}
+
+/// `subimage`, `first_channel` and the result slice's length all reached
+/// OpenImageIO unchecked.
+///
+/// `subimageinfo` indexes `m_subimages` behind an `OIIO_DASSERT` that release
+/// builds compile out, so a subimage the file does not have was an unchecked
+/// vector index whose result was dereferenced on the next line. The samplers
+/// clamp the channel *count* they accumulate but compute their texel addresses
+/// from the raw `firstchannel`, and the more-than-four-channel path recurses
+/// while walking `firstchannel` upward with no bound, so both of those read off
+/// the end of a cached tile. A tile carries sixteen bytes of slack past its
+/// last texel and no more.
+#[test]
+fn a_lookup_is_bounded_by_what_the_texture_has() {
+    let scratch = ScratchDir::new("texbounds");
+    let path = a_built_texture(&scratch);
+    let textures = TextureSystem::new().unwrap();
+    let derivatives = Derivatives::uniform(1.0 / 64.0);
+
+    let mut rgb = [0.0_f32; 3];
+
+    // A subimage the file does not have. One is already past the end of an
+    // ordinary .tx; cube faces are the legitimate use of the field.
+    for subimage in [1_u32, 2, 1_000_000] {
+        let options = TextureOptions {
+            subimage,
+            ..TextureOptions::default()
+        };
+        let error = textures
+            .texture(&path, &options, 0.5, 0.5, derivatives, &mut rgb)
+            .expect_err("this texture has one subimage");
+        assert!(error.to_string().contains("subimage"), "{error}");
+    }
+
+    // A first channel at or past the end.
+    for first_channel in [3_u32, 4, 64, 1_000_000] {
+        let options = TextureOptions {
+            first_channel,
+            ..TextureOptions::default()
+        };
+        let error = textures
+            .texture(&path, &options, 0.5, 0.5, derivatives, &mut rgb)
+            .expect_err("this texture has three channels");
+        assert!(error.to_string().contains("first channel"), "{error}");
+    }
+
+    // A result slice longer than the texture has channels needs no unusual
+    // option at all: this is the default options and a long slice. It stays
+    // legal, because the extra channels are documented to take the fill value,
+    // but the channels that do not exist must not come from the tile.
+    let filled = TextureOptions {
+        fill: 0.75,
+        ..TextureOptions::default()
+    };
+    let mut many = vec![-1.0_f32; 100_000];
+    textures
+        .texture(&path, &filled, 0.5, 0.5, derivatives, &mut many)
+        .unwrap();
+    assert!(
+        many[3..].iter().all(|value| (*value - 0.75).abs() < 1e-6),
+        "channels past the third should all be the fill value"
+    );
+    assert!(many[..3].iter().any(|value| *value != 0.75));
+}
+
+/// `with_channel_count` reaches `ImageBufAlgo::channels`, which builds the
+/// default channel order with `alloca` -- four bytes of stack per channel,
+/// straight from the argument. Half a million channels overflowed the stack.
+#[test]
+fn a_texture_channel_count_cannot_overflow_the_stack() {
+    let scratch = ScratchDir::new("texchannels");
+    let source = scratch.file("source.exr");
+    let spec = ImageSpec::new(64, 64, 3, PixelFormat::F32).unwrap();
+    write_image(&source, &spec, &f32_ramp(64 * 64 * 3)).unwrap();
+    let output = scratch.file("wide.tx");
+
+    let config = oiio::TextureConfig::new().with_channel_count(1 << 19);
+    // Clamped to MAX_CHANNELS, so this either succeeds with that many channels
+    // or fails cleanly. What it must not do is take the process with it.
+    let _ = oiio::make_texture(oiio::TextureMode::Texture, &source, &output, &config);
 }

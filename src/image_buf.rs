@@ -67,17 +67,37 @@ impl ImageBuf {
     }
 
     /// Allocate an image described by `spec`, with every pixel set to zero.
+    ///
+    /// A specification larger than the machine can allocate is an error here.
+    /// OpenImageIO does not propagate the failure on its own: it records the
+    /// error, leaves the buffer with no pixels, and the caller that would find
+    /// out is the zero-fill, which asserts and then divides by zero. The shim
+    /// allocates and zeroes in two steps so the failure can be returned.
     pub fn new(spec: &ImageSpec) -> Result<Self> {
+        // A deep image's samples are indexed by an int inside DeepData::init,
+        // so a spec with more pixels than that can hold is refused here rather
+        // than allowed to truncate.
+        if spec.is_deep() {
+            let pixels = spec.pixel_count()?;
+            if pixels > i32::MAX as usize {
+                return Err(Error::InvalidImageSpec(format!(
+                    "a deep image is limited to {} pixels, and this spec has {pixels}",
+                    i32::MAX
+                )));
+            }
+        }
+
         let native_spec = spec.to_sys()?;
         let Some(native_spec) = native_spec.as_ref() else {
             return Err(Error::InvalidImageSpec(
                 "OpenImageIO could not allocate an image specification".to_owned(),
             ));
         };
-        let inner = sys::imagebuf::imagebuf_new_from_spec(
-            native_spec,
-            sys::imagebuf::InitializePixels::Yes,
-        );
+        let mut error = String::new();
+        let inner = sys::imagebuf::imagebuf_new_from_spec_checked(native_spec, &mut error);
+        if inner.is_null() && !error.is_empty() {
+            return Err(Error::operation("allocate image buffer", error));
+        }
         Self::from_inner(inner, "allocate image buffer")
     }
 
@@ -182,6 +202,16 @@ impl ImageBuf {
         sys::imagebuf::imagebuf_nmiplevels(self.inner())
     }
 
+    /// Whether the pixels in memory have actually been filled in.
+    ///
+    /// False for a buffer whose read failed. OpenImageIO allocates the pixels
+    /// before it opens the file, so a failed read leaves the allocation behind
+    /// untouched; without this the buffer looks readable and hands back
+    /// whatever the heap happened to contain.
+    pub fn pixels_valid(&self) -> bool {
+        sys::imagebuf::imagebuf_pixels_valid(self.inner())
+    }
+
     /// Number of channels per pixel.
     pub fn channel_count(&self) -> i32 {
         sys::imagebuf::imagebuf_nchannels(self.inner())
@@ -192,6 +222,8 @@ impl ImageBuf {
     /// The destination length must exactly equal `roi.element_count()`, and
     /// values are converted to `T` if the image holds another format.
     pub fn get_pixels_into<T: Pixel>(&self, roi: Roi, pixels: &mut [T]) -> Result<()> {
+        self.require_flat("read image buffer pixels")?;
+        self.require_channels(&roi)?;
         validate_buffer_len(roi.element_count()?, pixels.len())?;
         let sys_roi = roi.to_sys();
 
@@ -205,20 +237,31 @@ impl ImageBuf {
                 pixel::as_bytes_mut(pixels),
             )
         };
-        if succeeded {
-            Ok(())
-        } else {
-            Err(Error::operation(
+        if !succeeded {
+            return Err(Error::operation(
                 "read image buffer pixels",
                 sys::imagebuf::imagebuf_geterror(self.inner(), true),
-            ))
+            ));
         }
+        if let Err(error) = self.require_filled("read image buffer pixels") {
+            // The copy has already happened, so the caller's slice is holding
+            // whatever the allocation held. Returning an error is not enough on
+            // its own: scrub it, so a caller who ignores the error still cannot
+            // read process memory out of it.
+            // SAFETY: as above; `pixels` is a slice of initialized scalars and
+            // zero is a valid bit pattern for every one of them.
+            pixel::as_bytes_mut(pixels).fill(0);
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Copy a contiguous buffer into a region.
     ///
     /// The source length must exactly equal `roi.element_count()`.
     pub fn set_pixels<T: Pixel>(&mut self, roi: Roi, pixels: &[T]) -> Result<()> {
+        self.require_flat("write image buffer pixels")?;
+        self.require_channels(&roi)?;
         validate_buffer_len(roi.element_count()?, pixels.len())?;
         let sys_roi = roi.to_sys();
 
@@ -378,6 +421,81 @@ impl ImageBuf {
                 ),
             ))
         }
+    }
+
+    /// Refuse a deep image where flat pixels are expected.
+    ///
+    /// A deep `ImageBuf` reports `Storage::Local` but has no flat storage at
+    /// all: `realloc` allocates zero bytes and the samples live in the
+    /// `DeepData`. `ImageBuf::get_pixels` then takes its general path, and the
+    /// iterator leaves `m_proxydata` null for a deep buffer because neither of
+    /// the two branches that assign it applies, so `p[c]` reads or writes
+    /// through a null pointer. Reading a deep EXR with `ImageBuf::read` is
+    /// enough to get here.
+    /// Refuse pixels that were allocated but never filled in.
+    ///
+    /// `ImageBufImpl::read` allocates before it opens the file, and the
+    /// allocation is not zeroed. When the open or the decode then fails it
+    /// records the error and clears the valid flag, but leaves the untouched
+    /// allocation and the local storage in place. `ImageBuf::get_pixels` gates
+    /// its fast path on `localpixels()` alone and never consults the flag, so
+    /// it copied whatever the heap happened to hold into the caller's slice and
+    /// reported success.
+    ///
+    /// This has to run afterwards rather than before. A buffer attached to a
+    /// file it has not read yet is indistinguishable from one whose read
+    /// failed: both are local storage with the flag clear. It is `localpixels`
+    /// inside the read that performs the deferred load and sets the flag, so
+    /// the flag only answers the question once the call has been made.
+    fn require_filled(&self, operation: &'static str) -> Result<()> {
+        if self.storage() != Storage::Local || self.pixels_valid() {
+            return Ok(());
+        }
+        // Take whatever the failed read recorded, both to say something useful
+        // and so OpenImageIO does not complain at destruction that nobody
+        // collected it.
+        let recorded = sys::imagebuf::imagebuf_geterror(self.inner(), true);
+        let mut message =
+            "the pixels were never read; the deferred read failed and left the allocation              untouched"
+                .to_owned();
+        if !recorded.is_empty() {
+            message.push_str(" (");
+            message.push_str(recorded.trim_end());
+            message.push(')');
+        }
+        Err(Error::operation(operation, message))
+    }
+
+    fn require_flat(&self, operation: &'static str) -> Result<()> {
+        if self.is_deep() {
+            Err(Error::operation(
+                operation,
+                "this image is deep; use DeepImage or ImageBuf::deep_value \
+                 to reach its samples"
+                    .to_owned(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Refuse a channel range the image does not have.
+    ///
+    /// `ImageBuf::get_pixels` clamps `chend` to the channel count but never
+    /// `chbegin`, so a range starting at or past the end leaves a zero or
+    /// negative channel count. `ROI::contains` still passes, so it takes the
+    /// fast path into `copy_image`, which divides the pixel size by that count
+    /// and then memcpys with it.
+    fn require_channels(&self, roi: &Roi) -> Result<()> {
+        let available = self.channel_count();
+        let channels = roi.channels();
+        if available < 0 || channels.end > available.unsigned_abs() {
+            return Err(Error::InvalidRoi(format!(
+                "channel range {}..{} extends outside the image's {available} channels",
+                channels.start, channels.end
+            )));
+        }
+        Ok(())
     }
 
     fn require_deep(&self, operation: &'static str) -> Result<()> {
