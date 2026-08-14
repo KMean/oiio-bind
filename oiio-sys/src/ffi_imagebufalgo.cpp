@@ -117,6 +117,36 @@ reject_deep(const ImageBuf& src, const char* operation, rust::String& error)
 // the data window as black, but three of its fast paths take a raw pointer
 // from the region instead — simplePixelHashSHA1 and the float-RGBA colour path
 // among them — and read past the allocation.
+// Refuse two image sources that disagree on how many channels they have.
+//
+// `mad` builds its destination from the union of its sources, so the wider
+// one decides the channel count, and the trailing channels are the ones only
+// the wider source has. `IBAprep` allocates that destination with
+// `InitializePixels::No` -- nothing in OpenImageIO passes
+// `IBAprep_FILL_ZERO_ALLOC` -- so anything the kernel does not go on to write
+// is uninitialised heap returned to the caller with a success return. The
+// lines meant to clear those trailing channels hold on 3.1.12, where every
+// mismatched pair this was tried against came back fully written, and did not
+// on the 3.1.14 builds CI uses: property testing caught a one-against-two and
+// a six-against-three there, each with exactly the channels beyond the
+// narrower source left holding heap. Rather than depend on which OpenImageIO
+// is linked, the shape is refused; `channels` is the operation for lining two
+// images up first.
+bool
+refuse_channel_mismatch(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
+                        const char* operation)
+{
+    if (!a.initialized() || !b.initialized())
+        return false;
+    if (a.nchannels() == b.nchannels())
+        return false;
+    dst.errorfmt("{}: the sources have {} and {} channels; OpenImageIO sizes "
+                 "the destination from the wider one and does not reliably "
+                 "write the channels only that one has",
+                 operation, a.nchannels(), b.nchannels());
+    return true;
+}
+
 ROI
 bounded_to_source(const ImageBuf& src, const ROI& roi)
 {
@@ -1633,7 +1663,8 @@ imagebufalgo_mad_iii(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
                      const ImageBuf& c, const ROI& roi, int nthreads)
 {
     if (refuse_distant_pair(dst, a, b, "mad")
-        || refuse_deep_mismatch(dst, a, b, "mad"))
+        || refuse_deep_mismatch(dst, a, b, "mad")
+        || refuse_channel_mismatch(dst, a, b, "mad"))
         return false;
     return OIIO::ImageBufAlgo::mad(dst, a, b, c, roi, nthreads);
 }
@@ -1643,7 +1674,8 @@ imagebufalgo_mad_iic(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
                      rust::Slice<const float> c, const ROI& roi, int nthreads)
 {
     if (refuse_distant_pair(dst, a, b, "mad")
-        || refuse_deep_mismatch(dst, a, b, "mad"))
+        || refuse_deep_mismatch(dst, a, b, "mad")
+        || refuse_channel_mismatch(dst, a, b, "mad"))
         return false;
     return OIIO::ImageBufAlgo::mad(dst, a, b, to_cspan(c), roi, nthreads);
 }

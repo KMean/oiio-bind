@@ -739,3 +739,51 @@ fn an_attribute_that_cannot_be_written_says_so() {
     let buffer = ImageBuf::new(&spec).unwrap();
     assert!(buffer.spec().unwrap().attribute("exact").is_some());
 }
+
+/// `mad` with two image sources of different channel counts.
+///
+/// The destination is sized from the wider source, and `IBAprep` allocates it
+/// with `InitializePixels::No` -- nothing in OpenImageIO passes
+/// `IBAprep_FILL_ZERO_ALLOC` -- so any channel the kernel does not write is
+/// uninitialised heap handed back with a success return. The lines meant to
+/// clear the trailing channels hold on the 3.1.12 this was developed against
+/// and did not on the 3.1.14 CI builds: property testing found a one-against-two
+/// and a six-against-three there, each leaving exactly the channels beyond the
+/// narrower source holding heap. The shape is refused rather than made to
+/// depend on which OpenImageIO is linked.
+#[test]
+fn mad_refuses_sources_that_disagree_on_channel_count() {
+    let narrow = ImageBuf::new(&ImageSpec::new(5, 10, 3, PixelFormat::F32).unwrap()).unwrap();
+    let wide = ImageBuf::new(&ImageSpec::new(5, 10, 6, PixelFormat::F32).unwrap()).unwrap();
+
+    for (a, b) in [(&narrow, &wide), (&wide, &narrow)] {
+        let mut dst = ImageBuf::empty().unwrap();
+        let error = algo::mad(
+            &mut dst,
+            a,
+            Operand::Image(b),
+            Operand::Constant(&[0.5]),
+            None,
+        )
+        .expect_err("three and six channels cannot be lined up");
+        assert!(error.to_string().contains("channels"), "{error}");
+
+        let mut dst = ImageBuf::empty().unwrap();
+        assert!(algo::mad(&mut dst, a, Operand::Image(b), Operand::Image(b), None).is_err());
+    }
+
+    // Matching sources still work, and write every channel.
+    let mut dst = ImageBuf::empty().unwrap();
+    algo::mad(
+        &mut dst,
+        &wide,
+        Operand::Image(&wide),
+        Operand::Constant(&[0.5]),
+        None,
+    )
+    .unwrap();
+    let roi = dst.spec().unwrap().data_window().unwrap();
+    let mut out = vec![-1.0_f32; roi.element_count().unwrap()];
+    dst.get_pixels_into(roi, &mut out).unwrap();
+    assert!(out.iter().all(|value| (*value - 0.5).abs() < 1e-6));
+}

@@ -787,6 +787,23 @@ one build of 3.1.14 did not do it. What is not: whether 3.1.14 differs here,
 whether the Highway SIMD path (`mad_impl_hwy`, enabled by `OIIO_USE_HWY`) skips
 the clear, or whether the clear itself has a condition that this shape misses.
 
+Property testing hit it twice, on different platforms and different shapes, and
+both were the same class: `mad` with two image sources of unequal channel
+counts, with the channels beyond the narrower source left holding heap.
+
+| build | a | b | destination | unwritten |
+| --- | --- | --- | --- | --- |
+| Windows, 3.1.14 | 8x3, 1 channel, F16 | 8x7, 2 channels, U16 | 8x7x2 | channel 1 |
+| Linux debug, 3.1.14 | 5x10, 6 channels, U8 | 10x5, 3 channels, F16 | 6 channels | channels 3 and up |
+
+Neither reproduces against 3.1.12: every mismatched pair tried there — 1 vs 2,
+2 vs 1, 6 vs 3, 3 vs 6, 4 vs 1 — came back with every channel written.
+
+This binding now refuses two image sources that disagree on channel count in
+`mad`, so it does not depend on which OpenImageIO is linked. That closes it for
+users of the crate but not upstream.
+
 Worth settling before it is reported, because the general shape — an operation
 that reports success while handing back heap it never wrote — is not specific
-to `mad`.
+to `mad`, and `IBAprep`'s `InitializePixels::No` is what makes it reachable at
+all.
