@@ -587,15 +587,18 @@ unsafe impl Sync for TextureSystem {}
 
 impl TextureSystem {
     /// A private texture system, which does not share state with others.
-    pub fn new() -> Result<Self> {
-        Self::create(false)
-    }
-
-    /// The process-wide shared texture system.
     ///
-    /// Its settings and invalidations affect every other user in the process.
-    pub fn shared() -> Result<Self> {
-        Self::create(true)
+    /// OpenImageIO's process-wide shared texture system is deliberately not
+    /// offered, for the reason [`ImageCache`](crate::ImageCache) does not offer
+    /// its shared cache: it is one C++ object behind however many Rust values
+    /// ask for it, so `&mut self` on one -- which is what `invalidate` and the
+    /// setters take, and the whole reason those are exclusive -- does not
+    /// exclude a `&self` lookup on another. Two `shared()` handles across two
+    /// threads would reach exactly the free-under-read that the exclusive
+    /// receivers were added to prevent. A private system shared through `Arc`
+    /// has no such ambiguity, since every borrow is a borrow of the one value.
+    pub fn new() -> Result<Self> {
+        Self::create()
     }
 
     /// Look up one filtered sample.
@@ -734,8 +737,9 @@ impl TextureSystem {
         sys::texture::texturesystem_getstats(system, 1)
     }
 
-    fn create(shared: bool) -> Result<Self> {
-        let inner = sys::texture::texturesystem_create(shared);
+    fn create() -> Result<Self> {
+        // Always private; see the note on `new`.
+        let inner = sys::texture::texturesystem_create(false);
         if inner.is_null() {
             return Err(Error::operation(
                 "create texture system",
