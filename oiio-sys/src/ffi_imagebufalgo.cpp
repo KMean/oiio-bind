@@ -1664,7 +1664,10 @@ imagebufalgo_mad_iii(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
 {
     if (refuse_distant_pair(dst, a, b, "mad")
         || refuse_deep_mismatch(dst, a, b, "mad")
-        || refuse_channel_mismatch(dst, a, b, "mad"))
+        || refuse_channel_mismatch(dst, a, b, "mad")
+        // a*b+c reads every image operand to the union channel count, so c has
+        // to line up too, not only a and b.
+        || refuse_channel_mismatch(dst, a, c, "mad"))
         return false;
     return OIIO::ImageBufAlgo::mad(dst, a, b, c, roi, nthreads);
 }
@@ -1686,7 +1689,9 @@ imagebufalgo_mad_ici(ImageBuf& dst, const ImageBuf& a,
                      const ROI& roi, int nthreads)
 {
     if (refuse_distant_pair(dst, a, c, "mad")
-        || refuse_deep_mismatch(dst, a, c, "mad"))
+        || refuse_deep_mismatch(dst, a, c, "mad")
+        // b is a constant; a and c are both images and must line up.
+        || refuse_channel_mismatch(dst, a, c, "mad"))
         return false;
     return OIIO::ImageBufAlgo::mad(dst, a, to_cspan(b), c, roi, nthreads);
 }

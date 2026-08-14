@@ -780,6 +780,35 @@ fn mad_refuses_sources_that_disagree_on_channel_count() {
         assert!(algo::mad(&mut dst, a, Operand::Image(b), Operand::Image(b), None).is_err());
     }
 
+    // The third operand counts too. a*b+c reads every image operand to the
+    // union channel count, so it is not enough to line up the first two: the
+    // iii variant used to check only a and b, and the ici variant (b constant,
+    // a and c both images) checked nothing at all.
+    let mut dst = ImageBuf::empty().unwrap();
+    assert!(
+        algo::mad(
+            &mut dst,
+            &narrow,
+            Operand::Image(&narrow),
+            Operand::Image(&wide),
+            None
+        )
+        .is_err(),
+        "the third image operand is wider and must be refused"
+    );
+    let mut dst = ImageBuf::empty().unwrap();
+    assert!(
+        algo::mad(
+            &mut dst,
+            &narrow,
+            Operand::Constant(&[0.5]),
+            Operand::Image(&wide),
+            None
+        )
+        .is_err(),
+        "b is a constant, a and c are unequal images and must be refused"
+    );
+
     // Matching sources still work, and write every channel.
     let mut dst = ImageBuf::empty().unwrap();
     algo::mad(
@@ -794,4 +823,16 @@ fn mad_refuses_sources_that_disagree_on_channel_count() {
     let mut out = vec![-1.0_f32; roi.element_count().unwrap()];
     dst.get_pixels_into(roi, &mut out).unwrap();
     assert!(out.iter().all(|value| (*value - 0.5).abs() < 1e-6));
+
+    // Three matching images write every channel too (the iii path).
+    let mut dst = ImageBuf::empty().unwrap();
+    algo::mad(
+        &mut dst,
+        &wide,
+        Operand::Image(&wide),
+        Operand::Image(&wide),
+        None,
+    )
+    .unwrap();
+    assert_eq!(dst.channel_count(), 6);
 }
