@@ -42,6 +42,23 @@ mod ffi {
             error: &mut String,
         ) -> bool;
 
+        pub fn texturesystem_environment(
+            texturesystem: Pin<&mut TextureSystem>,
+            filename: &str,
+            options: &TextureLookupOptions,
+            r_x: f32,
+            r_y: f32,
+            r_z: f32,
+            drdx_x: f32,
+            drdx_y: f32,
+            drdx_z: f32,
+            drdy_x: f32,
+            drdy_y: f32,
+            drdy_z: f32,
+            result: &mut [f32],
+            error: &mut String,
+        ) -> bool;
+
         pub fn texturesystem_geterror(texturesystem: Pin<&mut TextureSystem>) -> String;
         pub fn texturesystem_attribute_int(
             texturesystem: Pin<&mut TextureSystem>,

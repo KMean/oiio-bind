@@ -1,6 +1,8 @@
 #include "ffi_texture.h"
 #include "oiio-sys/src/texture.rs.h"
 
+#include <Imath/ImathVec.h>
+
 #include <limits>
 #include <string>
 
@@ -126,6 +128,81 @@ texturesystem_texture(TextureSystem& texturesystem, const rust::Str filename,
 
     if (!texturesystem.texture(name, opt, s, t, dsdx, dtdx, dsdy, dtdy, asked,
                                result.data())) {
+        error = take_texture_error(texturesystem);
+        return false;
+    }
+    for (int channel = asked; channel < wanted; ++channel)
+        result[std::size_t(channel)] = opt.fill;
+    return true;
+}
+
+bool
+texturesystem_environment(TextureSystem& texturesystem,
+                          const rust::Str filename,
+                          const TextureLookupOptions& options, float r_x,
+                          float r_y, float r_z, float drdx_x, float drdx_y,
+                          float drdx_z, float drdy_x, float drdy_y,
+                          float drdy_z, rust::Slice<float> result,
+                          rust::String& error)
+{
+    // The same bounds the plain texture lookup carries, for the same
+    // reasons: subimage and firstchannel are trusted unchecked past release
+    // builds, and the past-the-file channel fill is done here because
+    // OpenImageIO zero-fills instead of honouring the fill value. Derivative
+    // outputs are not exposed: upstream's zeroing loop dereferences the
+    // second output when only one is given.
+    error = rust::String();
+    if (result.empty()
+        || result.size() > std::size_t(std::numeric_limits<int>::max())) {
+        error = rust::String::lossy(
+            "the result slice must hold between one and INT_MAX channels");
+        return false;
+    }
+
+    OIIO::TextureOpt opt = to_texture_opt(options);
+    const OIIO::ustring name(filename.data(), filename.size());
+
+    int subimages = 0;
+    if (!texturesystem.get_texture_info(name, 0, OIIO::ustring("subimages"),
+                                        OIIO::TypeInt, &subimages)) {
+        error = take_texture_error(texturesystem);
+        if (error.empty())
+            error = rust::String::lossy("the texture could not be opened");
+        return false;
+    }
+    if (opt.subimage < 0 || opt.subimage >= subimages) {
+        error = rust::String::lossy(OIIO::Strutil::fmt::format(
+            "subimage {} does not exist; the texture has {}", opt.subimage,
+            subimages));
+        return false;
+    }
+
+    int channels = 0;
+    if (!texturesystem.get_texture_info(name, opt.subimage,
+                                        OIIO::ustring("channels"),
+                                        OIIO::TypeInt, &channels)
+        || channels <= 0) {
+        error = take_texture_error(texturesystem);
+        if (error.empty())
+            error = rust::String::lossy(
+                "the texture did not report a channel count");
+        return false;
+    }
+    if (opt.firstchannel < 0 || opt.firstchannel >= channels) {
+        error = rust::String::lossy(OIIO::Strutil::fmt::format(
+            "first channel {} is outside the texture's {} channels",
+            opt.firstchannel, channels));
+        return false;
+    }
+
+    const int wanted    = int(result.size());
+    const int available = channels - opt.firstchannel;
+    const int asked     = std::min(wanted, available);
+
+    if (!texturesystem.environment(name, opt, Imath::V3f(r_x, r_y, r_z),
+                                   Imath::V3f(drdx_x, drdx_y, drdx_z),
+                                   Imath::V3f(drdy_x, drdy_y, drdy_z), asked,
+                                   result.data())) {
         error = take_texture_error(texturesystem);
         return false;
     }

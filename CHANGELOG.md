@@ -109,6 +109,13 @@ before the fork, but nothing was ever published under it, so starting both at
 - Tests against OpenImageIO's and OpenEXR's own image corpora, opt-in through
   `OIIO_BIND_TEST_IMAGES` and `OIIO_BIND_TEST_EXR_IMAGES`, including
   OpenEXR's `Damaged` directory of reader crash cases.
+- `TextureSystem::environment`, the lat-long environment lookup by
+  direction, carrying the plain lookup's bounds — subimage and first channel
+  validated against the file before OpenImageIO trusts them unchecked — and
+  filling channels past the file's with the options' fill value itself,
+  since OpenImageIO zero-fills environment lookups instead of honouring it.
+  Derivative outputs stay unexposed: upstream's zeroing loop dereferences
+  the second output when only one is given.
 - `ImageCache` typed setting getters from the binding gap map:
   `setting_int`, `setting_float` and `setting_string`. The `stat:` names are
   refused on this shared-borrow path — OpenImageIO computes them by merging

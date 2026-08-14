@@ -656,6 +656,61 @@ impl TextureSystem {
         }
     }
 
+    /// Look up an environment map by direction.
+    ///
+    /// `direction` need not be normalized. The two derivative vectors say how
+    /// the direction moves per screen pixel and choose the filter width, like
+    /// the plain [`TextureSystem::texture`] derivatives; zeros ask for an
+    /// unfiltered sample. One value per channel is written to `result`, and
+    /// channels past the file's take the options' fill value — supplied by
+    /// this crate, since OpenImageIO zero-fills environment lookups instead
+    /// of honouring the fill.
+    pub fn environment(
+        &self,
+        texture_path: &Path,
+        options: &TextureOptions,
+        direction: [f32; 3],
+        d_dx: [f32; 3],
+        d_dy: [f32; 3],
+        result: &mut [f32],
+    ) -> Result<()> {
+        if result.is_empty() {
+            return Err(Error::InvalidRoi(
+                "an environment lookup needs at least one channel".to_owned(),
+            ));
+        }
+        let filename = path_to_utf8(texture_path)?;
+        let options = options.to_sys()?;
+
+        let mut error = String::new();
+        let succeeded = self.with_system(|system| {
+            sys::texture::texturesystem_environment(
+                system,
+                filename,
+                &options,
+                direction[0],
+                direction[1],
+                direction[2],
+                d_dx[0],
+                d_dx[1],
+                d_dx[2],
+                d_dy[0],
+                d_dy[1],
+                d_dy[2],
+                result,
+                &mut error,
+            )
+        });
+        if succeeded {
+            Ok(())
+        } else {
+            if error.is_empty() {
+                error = self.with_system(sys::texture::texturesystem_geterror);
+            }
+            Err(Error::operation("environment lookup", error))
+        }
+    }
+
     /// The texture's resolution, as the texture system sees it.
     pub fn resolution(&self, texture_path: &Path) -> Result<[u32; 2]> {
         let filename = path_to_utf8(texture_path)?;

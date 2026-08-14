@@ -26,6 +26,74 @@ fn a_texture() -> Option<PathBuf> {
     None
 }
 
+/// Environment lookups need no corpus: the crate makes its own lat-long map.
+#[test]
+fn environment_looks_up_a_latlong_map() {
+    let scratch = ScratchDir::new("envmap");
+    let spec = ImageSpec::new(64, 32, 3, PixelFormat::F32).unwrap();
+    let mut sky = oiio::ImageBuf::new(&spec).unwrap();
+    oiio::algo::fill(&mut sky, &[0.25, 0.5, 0.75], None).unwrap();
+    let map = scratch.file("sky.tx");
+    oiio::make_texture_from_buffer(
+        oiio::TextureMode::LatLongEnvironment,
+        &sky,
+        &map,
+        &oiio::TextureConfig::new(),
+    )
+    .unwrap();
+
+    let textures = TextureSystem::new().unwrap();
+    let options = TextureOptions::default();
+
+    // A flat map answers every direction with the same colour.
+    let mut colour = [0.0_f32; 3];
+    textures
+        .environment(
+            &map,
+            &options,
+            [0.0, 0.0, 1.0],
+            [0.0; 3],
+            [0.0; 3],
+            &mut colour,
+        )
+        .unwrap();
+    // make_texture quantized the map to uint8, so half a code value of slack.
+    assert!(
+        (colour[0] - 0.25).abs() < 2.5e-3
+            && (colour[1] - 0.5).abs() < 2.5e-3
+            && (colour[2] - 0.75).abs() < 2.5e-3,
+        "a flat environment reads back flat: {colour:?}"
+    );
+
+    // Channels past the file's take the fill value, supplied by the crate
+    // because OpenImageIO zero-fills environment lookups instead.
+    let mut wide = [9.0_f32; 5];
+    textures
+        .environment(
+            &map,
+            &options,
+            [0.0, 1.0, 0.0],
+            [0.0; 3],
+            [0.0; 3],
+            &mut wide,
+        )
+        .unwrap();
+    assert_eq!(wide[3], 0.0, "past the file is the fill value: {wide:?}");
+
+    // A file that is not there is an error, not a crash.
+    let mut nothing = [0.0_f32; 3];
+    assert!(textures
+        .environment(
+            &scratch.file("missing.tx"),
+            &options,
+            [0.0, 0.0, 1.0],
+            [0.0; 3],
+            [0.0; 3],
+            &mut nothing
+        )
+        .is_err());
+}
+
 #[test]
 fn creates_a_texture_system() {
     let mut textures = TextureSystem::new().unwrap();

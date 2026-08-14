@@ -24,6 +24,17 @@ texturesystem_texture(TextureSystem& texturesystem, const rust::Str filename,
                       float dsdx, float dtdx, float dsdy, float dtdy,
                       rust::Slice<float> result, rust::String& error);
 
+// An environment lookup by direction vector; the guards and the fill of the
+// channels past the file's are the plain texture lookup's.
+bool
+texturesystem_environment(TextureSystem& texturesystem,
+                          const rust::Str filename,
+                          const TextureLookupOptions& options, float r_x,
+                          float r_y, float r_z, float drdx_x, float drdx_y,
+                          float drdx_z, float drdy_x, float drdy_y,
+                          float drdy_z, rust::Slice<float> result,
+                          rust::String& error);
+
 rust::String
 texturesystem_geterror(TextureSystem& texturesystem);
 
