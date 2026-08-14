@@ -324,6 +324,55 @@ mod ffi {
             nthreads: i32,
         ) -> bool;
 
+        pub unsafe fn imagebufalgo_repremult(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub unsafe fn imagebufalgo_zover(
+            dst: Pin<&mut ImageBuf>,
+            a: &ImageBuf,
+            b: &ImageBuf,
+            z_zeroisinf: bool,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub unsafe fn imagebufalgo_scale(
+            dst: Pin<&mut ImageBuf>,
+            a: &ImageBuf,
+            b: &ImageBuf,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub unsafe fn imagebufalgo_fix_non_finite(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            mode: i32,
+            pixels_fixed: &mut i64,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub unsafe fn imagebufalgo_rangecompress(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            use_luma: bool,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
+        pub unsafe fn imagebufalgo_rangeexpand(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            use_luma: bool,
+            roi: &ROI,
+            nthreads: i32,
+        ) -> bool;
+
         pub unsafe fn imagebufalgo_channel_sum(
             dst: Pin<&mut ImageBuf>,
             src: &ImageBuf,

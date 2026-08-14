@@ -109,6 +109,13 @@ before the fork, but nothing was ever published under it, so starting both at
 - Tests against OpenImageIO's and OpenEXR's own image corpora, opt-in through
   `OIIO_BIND_TEST_IMAGES` and `OIIO_BIND_TEST_EXR_IMAGES`, including
   OpenEXR's `Damaged` directory of reader crash cases.
+- `oiio::algo` compositing and value hygiene from the binding gap map:
+  `repremult` (which refuses a source with no alpha channel rather than
+  degrading to OpenImageIO's silently misplaced paste), `zover` depth
+  compositing, `scale` for single-channel mask multiplies, `fix_non_finite`
+  with a typed `NonFiniteFix` mode returning the repaired-pixel count, and
+  the `rangecompress`/`rangeexpand` pair, documented with their real 0.18
+  knee — the identity-below-1.0 wisdom is not what OpenImageIO ships.
 - `ImageBuf::try_clone`, the copy with the failure reportable: `Clone` still
   works and panics with the reason when the copy's pixels cannot be
   allocated, where OpenImageIO's own copy constructor would have handed back

@@ -106,6 +106,82 @@ fn fit_preserves_the_aspect_ratio() {
 }
 
 #[test]
+fn zover_picks_the_closer_surface_and_scale_masks() {
+    // R,G,B,A,Z with the alpha and depth channels designated — naming a
+    // channel "Z" alone does not set the spec's z_channel index, and zover
+    // requires it.
+    let deep_spec = |z: f32| {
+        let spec = ImageSpec::new(4, 4, 5, PixelFormat::F32)
+            .unwrap()
+            .with_channel_names(["R", "G", "B", "A", "Z"])
+            .unwrap()
+            .with_alpha_channel(Some(3))
+            .unwrap()
+            .with_z_channel(Some(4))
+            .unwrap();
+        let mut image = ImageBuf::new(&spec).unwrap();
+        algo::fill(&mut image, &[0.0, 0.0, 0.0, 1.0, z], None).unwrap();
+        image
+    };
+    let mut near = deep_spec(1.0);
+    let far = deep_spec(9.0);
+    // Make the near surface red so the winner is visible.
+    algo::fill(&mut near, &[1.0, 0.0, 0.0, 1.0, 1.0], None).unwrap();
+
+    let mut result = ImageBuf::empty().unwrap();
+    algo::zover(&mut result, &far, &near, false, None).unwrap();
+    let winner = pixels_of(&result);
+    assert!(
+        (winner[0] - 1.0).abs() < 1e-5,
+        "the closer red surface wins"
+    );
+
+    // A channel-count mismatch is refused, not quietly mangled.
+    let mut result = ImageBuf::empty().unwrap();
+    assert!(algo::zover(
+        &mut result,
+        &near,
+        &filled(4, 4, &[0.5, 0.5, 0.5]),
+        false,
+        None
+    )
+    .is_err());
+
+    // scale: a single-channel mask multiplies every channel.
+    let source = filled(4, 4, &[0.8, 0.4, 0.2]);
+    let mask = filled(4, 4, &[0.5]);
+    let mut masked = ImageBuf::empty().unwrap();
+    algo::scale(&mut masked, &source, &mask, None).unwrap();
+    for value in pixels_of(&masked).chunks(3) {
+        assert!((value[0] - 0.4).abs() < 1e-5, "got {value:?}");
+        assert!((value[1] - 0.2).abs() < 1e-5);
+        assert!((value[2] - 0.1).abs() < 1e-5);
+    }
+}
+
+#[test]
+fn repremult_needs_alpha_and_round_trips() {
+    // Half-opaque premultiplied grey.
+    let premultiplied = filled(4, 4, &[0.25, 0.25, 0.25, 0.5]);
+
+    // unpremult then repremult lands back where it started, keeping the
+    // zero-alpha semantics that plain premult would not.
+    let mut unpremultiplied = ImageBuf::empty().unwrap();
+    algo::unpremult(&mut unpremultiplied, &premultiplied, None).unwrap();
+    let mut back = ImageBuf::empty().unwrap();
+    algo::repremult(&mut back, &unpremultiplied, None).unwrap();
+    for value in pixels_of(&back).chunks(4) {
+        assert!((value[0] - 0.25).abs() < 1e-5, "got {value:?}");
+        assert!((value[3] - 0.5).abs() < 1e-5);
+    }
+
+    // No alpha channel: an error, not a silently misplaced paste.
+    let no_alpha = filled(4, 4, &[0.5, 0.5, 0.5]);
+    let mut result = ImageBuf::empty().unwrap();
+    assert!(algo::repremult(&mut result, &no_alpha, None).is_err());
+}
+
+#[test]
 fn over_composites_using_alpha() {
     // Foreground: half-opaque white, premultiplied. Background: opaque black.
     let foreground = filled(4, 4, &[0.5, 0.5, 0.5, 0.5]);

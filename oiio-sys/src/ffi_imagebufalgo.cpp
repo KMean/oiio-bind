@@ -1028,6 +1028,92 @@ imagebufalgo_unpremult(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
 }
 
 bool
+imagebufalgo_repremult(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                       int nthreads)
+{
+    if (refuse_empty_region(dst, src, roi, "repremult"))
+        return false;
+    // Unlike premult/unpremult, whose no-alpha fallback is a documented copy,
+    // repremult with no alpha channel silently degenerates to a paste that
+    // this file already documents as broken for offset origins. An image with
+    // no alpha cannot be re-premultiplied; say so.
+    if (src.spec().alpha_channel < 0) {
+        dst.errorfmt("repremult: the source has no alpha channel to "
+                     "re-premultiply by");
+        return false;
+    }
+    return OIIO::ImageBufAlgo::repremult(dst, src, roi, nthreads);
+}
+
+bool
+imagebufalgo_zover(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
+                   bool z_zeroisinf, const ROI& roi, int nthreads)
+{
+    if (refuse_distant_pair(dst, a, b, "zover")
+        || refuse_deep_mismatch(dst, a, b, "zover")
+        || refuse_narrow_destination(dst, a, "zover")
+        || refuse_channel_mismatch(dst, a, b, "zover"))
+        return false;
+    return OIIO::ImageBufAlgo::zover(dst, a, b, z_zeroisinf, roi, nthreads);
+}
+
+bool
+imagebufalgo_scale(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
+                   const ROI& roi, int nthreads)
+{
+    if (refuse_distant_pair(dst, a, b, "scale")
+        || refuse_deep_mismatch(dst, a, b, "scale"))
+        return false;
+    // The KWArgs parameter is reserved and ignored in 3.1; not forwarded.
+    return OIIO::ImageBufAlgo::scale(dst, a, b, {}, roi, nthreads);
+}
+
+bool
+imagebufalgo_fix_non_finite(ImageBuf& dst, const ImageBuf& src, int mode,
+                            int64_t& pixels_fixed, const ROI& roi,
+                            int nthreads)
+{
+    if (refuse_empty_region(dst, src, roi, "fix_non_finite"))
+        return false;
+    // The kernel iterates Iterator<T,T> over the destination's type while
+    // reading the source; a pre-allocated destination of a different width
+    // walks the source at the wrong stride. Same guard unsharp_mask carries.
+    if (dst.initialized() && !dst.deep()
+        && dst.spec().format != src.spec().format) {
+        dst.errorfmt("fix_non_finite: the destination is allocated as {} and "
+                     "the source is {}; use an empty destination or matching "
+                     "formats",
+                     dst.spec().format, src.spec().format);
+        return false;
+    }
+    int fixed    = 0;
+    bool ok      = OIIO::ImageBufAlgo::fixNonFinite(
+        dst, src, OIIO::ImageBufAlgo::NonFiniteFixMode(mode), &fixed, roi,
+        nthreads);
+    pixels_fixed = fixed;
+    return ok;
+}
+
+bool
+imagebufalgo_rangecompress(ImageBuf& dst, const ImageBuf& src, bool use_luma,
+                           const ROI& roi, int nthreads)
+{
+    if (refuse_empty_region(dst, src, roi, "rangecompress"))
+        return false;
+    return OIIO::ImageBufAlgo::rangecompress(dst, src, use_luma, roi,
+                                             nthreads);
+}
+
+bool
+imagebufalgo_rangeexpand(ImageBuf& dst, const ImageBuf& src, bool use_luma,
+                         const ROI& roi, int nthreads)
+{
+    if (refuse_empty_region(dst, src, roi, "rangeexpand"))
+        return false;
+    return OIIO::ImageBufAlgo::rangeexpand(dst, src, use_luma, roi, nthreads);
+}
+
+bool
 imagebufalgo_channel_sum(ImageBuf& dst, const ImageBuf& src,
                          rust::Slice<const float> weights, const ROI& roi,
                          int nthreads)

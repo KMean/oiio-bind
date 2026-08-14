@@ -235,6 +235,31 @@ imagebufalgo_unpremult(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
                        int nthreads);
 
 bool
+imagebufalgo_repremult(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                       int nthreads);
+
+bool
+imagebufalgo_zover(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
+                   bool z_zeroisinf, const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_scale(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
+                   const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_fix_non_finite(ImageBuf& dst, const ImageBuf& src, int mode,
+                            int64_t& pixels_fixed, const ROI& roi,
+                            int nthreads);
+
+bool
+imagebufalgo_rangecompress(ImageBuf& dst, const ImageBuf& src, bool use_luma,
+                           const ROI& roi, int nthreads);
+
+bool
+imagebufalgo_rangeexpand(ImageBuf& dst, const ImageBuf& src, bool use_luma,
+                         const ROI& roi, int nthreads);
+
+bool
 imagebufalgo_channel_sum(ImageBuf& dst, const ImageBuf& src,
                          rust::Slice<const float> weights, const ROI& roi,
                          int nthreads);

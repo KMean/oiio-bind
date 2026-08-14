@@ -2210,6 +2210,169 @@ pub fn unpremult(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result
     finish(dst, "unpremultiply", succeeded)
 }
 
+/// Multiply the colour channels back by alpha, undoing [`unpremult`] while
+/// keeping the values unpremultiplied work produced for zero-alpha pixels.
+///
+/// The source must have an alpha channel: unlike [`premult`], whose no-alpha
+/// case is a documented copy, there is nothing to re-premultiply by, so a
+/// source without one is an error.
+pub fn repremult(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
+    let roi = region_in(roi, dst)?;
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_repremult(dst.inner_mut(), src.inner(), &roi, ALL_THREADS)
+    };
+    finish(dst, "re-premultiply", succeeded)
+}
+
+/// Composite `a` over `b` using depth: the closer surface wins per pixel.
+///
+/// `z_zero_is_infinity` treats a depth of zero as infinitely far rather than
+/// infinitely close, which is what renderers that leave empty pixels at zero
+/// need. Both images need matching channel counts, and OpenImageIO finds the
+/// `Z` channel by name or falls back to guessing that alpha is the last
+/// channel on unmarked four-channel images — name the channels.
+pub fn zover(
+    dst: &mut ImageBuf,
+    a: &ImageBuf,
+    b: &ImageBuf,
+    z_zero_is_infinity: bool,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region_in(roi, dst)?;
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_zover(
+            dst.inner_mut(),
+            a.inner(),
+            b.inner(),
+            z_zero_is_infinity,
+            &roi,
+            ALL_THREADS,
+        )
+    };
+    finish(dst, "zover", succeeded)
+}
+
+/// Multiply every channel of `a` by single-channel `b`, per pixel.
+///
+/// `b` must have exactly one channel; this is the mask or matte multiply
+/// [`mul`] cannot express, since arithmetic requires matching counts.
+pub fn scale(dst: &mut ImageBuf, a: &ImageBuf, b: &ImageBuf, roi: Option<Roi>) -> Result<()> {
+    let roi = region_in(roi, dst)?;
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_scale(
+            dst.inner_mut(),
+            a.inner(),
+            b.inner(),
+            &roi,
+            ALL_THREADS,
+        )
+    };
+    finish(dst, "scale", succeeded)
+}
+
+/// How [`fix_non_finite`] treats a `NaN` or infinite value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NonFiniteFix {
+    /// Count the bad values without changing them.
+    None,
+    /// Replace them with zero.
+    Black,
+    /// Replace them with the average of the finite neighbours in a 3x3 box,
+    /// falling back to zero when every neighbour is bad too. On deep images
+    /// this degrades to the zero replacement.
+    Box3,
+    /// Change nothing and report an error if any bad value exists.
+    Error,
+}
+
+impl NonFiniteFix {
+    fn to_sys(self) -> i32 {
+        match self {
+            Self::None => 0,
+            Self::Black => 1,
+            Self::Box3 => 2,
+            Self::Error => 100,
+        }
+    }
+}
+
+/// Repair `NaN` and infinite values, returning how many pixels were touched.
+///
+/// For pixel formats that cannot hold a non-finite value this is a copy that
+/// reports zero. The destination must be empty or share the source's pixel
+/// format, since OpenImageIO walks the source at the destination's width.
+pub fn fix_non_finite(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    mode: NonFiniteFix,
+    roi: Option<Roi>,
+) -> Result<u64> {
+    let roi = region_in(roi, dst)?;
+    let mut pixels_fixed = 0_i64;
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_fix_non_finite(
+            dst.inner_mut(),
+            src.inner(),
+            mode.to_sys(),
+            &mut pixels_fixed,
+            &roi,
+            ALL_THREADS,
+        )
+    };
+    finish(dst, "fix non-finite", succeeded)?;
+    Ok(pixels_fixed.max(0) as u64)
+}
+
+/// Compress the value range logarithmically above a low knee.
+///
+/// Values up to 0.18 pass through unchanged; everything above is folded down
+/// a log curve (the Sony Imageworks coefficients OpenImageIO ships), so even
+/// mid-greys move and extreme highlights land below 1.0. This is the
+/// transform that lets high dynamic range imagery survive filtering that
+/// would otherwise ring around highlights; [`rangeexpand`] undoes it,
+/// approximately — the pair round-trips values, not bit patterns. With
+/// `use_luma`, the scale factor comes from luminance so a pixel's hue
+/// survives the trip.
+pub fn rangecompress(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    use_luma: bool,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region_in(roi, dst)?;
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_rangecompress(
+            dst.inner_mut(),
+            src.inner(),
+            use_luma,
+            &roi,
+            ALL_THREADS,
+        )
+    };
+    finish(dst, "rangecompress", succeeded)
+}
+
+/// Undo [`rangecompress`], expanding the compressed highlights back out.
+pub fn rangeexpand(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    use_luma: bool,
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region_in(roi, dst)?;
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_rangeexpand(
+            dst.inner_mut(),
+            src.inner(),
+            use_luma,
+            &roi,
+            ALL_THREADS,
+        )
+    };
+    finish(dst, "rangeexpand", succeeded)
+}
+
 /// Sum the channels into a single-channel image, weighted.
 ///
 /// There must be exactly one weight per source channel. OpenImageIO pads a

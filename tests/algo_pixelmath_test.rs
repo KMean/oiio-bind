@@ -1,10 +1,63 @@
 //! The per-pixel arithmetic that was missing: mad, pow, clamp, min, max,
-//! contrast_remap, saturate, invert, paste and cut.
+//! contrast_remap, saturate, invert, paste and cut — and the value-hygiene
+//! pair fix_non_finite and rangecompress/rangeexpand.
 
 mod common;
 
-use oiio::algo::{ContrastRemap, Operand};
+use oiio::algo::{ContrastRemap, NonFiniteFix, Operand};
 use oiio::{algo, ImageBuf, ImageSpec, PixelFormat, Roi};
+
+#[test]
+fn fix_non_finite_counts_and_error_mode_refuses() {
+    let mut poisoned = flat(4, 4, &[1.0]);
+    algo::fill(&mut poisoned, &[f32::NAN], None).unwrap();
+
+    // Black replaces and counts every touched pixel.
+    let mut repaired = ImageBuf::empty().unwrap();
+    let fixed = algo::fix_non_finite(&mut repaired, &poisoned, NonFiniteFix::Black, None).unwrap();
+    assert_eq!(fixed, 16, "every pixel held a NaN");
+    assert!(pixel(&repaired, 2, 2)[0] == 0.0);
+
+    // Error mode reports rather than repairs.
+    let mut untouched = ImageBuf::empty().unwrap();
+    assert!(algo::fix_non_finite(&mut untouched, &poisoned, NonFiniteFix::Error, None).is_err());
+
+    // A clean image is a copy that fixed nothing.
+    let clean = flat(4, 4, &[0.5]);
+    let mut copy = ImageBuf::empty().unwrap();
+    let fixed = algo::fix_non_finite(&mut copy, &clean, NonFiniteFix::Box3, None).unwrap();
+    assert_eq!(fixed, 0);
+    close(&pixel(&copy, 0, 0), &[0.5]);
+}
+
+#[test]
+fn rangecompress_and_expand_round_trip_highlights() {
+    let hot = flat(4, 4, &[8.0, 0.5, 0.1]);
+
+    let mut compressed = ImageBuf::empty().unwrap();
+    algo::rangecompress(&mut compressed, &hot, false, None).unwrap();
+    let mid = pixel(&compressed, 1, 1);
+    // The knee is 0.18: below it values pass through, above it the log curve
+    // applies — even 0.5 moves, and 8.0 lands under 1.0.
+    assert!(
+        mid[0] < 1.0 && mid[0] > mid[1],
+        "8.0 compresses, got {mid:?}"
+    );
+    assert!(mid[1] < 0.5, "0.5 is above the knee and moves: {mid:?}");
+    assert!(
+        (mid[2] - 0.1).abs() < 1e-6,
+        "0.1 is below the knee: {mid:?}"
+    );
+
+    let mut expanded = ImageBuf::empty().unwrap();
+    algo::rangeexpand(&mut expanded, &compressed, false, None).unwrap();
+    // The pair round-trips values approximately, not bit patterns, as the
+    // documentation says — the highlight needs a proportional tolerance.
+    let back = pixel(&expanded, 1, 1);
+    assert!((back[0] - 8.0).abs() < 8.0 * 1e-3, "got {back:?}");
+    assert!((back[1] - 0.5).abs() < 1e-3, "got {back:?}");
+    assert!((back[2] - 0.1).abs() < 1e-6, "got {back:?}");
+}
 
 /// An image whose every pixel holds the same value per channel.
 fn flat(width: u32, height: u32, values: &[f32]) -> ImageBuf {
