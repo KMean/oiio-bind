@@ -68,16 +68,21 @@ impl AttributeValue {
 
     /// Whether this crate can write the attribute back to a file.
     ///
-    /// Every variant can, including [`AttributeValue::Other`], which carries
-    /// the value's original bytes rather than only its printed form. An
-    /// `Other` is writable when its type name parses, its length is exactly
+    /// The scalar variants always can. [`AttributeValue::Strings`] can when
+    /// it holds at least one string — an empty array has no OpenImageIO type
+    /// to be written as, and its write fails. An [`AttributeValue::Other`],
+    /// which carries the value's original bytes rather than only its printed
+    /// form, is writable when its type name parses, its length is exactly
     /// what that type measures, and the type is one that means anything
     /// outside this process: a string is carried by the `String` variant
     /// instead, and a pointer or a hashed string is a raw process address.
     /// Anything read out of a real file satisfies all of that; a hand-built
-    /// one may not.
+    /// value may not.
     pub fn is_writable(&self) -> bool {
         match self {
+            // An empty array would be "string[0]", which parses to a scalar
+            // string; the write arm refuses it, so this must say so too.
+            Self::Strings(values) => !values.is_empty(),
             Self::Other {
                 type_name, bytes, ..
             } => {

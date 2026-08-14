@@ -766,6 +766,10 @@ fn an_empty_string_array_attribute_is_an_error_not_a_silent_drop() {
         "an empty string array cannot be carried and that has to be said"
     );
 
+    // The predicate agrees with the write, so a pre-filter drops it.
+    assert!(!oiio::AttributeValue::Strings(Vec::new()).is_writable());
+    assert!(oiio::AttributeValue::Strings(vec!["left".to_owned()]).is_writable());
+
     // A non-empty array still arrives whole.
     let views = vec!["left".to_owned(), "right".to_owned()];
     let spec = ImageSpec::new(4, 4, 3, PixelFormat::U8)
