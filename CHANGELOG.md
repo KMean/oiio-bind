@@ -109,6 +109,11 @@ before the fork, but nothing was ever published under it, so starting both at
 - Tests against OpenImageIO's and OpenEXR's own image corpora, opt-in through
   `OIIO_BIND_TEST_IMAGES` and `OIIO_BIND_TEST_EXR_IMAGES`, including
   OpenEXR's `Damaged` directory of reader crash cases.
+- `ImageCache` typed setting getters from the binding gap map:
+  `setting_int`, `setting_float` and `setting_string`. The `stat:` names are
+  refused on this shared-borrow path — OpenImageIO computes them by merging
+  per-thread counters with no lock, the same race that makes
+  `ImageCache::stats` exclusive — so statistics stay on the exclusive path.
 - `DeepImage` per-pixel operations from the binding gap map: `sort_samples`,
   `merge_overlap_samples`, `merge_pixel_from`, `split_samples`,
   `opaque_depth` (an `Option`, where OpenImageIO spells absence `f32::MAX`)

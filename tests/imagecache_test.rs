@@ -75,6 +75,23 @@ fn safe_imagecache_reads_full_image_and_regions() -> Result<()> {
 }
 
 #[test]
+fn cache_settings_read_back_typed_and_stats_stay_exclusive() -> Result<()> {
+    let cache = ImageCache::builder()
+        .max_memory_mb(64.0)
+        .max_open_files(32)
+        .build()?;
+
+    assert_eq!(cache.setting_int("max_open_files")?, Some(32));
+    assert_eq!(cache.setting_float("max_memory_MB")?, Some(64.0));
+    assert!(cache.setting_string("plugin_searchpath")?.is_some());
+    assert_eq!(cache.setting_int("no-such-setting")?, None);
+
+    // The stat: names are the issue-12 race and stay on the exclusive path.
+    assert!(cache.setting_int("stat:cache_memory_used").is_err());
+    Ok(())
+}
+
+#[test]
 fn safe_imagecache_zero_fills_outside_data_window() -> Result<()> {
     let cache = ImageCache::new()?;
     let path = fixture_path();

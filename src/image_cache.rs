@@ -325,6 +325,54 @@ impl ImageCache {
         });
     }
 
+    /// Read an integer cache setting, `None` when the name is unknown or not
+    /// an integer.
+    ///
+    /// The `stat:` names are deliberately refused here: OpenImageIO gathers
+    /// them by merging per-thread counters with no lock — the data race
+    /// [`ImageCache::stats`] is exclusive for — so statistics stay on that
+    /// exclusive path.
+    pub fn setting_int(&self, name: &str) -> Result<Option<i32>> {
+        Self::refuse_stat(name)?;
+        let mut value = 0_i32;
+        let found = self.with_cache(|cache| {
+            sys::imagecache::imagecache_getattribute_int(cache, name, &mut value)
+        });
+        Ok(found.then_some(value))
+    }
+
+    /// Read a float cache setting; see [`ImageCache::setting_int`].
+    pub fn setting_float(&self, name: &str) -> Result<Option<f32>> {
+        Self::refuse_stat(name)?;
+        let mut value = 0.0_f32;
+        let found = self.with_cache(|cache| {
+            sys::imagecache::imagecache_getattribute_float(cache, name, &mut value)
+        });
+        Ok(found.then_some(value))
+    }
+
+    /// Read a string cache setting; see [`ImageCache::setting_int`].
+    pub fn setting_string(&self, name: &str) -> Result<Option<String>> {
+        Self::refuse_stat(name)?;
+        cxx::let_cxx_string!(value = "");
+        let found = self.with_cache(|cache| {
+            sys::imagecache::imagecache_getattribute_string(cache, name, value.as_mut())
+        });
+        Ok(found.then(|| value.to_string_lossy().into_owned()))
+    }
+
+    fn refuse_stat(name: &str) -> Result<()> {
+        if name.starts_with("stat:") {
+            return Err(Error::InvalidCacheSetting {
+                name: "stat:*",
+                value: "statistics are read through ImageCache::stats, which is \
+                        exclusive for the reason its documentation gives"
+                    .to_owned(),
+            });
+        }
+        Ok(())
+    }
+
     /// Return basic cache statistics suitable for diagnostics.
     ///
     /// Exclusive for the same reason as [`ImageCache::invalidate`]:
