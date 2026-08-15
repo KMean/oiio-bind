@@ -1218,10 +1218,10 @@ impl ImageOutput {
     /// refused here with a clear message. The thumbnail's channel count must match the
     /// image's (Targa refuses a mismatch silently), and both dimensions
     /// must be under 256: the TGA postage stamp stores its size in single
-    /// bytes, and through 3.1 OpenImageIO's own downsizing clamps to 256 —
-    /// one past what the byte holds — silently writing a zero-dimension
-    /// thumbnail. (Unreleased 3.2 resizes to 255 itself; the refusal here
-    /// is version-independent.) Formats not reporting
+    /// bytes, and through 3.1.15 OpenImageIO's own downsizing clamps to
+    /// 256 — one past what the byte holds — silently writing a
+    /// zero-dimension thumbnail. (3.1.16 resizes to 255 itself; the refusal
+    /// here is version-independent.) Formats not reporting
     /// `thumbnail_after_write` additionally need the thumbnail set before
     /// any pixels.
     pub fn set_thumbnail(&mut self, thumbnail: &crate::ImageBuf) -> Result<()> {

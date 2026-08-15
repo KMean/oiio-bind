@@ -11,9 +11,9 @@ is never shown a second unrelated API behaviour:
 
 Both use only public OpenImageIO API — no Rust and no binding code — and exit
 non-zero when two overloads of the same call disagree, given the same
-`ImageSpec` and the same buffer. Both check only return values, so for issue 1
-they understate the problem; issue 1 carries a separate table of measured
-pixel values.
+`ImageSpec` and the same buffer. The tiled repro checks only return values, so
+for issue 1 it understates the problem — issue 1 carries a separate table of
+measured pixel values; the scanline repro also compares read-back pixels.
 
 Issues 4–9, 11 and 12 were found by reading the source while binding it, and
 are stated as code review rather than as runnable reproductions. Where a
@@ -89,9 +89,14 @@ diagnosed:
 
 1. **Silent wrong data.** When the transposed rectangle still satisfies
    `ImageSpec::valid_tile_range`, the read returns `true` with an empty
-   `geterror()` and the buffer holds a transposed image. This happens for every
-   square image, and for every image whose dimensions are an exact multiple of
-   the tile size.
+   `geterror()` and the buffer holds the wrong pixels: each row of tiles
+   receives the transposed rectangle's data written at a row pitch recomputed
+   for the swapped dimensions — the forward also drops `ystride`/`zstride`,
+   passing only `data.xstride()` — so the result is scrambled, not even a
+   clean transpose. With square tiles this happens for every square image, and
+   for every image whose dimensions are an exact multiple of the tile size.
+   (With non-square tiles the swapped ranges usually fail validation instead —
+   e.g. a 32×32 image with 16×8 tiles falls into the silent-`false` case.)
 2. **Silent success over half-uninitialised memory.** `valid_tile_range` checks
    divisibility by the tile size and the two `== width` / `== height` escape
    hatches, but never checks that the range lies inside the image. A 32×16
@@ -186,11 +191,14 @@ the files on disk are correct:
 | 24×24 | true         | (empty)  | 1656 / 1728                        | 0                  |
 | 17×17 | true         | (empty)  | 816 / 867                          | 0                  |
 
-Every tile row the span path actually executed matches the transposed-rectangle
-prediction on 100% of in-bounds values. The values that happen to agree are
-exactly the fixed points of a transposition: for the square cases the count is
-three channels times the main diagonal — 32×32 agrees on 96 = 3 × 32, 40×40 on
-120 = 3 × 40, 17×17 on 51 = 3 × 17.
+Every tile row the span path actually executed matches the transposed-request
+prediction — swapped ranges, with `ystride` recomputed from the swapped
+width — on 100% of in-bounds values (verified 3072/3072 for 32×32). The few
+values that agree with the correct image number three channels times one
+image side: 32×32 agrees on 96 = 3 × 32 (pixels (0..15, 0) and (16..31, 31)),
+40×40 on 120 = 3 × 40, 17×17 on 51 = 3 × 17. They are not the main diagonal —
+the buffer is not a neat transposition, because the recomputed row pitch
+scrambles the layout further.
 
 Only a single square tile (16×16 with 16×16 tiles) is correct, because there
 the swapped arguments are equal.
@@ -332,9 +340,12 @@ parenthesised and needs nothing.
 
 Unchanged in 3.1.9.0, 3.1.12.0 and on current `main`.
 
-For context, the macros came from #2261 and PR #2641; nothing in either
-discussion touches parenthesisation, and the idiom preferred there was the raw
-`#if OIIO_VERSION <= 20008`, which is presumably why this went unnoticed.
+For context, #2261 asked for easier compile-time version tests and PR #2641
+answered it with `OIIO_MAKE_VERSION` — parenthesised, and not affected. The
+two comparison macros were added later by PR #2831, which has no description
+and drew no review comments, so parenthesisation was never discussed; the
+idiom preferred in #2261's discussion was the raw `#if OIIO_VERSION <= 20008`,
+which is presumably why this went unnoticed.
 
 ## Issue 4 — `ImageBufAlgo::max` widens the channel range where `min` narrows it
 
@@ -358,8 +369,9 @@ roi.chend = std::min(roi.chend, std::min(A.nchannels(), B.nchannels()));
 and `absdiff`, the same pattern a third time, has `std::min` at line 323. Only
 `max` widens.
 
-The block immediately below the dispatch is the same in all three, and in `max`
-it is unreachable. Its guard, in full, is:
+The block immediately below the dispatch is the same in all three (`absdiff`
+differs only in using `OIIO_DASSERT` where the other two use `OIIO_ASSERT`),
+and in `max` it is unreachable. Its guard, in full, is:
 
 ```c++
 if (roi.chend < origroi.chend && A.nchannels() != B.nchannels()) {
@@ -584,10 +596,12 @@ and offsets them instead.
 
 This is not a guess about intent. The block entered the file in PR #2987,
 "Clarify behavior of color conversion on image with > 4 channels" — and the
-line was `0.5 + 10 * a[c]` in that PR's diff as merged. The same pull request
-added to `imagebufalgo.h` the promise that additional channels "will be copied
-unaltered from source to destination (not set to black)", a sentence that now
-appears six times in the public header, once for each affected operation.
+line was `0.5 + 10 * a[c]` in that PR's diff as merged. The same pull
+request's commit message states that additional channels "will be copied
+unaltered from source to destination (not set to black)", and it added to
+`imagebufalgo.h` the promise "Any additional channels will be simply copied
+unaltered." — a sentence that now appears six times in the public header,
+once for each affected operation.
 `git log -L` shows the line has never been touched since. It has shipped in
 every release from v2.3.7.2 onwards — roughly five years.
 
@@ -644,8 +658,8 @@ the literal string `"current"` reaches it too.
 
 An empty `fromspace` is accepted and, per the implementation — it reads
 `oiio:Colorspace` from the source's own spec — and per what `--ociolook from=`
-promises in the `oiiotool` documentation, means "deduce from the source's
-metadata". (`ociolook`'s own doxygen says an empty string means `scene_linear`,
+promises in the `oiiotool` documentation ("it will try to deduce it from the
+image's metadata"), means deduce-from-metadata. (`ociolook`'s own doxygen says an empty string means `scene_linear`,
 which is a separate inconsistency and not what this report is about.) So this
 is a perfectly ordinary call, not an exotic one. `fromspace` and `tospace` are
 required parameters, so a caller must pass `""` explicitly; only `colorconfig`
@@ -780,9 +794,14 @@ m_impl->m_nsamples[pixel] -= n;                       // unguarded write
 
 `m_nsamples` and `m_capacity` hold one `unsigned` per pixel, so any `pixel`
 outside `[0, m_npixels)` — negative included — reads and then writes heap at
-`vector data + pixel * 4`. When the data is allocated, `insert_samples` also
-reaches `data_offset(pixel, 0, samplepos)`, which reads `m_cumcapacity[pixel]`
-out of range and feeds the result into a `std::copy_backward` over `m_data`.
+`vector data + pixel * 4`. When the data is allocated AND `samplepos` is
+negative, `insert_samples` also reaches `data_offset(pixel, 0, samplepos)`:
+the guarding `if (samplepos < oldsamps)` uses `oldsamps = samples(pixel)`,
+which is 0 for an out-of-range pixel, so only `samplepos < 0` enters the
+branch. There `data_offset` reads `m_cumcapacity[pixel]` out of range and
+feeds the result into a `std::copy_backward` over `m_data`. For
+`samplepos >= 0` (as in the reproducer below) that branch is skipped and only
+the final `m_impl->m_nsamples[pixel] += n` write lands out of bounds.
 
 Both methods are public API taking `int64_t pixel`, so the caller's own
 arithmetic slip lands here directly. `ImageBuf::deep_insert_samples` and
@@ -851,20 +870,25 @@ thread while another thread reads pixels through the same cache:
    `m_files` *before* opening it ("No such entry in the file cache. Add it,
    but don't open yet", `:1547`), and `ImageCacheFile::open` (`:722`) —
    holding only that file's `m_input_mutex`, which `getstats` never takes —
-   clears and repeatedly resizes `m_subimages`. `subimages()` and
-   `subimageinfo()` (`imagecache_pvt.h:174`, `:425`) index that vector behind
-   an `OIIO_DASSERT` that release builds compile out, so the statistics walk
-   can read the vector mid-reallocation: a dangling data pointer.
+   clears and repeatedly resizes `m_subimages`. `subimageinfo()`
+   (`imagecache_pvt.h:425`) indexes that vector behind an `OIIO_DASSERT` that
+   release builds compile out, and the walk's loop bound comes from
+   `subimages()` (`:174`), a bare unsynchronized `m_subimages.size()` read,
+   so the statistics walk can read the vector mid-reallocation: a dangling
+   data pointer.
 
 2. **Unsynchronized counter reads in the merge.** `mergestats` (`:2027`)
    reads every per-thread `ImageCacheStatistics` under
    `m_perthread_info_mutex` — but the owning threads update those fields
    (e.g. `thread_info->m_stats.bytes_read += b` at `:1138`, `:1323`,
    `:1364`) without holding it, and the struct (`imagecache_pvt.h:63`) is
-   plain non-atomic scalars. The per-file counters read by the file walk
-   (`imagecache_pvt.h:519-524`) are plain `size_t`/`imagesize_t`/`double`
-   too. Formally a data race, i.e. undefined behaviour under the C++ memory
-   model, whatever it happens to produce today.
+   plain non-atomic scalars. The per-file counters named above
+   (`m_tilesread`, `m_bytesread`, `m_timesopened`, `m_iotime`;
+   `imagecache_pvt.h:519-520`, `:523-524`) are plain
+   `size_t`/`imagesize_t`/`double` too — only the two redundant-tile
+   counters at `:521-522` are atomic. Formally a data race, i.e. undefined
+   behaviour under the C++ memory model, whatever it happens to produce
+   today.
 
 3. **Concurrent writes from the reset.** `reset_stats` (`:2452`) writes
    `init()` into every registered thread's live statistics block and zeroes
@@ -954,8 +978,9 @@ bool from_maketx     = Strutil::istarts_with(software, "OpenImageIO")
 ```
 
 The `maketx` and `oiiotool` executables stamp a `Software` tag; the library
-call sets none (its only use of the command line is appending to
-`Exif:ImageHistory`, `maketexture.cpp:1632-1636` on `main`). So the same
+call sets none (the command line never reaches the output header except by
+appending to `Exif:ImageHistory`, `maketexture.cpp:1632-1636` on `main`; its
+only other use is the update-mode skip comparison at `:1188-1195`). So the same
 constant texture behaves differently by provenance: made with `oiiotool
 -otex`, `get_image_info("constantcolor")` answers; made with
 `ImageBufAlgo::make_texture` from C++ or Python, the file carries the same
@@ -965,24 +990,39 @@ constant-color fast paths the cache builds on `is_constant_image`.
 `average_color` partially masks the problem by falling back to sampling the
 1×1 mip level; `constantcolor` and `constantalpha` have no fallback.
 
-Reproduction from Python: `ImageBufAlgo.make_texture(oiio.MakeTxTexture,
-constant_buf, "t.tx", config)` with `maketx:constant_color_detect` set, then
-`ImageCache().get_image_info("t.tx", 0, 0, "constantcolor", "float[4]")` —
-fails; the same file plus `oiiotool --attrib Software "maketx"` — succeeds.
+Reproduction: `ImageBufAlgo::make_texture(ImageBufAlgo::MakeTxTexture,
+constant_buf, "t.tx", config)` with `maketx:constant_color_detect` set in the
+config, then `ImageCache::get_image_info(ustring("t.tx"), 0, 0,
+ustring("constantcolor"), TypeDesc("float[4]"), data)` — fails; the same
+file with a `Software` tag beginning "maketx" or "OpenImageIO" — succeeds
+(`testtex t.tx` shows both results in its default `gettextureinfo` pass; a
+byte-patch of only the Software value flips the answer on an otherwise
+identical file). The making half is reachable from Python's
+`ImageBufAlgo.make_texture`; the query half is not — Python's `ImageCache`
+leaves `get_image_info` commented out (`py_imagecache.cpp:113` on `main`).
 
 Two candidate fixes: trust the `oiio:`-namespaced attributes on their own
-name (they exist only because something OpenImageIO-shaped wrote them), or
-have the library `make_texture` stamp the `Software` tag the way its CLI
-front-ends do. Found while binding the cache queries for Rust; the binding
-works around it by stamping `Software` itself when the caller sets none.
+name, or have the library `make_texture` stamp the `Software` tag the way
+its CLI front-ends do. The second is the one consistent with upstream's own
+intent: `pvt::check_texture_metadata_sanity` (`formatspec.cpp:1347` in
+3.1.16.0, called from the TIFF and EXR readers and `imagecache.cpp:1051`)
+deliberately squashes these attributes when `Software` does not qualify,
+its comment citing files re-saved by other software — so the gate is
+anti-tamper design, and trusting the attributes would have to touch that
+too. (That squash, incidentally, erases the misspelled names
+`oiio::ConstantColor`/`oiio::AverageColor` — double colon,
+`formatspec.cpp:1364-1365` — so today only `oiio:SHA-1` is actually
+squashed; arguably a second bug.) Found while binding the cache queries for
+Rust; the binding works around it by stamping `Software` itself when the
+caller sets none.
 
-Related version note, not filed as an issue because `main` already fixed
-both halves: through 3.1.16, Targa thumbnail round trips come back with red
-and blue exchanged (the writer dumps raw RGB top-down where the reader
-decodes stored-BGR; fixed on `main` at `targaoutput.cpp:265-282`), and a
-thumbnail 256 or larger on either axis is downsized *to* 256 — one past
-what the TGA byte field holds — truncating the stored dimension to zero
-(fixed on `main` at `:693-706`, which resizes to 255 and says why).
+Related version note, not filed as an issue because the fix already shipped
+in 3.1.16.0 (#5236): through 3.1.15, Targa thumbnail round trips come back
+with red and blue exchanged (the writer dumps raw RGB top-down where the
+reader decodes stored-BGR; fixed at `targaoutput.cpp:266-282` on `main`),
+and a thumbnail 256 or larger on either axis is downsized *to* 256 — one
+past what the TGA byte field holds — truncating the stored dimension to
+zero (fixed at `:694-706` on `main`, which resizes to 255 and says why).
 
 ---
 
@@ -1005,9 +1045,14 @@ the caller's storage, returning success.
 
 For integer queries that is a garbage answer presented as valid; for
 `TypeString` queries the caller receives an uninitialised value it must
-treat as a `const char*` — dereferencing it is undefined behaviour, and
-reading `common` at all is formally UB before that. Reachable from the
-public API of any binding, including OpenImageIO's own Python.
+treat as a `const char*` — dereferencing it is undefined behaviour, and even
+the integer case hands the caller an indeterminate value whose use is
+undefined. Reachable from the public C++ API (`ImageCache::get_image_info`)
+and any binding that exposes it. OpenImageIO's own Python binding comments
+the direct method out (`py_imagecache.cpp:115`), but reaches the same code
+indirectly: `ImageCache.get_pixels` sizes its allocation from an internal
+`"channels"` query on the pattern (`py_imagecache.cpp:47-49`), so from
+Python the garbage becomes an arbitrary allocation size.
 
 The fix is one line: after the loop, `if (first) return false;` before the
 `memcpy`.
@@ -1017,7 +1062,8 @@ Two adjacent notes found in the same review: the documentation for
 compares against the interned `s_UDIM("UDIM")` (`imagecache.cpp:63`,
 `:3084`) — the documented lowercase name is never answered and falls into
 the aggregate above; and a UDIM query that *succeeds* can still leave the
-skipped tiles' "Invalid image file" errors queued (only the failure branch
+skipped tiles' open-failure errors queued (`mark_broken` records each via
+`imagecache().error`, `imagecache.cpp:1493-1501`; only the failure branch
 at `:3116-3121` eats them), which a caller's next `geterror` misattributes.
 
 ---
@@ -1030,10 +1076,11 @@ the UDIM guard ("Can't really open a UDIM-like virtual file",
 `:1588-1591`). Asked for a thumbnail of `tex.<UDIM>.exr`, it tries to open
 the literal pattern, fails, and `mark_broken` sets the pattern's virtual
 record broken permanently. Every later query on that pattern — subimage
-counts, formats, even `exists` — then fails at the broken-file check
-(`:3073`, which precedes the UDIM branches), though the tile set on disk is
-intact: one read-only-looking probe flips `exists` from true to false until
-the file is invalidated.
+counts, formats — then fails at the broken-file check (`:3073`, which
+precedes the UDIM branches), and `exists`, answered earlier at `:3042-3052`
+with the broken flag folded into its value, flips from true to false,
+though the tile set on disk is intact: one read-only-looking probe poisons
+the record until the file is invalidated.
 
 Separately, `get_thumbnail` is the one query without a broken-file error:
 `ImageCacheFile::open()` returns empty for an already-broken file with no
@@ -1048,17 +1095,27 @@ thumbnail".
 
 ## Issue 17 — the base `ImageInput::valid_file` silently closes the reader it is called on
 
-`ImageInput::valid_file(const std::string&)` (`imageinput.cpp:109-146` on
+`ImageInput::valid_file(const std::string&)` (`imageinput.cpp:133-149` on
+`main`, `:116-131` in 3.1.16.0; byte-identical from v3.1.4.0-beta through
 `main`) `const_cast`s `this` and, for plugins that do not override it,
-probes by `self->open(filename)` + `self->close()` — or, via the IOProxy
-overload, `self->set_ioproxy(...)`, `self->open("")`, `self->close()`,
+probes by `self->open(filename)` + `self->close()` — or, when the plugin
+supports `"ioproxy"`, via the IOProxy overload (`main` `:153-171`, 3.1.16.0
+`:136-154`): `self->set_ioproxy(...)`, `self->open("")`, `self->close()`,
 `self->ioproxy_clear()`. Called on a reader that is currently open — the
-natural reading of a `const` member — it silently closes that reader,
-resets its proxy, and leaves subsequent reads failing. Eleven shipped
-readers have no override (targa, gif, ico, iff, pnm, rla, cineon, dicom,
-ptex, r3d, softimage), so
+natural reading of a `const` member — it destroys that reader's open state,
+format-dependently. Measured on 3.2.0.2dev (environment block above): on an
+open ICO reader, `valid_file` returns true and every subsequent
+`read_scanline` fails with no error set, `current_subimage()` now -1; on an
+open Targa reader the next read crashes with an access violation; on an
+open GIF reader `valid_file` returns *false* for a perfectly valid GIF — a
+wrong answer, not just lost state — and the process then crashes. Nine
+shipped readers have no override on 3.1.16.0 and `main` (targa, gif, ico,
+iff, rla, cineon, dicom, r3d, softimage; pnm gained a non-destructive
+override in 3.1.14.0 via #5203, ptex in 3.1.16.0 via #5265), so
 `in = ImageInput::open("a.tga"); in->valid_file("b.tga"); in->read_...`
-breaks, format-dependently. Probing on a scratch instance (or documenting
+crashes. The library itself only ever calls `valid_file` on freshly created
+probe instances inside `ImageInput::create` (`imageioplugin.cpp:686-687`,
+`:764-766` on `main`). Probing on a scratch instance (or documenting
 `valid_file` as unusable on open readers) would close it. Found while
 binding the probe for Rust; the binding creates a throwaway instance of the
 same plugin.

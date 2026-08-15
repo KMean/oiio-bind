@@ -2365,9 +2365,11 @@ pub fn fix_non_finite(
 
 /// Compress the value range logarithmically above a low knee.
 ///
-/// Values up to 0.18 pass through unchanged; everything above is folded down
-/// a log curve (the Sony Imageworks coefficients OpenImageIO ships), so even
-/// mid-greys move and extreme highlights land below 1.0. This is the
+/// Values up to 0.18 — scene-linear mid-grey, the knee — pass through
+/// unchanged; everything above is folded down a log curve (the Sony
+/// Imageworks coefficients OpenImageIO ships), so anything brighter than
+/// mid-grey moves, and highlights up to about 16.0 land at or below 1.0 —
+/// brighter values still exceed 1.0, though only logarithmically. This is the
 /// transform that lets high dynamic range imagery survive filtering that
 /// would otherwise ring around highlights; [`rangeexpand`] undoes it,
 /// approximately — the pair round-trips values, not bit patterns. With

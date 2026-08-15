@@ -30,14 +30,16 @@ forwards its ranges in order, which is what made me confident this is a slip
 rather than a convention I had misread.
 
 **Correction 1: partial edge tiles are not the trigger.** Square images with
-partial edge tiles return `true`. The `(xend-x) == width` and
+square tiles and partial edge tiles return `true`. The `(xend-x) == width` and
 `(yend-y) == height` escape hatches in `ImageSpec::valid_tile_range` coincide
 when width equals height, so the transposed request passes validation on every
-tile row — and the caller gets a transposed image with no error.
+tile row — and the caller gets wrong data with no error.
 
 **Correction 2: images that are an exact multiple of the tile size are not
 unaffected.** I said they were; they are not. They return `true` and hand back
-transposed data. Worse, `valid_tile_range` checks divisibility and those two
+the transposed request's pixels in a scrambled layout — the forward also
+drops `ystride`, so the data is written at tile-height row pitch.
+Worse, `valid_tile_range` checks divisibility and those two
 escape hatches but never checks that the range lies inside the image, so a
 32×16 image is asked for `y` in `[0,32)` and a 64×32 image for `y` in `[0,64)`.
 The out-of-range request is accepted, nothing comes back for the region that
@@ -62,10 +64,13 @@ exactly in all nine cases, so the files on disk are correct:
 | 24×24 | true         | (empty)  | 1656 / 1728                        | 0                  |
 | 17×17 | true         | (empty)  | 816 / 867                          | 0                  |
 
-Every tile row the span path executed matches the transposed-rectangle
-prediction on 100% of in-bounds values. The values that agree are exactly the
-fixed points of a transposition — three channels times the main diagonal:
-32×32 agrees on 96 = 3 × 32, 40×40 on 120 = 3 × 40, 17×17 on 51 = 3 × 17. Only
+Every tile row the span path executed matches the transposed-request
+prediction — swapped ranges, with `ystride` recomputed from the swapped
+width — on 100% of in-bounds values (verified 3072/3072 for 32×32). The few
+values agreeing with the correct image number three channels times one image
+side: 32×32 agrees on 96 = 3 × 32 (pixels (0..15, 0) and (16..31, 31)),
+40×40 on 120 = 3 × 40, 17×17 on 51 = 3 × 17 — not the main diagonal; the
+recomputed row pitch scrambles the layout beyond a neat transposition. Only
 a single square tile (16×16 with 16×16 tiles) is correct, because there the
 swapped arguments are equal.
 

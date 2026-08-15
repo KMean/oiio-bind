@@ -2,6 +2,22 @@
 
 This fork's changes, newest first.
 
+## Unreleased
+
+- Documentation corrections from a second, empirically-grounded verification
+  of every claim this crate makes about OpenImageIO (eighteen independent
+  checks, each ordered to refute; all seventeen drafted upstream findings
+  survived, several now with running reproductions — a six-channel image
+  really does come back with channels four and five turned into
+  `0.5 + 10 × a[c]` by a colour conversion). Two crate doc sentences were
+  wrong and are fixed: `rangecompress` does not move mid-grey (0.18 is the
+  knee and passes through; highlights beyond ~16.0 exceed 1.0), and
+  `ColorConfig::has_color_space` does match defined roles like
+  `scene_linear`, exactly as conversions do. Version claims tightened: the
+  Targa thumbnail fixes shipped in 3.1.16 (#5236), not merely on `main`,
+  so "broken through 3.1" now reads "through 3.1.15" everywhere, and the
+  `has_thumbnail` flag fix likewise.
+
 ## 0.1.1 — 2026-08-15
 
 README only, no code changes: the README packaged into 0.1.0 predated the
@@ -213,12 +229,14 @@ before the fork, but nothing was ever published under it, so starting both at
   `ImageBuf::{has_thumbnail, thumbnail, set_thumbnail, clear_thumbnail}`
   carry one in memory — `has_thumbnail` probes the stored image rather
   than OpenImageIO's flag, which `set_thumbnail` forgets to raise through
-  3.1.14; `ImageOutput::set_thumbnail` writes one, refusing the shapes
+  3.1.15; `ImageOutput::set_thumbnail` writes one, refusing the shapes
   Targa fails on silently (channel mismatch, and either dimension at 256
-  or above, which 3.1 truncates to a zero-size stamp). The written stamp
-  comes back with red and blue exchanged on every 3.1 release — an
-  upstream writer/reader disagreement fixed only on unreleased `main` —
-  and the test suite pins that so a change breaks loudly.
+  or above, which OpenImageIO through 3.1.15 truncates to a zero-size
+  stamp). The written stamp comes back with red and blue exchanged
+  through 3.1.15 — an upstream writer/reader disagreement fixed in
+  3.1.16 (#5236) — and the test suite pins the behaviour of the 3.1.12
+  and 3.1.14 this crate builds and tests against, so linking a fixed
+  OpenImageIO breaks loudly.
 - `ImageBuf::write_to`: write the whole current subimage through an
   already-open [`ImageOutput`] — multi-part files, in-memory writers, and
   open-time format conversion. OpenImageIO never compares the two
@@ -562,7 +580,7 @@ before the fork, but nothing was ever published under it, so starting both at
   present in 3.1 and still in 3.2.
 - `algo::ocio_look` cannot be made to dereference a null pointer.
   OpenImageIO's `ociolook` resolves a colour space through the `ColorConfig`
-  fifteen lines before it checks whether one was supplied, so the documented
+  thirteen lines before it checks whether one was supplied, so the documented
   way of asking for the source's own space crashes on the default
   configuration. The bindings always pass a real configuration. Drafted for
   upstream as issue 9.

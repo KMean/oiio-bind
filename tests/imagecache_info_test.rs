@@ -149,13 +149,13 @@ fn thumbnails_round_trip_through_targa() {
     stamp
         .pixel_at_into(4, 4, oiio::Wrap::Default, &mut got)
         .unwrap();
-    // The stamp comes back with red and blue exchanged: through 3.1,
+    // The stamp comes back with red and blue exchanged: through 3.1.15,
     // OpenImageIO's Targa writer dumps the thumbnail's RGB bytes raw while
     // its reader decodes the stamp as the BGR the TGA format stores.
-    // Unreleased 3.2 fixed the writer (targaoutput.cpp converts to BGR,
-    // bottom-up, on `main`). Pinned as 3.1 behaves, so a fix arriving in a
-    // 3.1 patch breaks this test loudly instead of silently changing
-    // written files.
+    // 3.1.16 fixed the writer (#5236: BGR, bottom-up). Pinned as the
+    // 3.1.12/3.1.14 this crate builds and tests against behave, so linking
+    // a fixed OpenImageIO breaks this test loudly instead of silently
+    // changing written files.
     for (channel, (value, wanted)) in got.iter().zip([0.0, 0.5, 1.0]).enumerate() {
         assert!(
             (value - wanted).abs() < 2e-2,
@@ -199,7 +199,7 @@ fn oversized_and_mismatched_thumbnails_are_refused() {
     );
 
     // An oversized stamp: the TGA field is a single byte per dimension, and
-    // through 3.1 OpenImageIO's downsizing clamps to 256 — one too many —
+    // through 3.1.15 OpenImageIO's downsizing clamps to 256 — one too many —
     // so this would silently write a zero-dimension thumbnail.
     let big_spec = ImageSpec::new(256, 256, 3, PixelFormat::U8).unwrap();
     let mut big = ImageBuf::new(&big_spec).unwrap();

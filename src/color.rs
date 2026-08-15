@@ -78,8 +78,9 @@ impl ColorConfig {
     /// Resolved the way a conversion resolves it: case-insensitively, and
     /// through aliases. Comparing against [`ColorConfig::color_space_names`]
     /// instead would reject names that [`color_convert`](crate::algo::color_convert)
-    /// accepts. A role is not a colour space here; use
-    /// [`ColorConfig::color_space_for_role`] for those.
+    /// accepts. A defined role such as `"scene_linear"` also matches, since
+    /// a conversion resolves roles to the spaces they name;
+    /// [`ColorConfig::color_space_for_role`] reports which space that is.
     pub fn has_color_space(&self, name: &str) -> bool {
         sys::color::colorconfig_color_space_index(self.inner(), name) >= 0
     }

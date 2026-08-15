@@ -1,7 +1,9 @@
-// Reproduction for: ImageInput::read_image() taking an image_span fails,
-// without recording an error, for a tiled image whose width or height is not
-// an exact multiple of the tile size. The pointer overload reads the same
-// files correctly.
+// Reproduction for: ImageInput::read_image() taking an image_span mishandles
+// every tiled image — the image_span overload of read_tiles forwards to the
+// pointer overload with the x and y ranges swapped. This program compares
+// only return values (silently false for some geometries); even the cases
+// that print ok return wrong or partly uninitialised data. The pointer
+// overload reads the same files correctly.
 //
 // Uses only public OpenImageIO API. Exits non-zero if the overloads disagree.
 //

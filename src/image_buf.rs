@@ -1224,7 +1224,7 @@ impl ImageBuf {
     /// Whether this buffer carries a thumbnail.
     ///
     /// This asks for the stored thumbnail rather than OpenImageIO's
-    /// `has_thumbnail` flag: through 3.1.14, `set_thumbnail` stores the
+    /// `has_thumbnail` flag: through 3.1.15, `set_thumbnail` stores the
     /// image without raising the flag (3.1.16 fixed it), so the flag denies
     /// thumbnails attached in memory while the storage tells the truth on
     /// every version.

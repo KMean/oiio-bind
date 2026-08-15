@@ -59,14 +59,13 @@ colorconfig_color_space_index(const ColorConfig& config, rust::Str name)
 {
     // Exactly the resolution a conversion performs, so the two agree by
     // construction: getColorSpaceIndex matches case-insensitively with
-    // Strutil::iequals and falls back to equivalent() for aliases. Comparing
-    // against the enumerated names instead rejected every alias and every
-    // difference in casing that colorconvert accepts.
-    //
-    // Roles are deliberately not folded in. getColorSpaceNameByRole resolves
-    // names like "default" that a conversion will not take, so treating a role
-    // as a colour space would overshoot in the other direction; a caller who
-    // wants one asks color_space_for_role.
+    // Strutil::iequals and falls back to equivalent() for aliases — and
+    // equivalent() runs both names through ColorConfig::resolve, which also
+    // accepts defined roles like "scene_linear" (color.h documents resolve
+    // as taking "a color space, an alias, a role"). So a defined role
+    // matches here too, just as it does in colorconvert. Comparing against
+    // the enumerated names instead rejected every alias, every casing
+    // difference, and every role that colorconvert accepts.
     const std::string_view c_name(name.data(), name.size());
     return config.getColorSpaceIndex(c_name);
 }
