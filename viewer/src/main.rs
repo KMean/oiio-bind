@@ -81,6 +81,7 @@ fn print_usage() {
     eprintln!("keys:  Right/Left   next/previous frame (wraps around)");
     eprintln!("       + / -        exposure up/down one stop (also = / _)");
     eprintln!("       Home         reset exposure");
+    eprintln!("       S            next subimage of a multi-part file");
     eprintln!("       R            reload the current file from disk");
     eprintln!("       Esc or Q     quit");
 }
@@ -92,7 +93,7 @@ fn run_check(arguments: &[String]) -> ExitCode {
         print_usage();
         return ExitCode::from(2);
     };
-    match load_frame(Path::new(path)) {
+    match load_frame(Path::new(path), 0) {
         Ok(frame) => {
             println!("{}x{}x{} {path}", frame.width, frame.height, frame.channels);
             ExitCode::SUCCESS
@@ -117,6 +118,11 @@ fn resolve_paths(arguments: &[String]) -> Result<Vec<PathBuf>, String> {
 }
 
 /// List the image files of `directory` in sorted order.
+///
+/// Shot directories often hold the same frames in several formats — EXR
+/// renders next to JPEG previews — and interleaving them makes stepping
+/// alternate formats. Only the dominant extension forms the sequence, with
+/// EXR winning ties.
 fn collect_sequence(directory: &Path) -> Result<Vec<PathBuf>, String> {
     let describe =
         |error: std::io::Error| format!("could not read {}: {error}", directory.display());
@@ -136,26 +142,80 @@ fn collect_sequence(directory: &Path) -> Result<Vec<PathBuf>, String> {
     if paths.is_empty() {
         return Err(format!("no image files found in {}", directory.display()));
     }
+
+    let extension_of = |path: &PathBuf| -> String {
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_lowercase())
+            .unwrap_or_default()
+    };
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for path in &paths {
+        let extension = extension_of(path);
+        match counts.iter_mut().find(|(name, _)| *name == extension) {
+            Some((_, count)) => *count += 1,
+            None => counts.push((extension, 1)),
+        }
+    }
+    // Most files wins; EXR breaks ties, then alphabetical order for
+    // determinism.
+    counts.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then_with(|| (b.0 == "exr").cmp(&(a.0 == "exr")))
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    let chosen = counts[0].0.clone();
+    let dropped = paths.len() - counts[0].1;
+    if dropped > 0 {
+        eprintln!(
+            "oiio-viewer: sequence is the {} .{chosen} file(s); ignoring {dropped} other image file(s)",
+            counts[0].1
+        );
+        paths.retain(|path| extension_of(path) == chosen);
+    }
     paths.sort();
     Ok(paths)
 }
 
-/// One decoded image: its dimensions, channel count, and the pixels as
-/// interleaved linear `f32` in scanline order.
+/// One decoded image: its dimensions, channel count, the pixels as
+/// interleaved linear `f32` in scanline order, and where it sits in a
+/// multi-part file.
 struct Frame {
     width: u32,
     height: u32,
     channels: u32,
     pixels: Vec<f32>,
+    /// How many subimages the file holds; EXR multi-part files have several.
+    subimage_count: u32,
+    /// A label for the part being shown: its recorded name, or its channel
+    /// names when it has none.
+    part_label: String,
 }
 
-/// Decode `path` completely into an `f32` buffer sized from its spec.
+/// The sRGB decode curve, the inverse of [`encode_channel`]'s encode half.
+fn srgb_to_linear(encoded: f32) -> f32 {
+    if encoded <= 0.040_45 {
+        encoded / 12.92
+    } else {
+        ((encoded + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Decode one subimage of `path` into an `f32` buffer sized from its spec.
 ///
 /// Every failure becomes a string so the caller can show it in the window
 /// title and keep stepping through the sequence instead of crashing.
-fn load_frame(path: &Path) -> Result<Frame, String> {
+///
+/// Files that store display-encoded pixels — anything whose colour space
+/// says sRGB, and integer-format files that say nothing — are decoded to
+/// linear here, so the one display transform in [`encode_channel`] is right
+/// for every source. Without this, an ordinary JPEG would be sRGB-encoded
+/// twice and wash out.
+fn load_frame(path: &Path, subimage: u32) -> Result<Frame, String> {
     let mut input = ImageInput::from_path(path).map_err(|error| error.to_string())?;
-    let spec = input.image_spec().map_err(|error| error.to_string())?;
+    let spec = input
+        .image_spec_at(subimage, 0)
+        .map_err(|error| error.to_string())?;
     let [width, height, depth] = spec.dimensions();
     if depth > 1 {
         return Err(format!(
@@ -169,14 +229,74 @@ fn load_frame(path: &Path) -> Result<Frame, String> {
     let element_count = spec.element_count().map_err(|error| error.to_string())?;
     let mut pixels = vec![0.0_f32; element_count];
     input
-        .read_image_into(&mut pixels)
+        .read_image_into_at(subimage, 0, &mut pixels)
         .map_err(|error| error.to_string())?;
+
+    // Count the parts by probing specs; multi-part files are the point of
+    // the S key. Sixty-four is far beyond any real file and keeps a
+    // pathological one from stalling the load.
+    let mut subimage_count = subimage + 1;
+    while subimage_count < 64 && input.image_spec_at(subimage_count, 0).is_ok() {
+        subimage_count += 1;
+    }
     input.close().map_err(|error| error.to_string())?;
+
+    // Label the part: EXR parts carry their name; otherwise the channel
+    // names say what the part holds (three suffice for a title).
+    let part_label = spec
+        .attribute("oiio:subimagename")
+        .and_then(|value| value.as_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            let names = spec.channel_names();
+            let mut label = names
+                .iter()
+                .take(3)
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(",");
+            if names.len() > 3 {
+                label.push('…');
+            }
+            label
+        });
+
+    // Decide whether the pixels arrived display-encoded. The colour space
+    // attribute is authoritative when it names sRGB; integer files that say
+    // nothing are display-referred in practice, while float files default
+    // to linear.
+    let colorspace = spec
+        .attribute("oiio:ColorSpace")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let integer_format = !matches!(
+        spec.format(),
+        oiio::PixelFormat::F16 | oiio::PixelFormat::F32 | oiio::PixelFormat::F64
+    );
+    let display_encoded = colorspace.contains("srgb")
+        || (colorspace.is_empty() && integer_format)
+        || colorspace.starts_with("g22")
+        || colorspace.starts_with("gamma22");
+    if display_encoded {
+        let alpha = spec.alpha_channel();
+        let stride = channels as usize;
+        for pixel in pixels.chunks_exact_mut(stride) {
+            for (index, value) in pixel.iter_mut().enumerate() {
+                if Some(index as u32) != alpha {
+                    *value = srgb_to_linear(*value);
+                }
+            }
+        }
+    }
+
     Ok(Frame {
         width,
         height,
         channels,
         pixels,
+        subimage_count,
+        part_label,
     })
 }
 
@@ -254,6 +374,8 @@ struct App {
     paths: Vec<PathBuf>,
     /// Index of the frame being shown.
     index: usize,
+    /// Which subimage (EXR part) of the current file is shown.
+    subimage: u32,
     /// Exposure in stops; the gain applied to the pixels is two to this power.
     exposure_stops: f32,
     /// The decode result of the current frame, kept until the frame changes
@@ -273,6 +395,7 @@ impl App {
         Self {
             paths,
             index: 0,
+            subimage: 0,
             exposure_stops: 0.0,
             frame: None,
             window: None,
@@ -286,7 +409,19 @@ impl App {
     fn step(&mut self, delta: isize) {
         let length = self.paths.len() as isize;
         self.index = (self.index as isize + delta).rem_euclid(length) as usize;
+        // A new file starts at its first part; part choice is per-file.
+        self.subimage = 0;
         self.reload();
+    }
+
+    /// Show the next subimage of a multi-part file, wrapping around.
+    fn next_part(&mut self) {
+        if let Some(Ok(frame)) = &self.frame {
+            if frame.subimage_count > 1 {
+                self.subimage = (self.subimage + 1) % frame.subimage_count;
+                self.reload();
+            }
+        }
     }
 
     /// Forget the decoded frame so the next redraw reads the file again.
@@ -320,6 +455,16 @@ impl App {
             self.paths.len(),
             self.exposure_stops
         );
+        if let Some(Ok(frame)) = &self.frame {
+            if frame.subimage_count > 1 {
+                title.push_str(&format!(
+                    " [part {}/{}: {}]",
+                    self.subimage + 1,
+                    frame.subimage_count,
+                    frame.part_label
+                ));
+            }
+        }
         if let Some(Err(message)) = &self.frame {
             // Titles are one line, so keep only the start of the error.
             let brief: String = message
@@ -338,7 +483,7 @@ impl App {
     fn redraw(&mut self) {
         // Decoding happens here, lazily, so stepping ten frames costs one read.
         if self.frame.is_none() {
-            self.frame = Some(load_frame(&self.paths[self.index]));
+            self.frame = Some(load_frame(&self.paths[self.index], self.subimage));
         }
         let Some(window) = self.window.clone() else {
             return;
@@ -399,6 +544,7 @@ impl App {
             Key::Character("-") | Key::Character("_") => {
                 self.set_exposure(self.exposure_stops - 1.0);
             }
+            Key::Character("s") | Key::Character("S") => self.next_part(),
             Key::Character("r") | Key::Character("R") => self.reload(),
             Key::Character("q") | Key::Character("Q") => event_loop.exit(),
             _ => {}
