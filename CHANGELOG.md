@@ -2,6 +2,13 @@
 
 This fork's changes, newest first.
 
+## 0.1.1 — 2026-08-15
+
+README only, no code changes: the README packaged into 0.1.0 predated the
+release by minutes and told dependents the crates were not on crates.io,
+which crates.io then displayed. `oiio-sys` stays at 0.1.0 — its own README
+never made that claim.
+
 ## 0.1.0 — 2026-08-15
 
 The first release of this fork, and the first release under these names:
