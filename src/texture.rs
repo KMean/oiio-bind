@@ -352,6 +352,17 @@ impl TextureConfig {
             value.write(pinned.as_mut(), name)?;
         }
 
+        // The image cache only honours a texture's `oiio:ConstantColor` and
+        // `oiio:AverageColor` when the file's `Software` tag starts with
+        // "OpenImageIO" or "maketx". The maketx and oiiotool executables
+        // stamp one; the library call these wrappers use does not, so
+        // API-made textures would silently lose their constant-color
+        // metadata (`contrib/upstream-issues.md`, issue 14). Stamp it here
+        // unless the caller chose their own.
+        if !self.attributes.iter().any(|(name, _)| name == "Software") {
+            AttributeValue::from("OpenImageIO oiio-bind").write(pinned.as_mut(), "Software")?;
+        }
+
         Ok(spec)
     }
 }

@@ -1156,6 +1156,71 @@ impl ImageOutput {
         Ok(())
     }
 
+    /// Attach a thumbnail to the image being written.
+    ///
+    /// Only formats reporting the `thumbnail` capability store one — in
+    /// OpenImageIO 3.1 that is Targa alone — and OpenImageIO's fallback
+    /// fails without recording a message, so anything else is refused here
+    /// with a clear one. The thumbnail's channel count must match the
+    /// image's (Targa refuses a mismatch silently), and both dimensions
+    /// must be under 256: the TGA postage stamp stores its size in single
+    /// bytes, and through 3.1 OpenImageIO's own downsizing clamps to 256 —
+    /// one past what the byte holds — silently writing a zero-dimension
+    /// thumbnail. (Unreleased 3.2 resizes to 255 itself; the refusal here
+    /// is version-independent.) Formats not reporting
+    /// `thumbnail_after_write` additionally need the thumbnail set before
+    /// any pixels.
+    pub fn set_thumbnail(&mut self, thumbnail: &crate::ImageBuf) -> Result<()> {
+        const OPERATION: &str = "set thumbnail";
+        if !self.supports("thumbnail") {
+            return Err(Error::operation(
+                OPERATION,
+                format!(
+                    "the {} format does not store thumbnails",
+                    self.format_name()
+                ),
+            ));
+        }
+        if !self.supports("thumbnail_after_write") && self.next_scanline != self.spec.origin()[1] {
+            return Err(Error::operation(
+                OPERATION,
+                "this format needs the thumbnail before any pixels are written".to_owned(),
+            ));
+        }
+        let thumb_spec = thumbnail.spec()?;
+        let [width, height, _] = thumb_spec.dimensions();
+        if width == 0 || height == 0 {
+            return Err(Error::operation(
+                OPERATION,
+                "the thumbnail has no pixels".to_owned(),
+            ));
+        }
+        if width >= 256 || height >= 256 {
+            return Err(Error::operation(
+                OPERATION,
+                format!(
+                    "a {width}×{height} thumbnail cannot be stored: dimensions must be \
+                     under 256, and OpenImageIO's own downsizing clamps to 256 and \
+                     truncates it to zero — resize it first"
+                ),
+            ));
+        }
+        if thumb_spec.channel_count() != self.spec.channel_count() {
+            return Err(Error::operation(
+                OPERATION,
+                format!(
+                    "the thumbnail has {} channels but the image has {}",
+                    thumb_spec.channel_count(),
+                    self.spec.channel_count()
+                ),
+            ));
+        }
+
+        let succeeded =
+            sys::imageio::imageoutput_set_thumbnail(self.inner_mut(), thumbnail.inner());
+        self.check(OPERATION, succeeded)
+    }
+
     /// Begin a new subimage in the same file.
     ///
     /// Only supported by formats that report the `"multiimage"` feature.

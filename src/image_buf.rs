@@ -1221,6 +1221,56 @@ impl ImageBuf {
         Ok(())
     }
 
+    /// Whether this buffer carries a thumbnail.
+    ///
+    /// This asks for the stored thumbnail rather than OpenImageIO's
+    /// `has_thumbnail` flag: through 3.1.14, `set_thumbnail` stores the
+    /// image without raising the flag (3.1.16 fixed it), so the flag denies
+    /// thumbnails attached in memory while the storage tells the truth on
+    /// every version.
+    pub fn has_thumbnail(&self) -> bool {
+        !sys::imagebuf::imagebuf_get_thumbnail(self.inner()).is_null()
+    }
+
+    /// An owned copy of the thumbnail this buffer carries, if any.
+    pub fn thumbnail(&self) -> Result<Option<ImageBuf>> {
+        let shared = sys::imagebuf::imagebuf_get_thumbnail(self.inner());
+        let Some(stored) = shared.as_ref() else {
+            return Ok(None);
+        };
+        let mut error = String::new();
+        let inner = sys::imagebuf::imagebuf_clone_checked(stored, &mut error);
+        if inner.is_null() {
+            return Err(Error::operation("copy thumbnail", error));
+        }
+        Ok(Some(Self { inner }))
+    }
+
+    /// Attach a thumbnail to this buffer, to be written alongside it by
+    /// formats that store one.
+    ///
+    /// OpenImageIO stores a copy, using the same failure-swallowing copy
+    /// constructor [`ImageBuf::try_clone`] describes, so the stored copy is
+    /// checked here and a copy that failed is an error, not a quiet broken
+    /// thumbnail.
+    pub fn set_thumbnail(&mut self, thumbnail: &ImageBuf) -> Result<()> {
+        sys::imagebuf::imagebuf_set_thumbnail(self.inner_mut(), thumbnail.inner());
+        let stored = sys::imagebuf::imagebuf_get_thumbnail(self.inner());
+        if let Some(stored) = stored.as_ref() {
+            if sys::imagebuf::imagebuf_has_error(stored) {
+                let message = sys::imagebuf::imagebuf_geterror(stored, false);
+                sys::imagebuf::imagebuf_clear_thumbnail(self.inner_mut());
+                return Err(Error::operation("set thumbnail", message));
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove any thumbnail this buffer carries.
+    pub fn clear_thumbnail(&mut self) {
+        sys::imagebuf::imagebuf_clear_thumbnail(self.inner_mut());
+    }
+
     /// Copy this buffer, reporting failure instead of handing back a copy
     /// that cannot serve pixels.
     ///

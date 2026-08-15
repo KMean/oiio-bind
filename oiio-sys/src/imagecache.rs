@@ -141,7 +141,7 @@ mod ffi {
             miplevel: i32,
             dataname: &str,
             datatype: TypeDesc,
-            data: *const u8,
+            data: *mut u8,
         ) -> bool;
 
         pub unsafe fn imagecache_get_image_info_with_handle(
@@ -152,7 +152,7 @@ mod ffi {
             miplevel: i32,
             dataname: &str,
             datatype: TypeDesc,
-            data: *const u8,
+            data: *mut u8,
         ) -> bool;
 
         #[deprecated(

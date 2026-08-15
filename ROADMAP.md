@@ -86,6 +86,12 @@ behavioural difference between patch releases was found — see `mad` in
   include every channel — OpenImageIO's deep channel-subset path pairs the
   kept channels' data with the wrong names (issue 13 in
   `contrib/upstream-issues.md`).
+- [x] The `ImageCache` image queries (existence, UDIM, counts, formats,
+  texture kind, average and constant colors) and thumbnails end to end:
+  cache-side reading, `ImageBuf` carriage, `ImageOutput` writing with the
+  Targa silent-failure shapes refused. `make_texture` stamps a `Software`
+  tag when the caller sets none, so the cache honours API-made textures'
+  constant-color metadata (issue 14).
 
 ## Notes on the OpenImageIO 3.1 span API
 

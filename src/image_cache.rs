@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use crate::{
-    imageio::validate_buffer_len, path_to_utf8, pixel, sys, Error, ImageSpec, Pixel, PixelFormat,
-    Result, Roi,
+    imageio::validate_buffer_len, path_to_utf8, pixel, sys, Error, ImageBuf, ImageSpec, Pixel,
+    PixelFormat, Result, Roi,
 };
 
 /// A thread-safe OpenImageIO image cache.
@@ -371,6 +371,295 @@ impl ImageCache {
             });
         }
         Ok(())
+    }
+
+    /// Whether a file exists and some format can read it.
+    ///
+    /// This is the one query that is not an error to ask of a missing or
+    /// unreadable file — OpenImageIO answers it instead of complaining, so
+    /// probing a candidate path is cheap and quiet.
+    pub fn exists(&self, image_path: &Path) -> Result<bool> {
+        Ok(self
+            .info_int(image_path, 0, 0, "exists", "query existence")?
+            .unwrap_or(0)
+            != 0)
+    }
+
+    /// Whether the name is a UDIM pattern, such as `tex.<UDIM>.exr`.
+    pub fn is_udim(&self, image_path: &Path) -> Result<bool> {
+        Ok(self
+            .info_int(image_path, 0, 0, "udim", "query UDIM")?
+            .unwrap_or(0)
+            != 0)
+    }
+
+    /// Number of subimages in the file.
+    pub fn subimage_count(&self, image_path: &Path) -> Result<u32> {
+        let count = self.info_int(image_path, 0, 0, "subimages", "count subimages")?;
+        Ok(count.unwrap_or(0).max(0) as u32)
+    }
+
+    /// Number of mip levels of a subimage.
+    pub fn mip_level_count(&self, image_path: &Path, subimage: u32) -> Result<u32> {
+        let count = self.info_int(image_path, subimage, 0, "miplevels", "count mip levels")?;
+        Ok(count.unwrap_or(0).max(0) as u32)
+    }
+
+    /// The name of the format reading the file, such as `"openexr"`.
+    pub fn file_format(&self, image_path: &Path) -> Result<String> {
+        self.info_string(image_path, 0, 0, "fileformat", "query file format")
+    }
+
+    /// What kind of texture the file is, in OpenImageIO's words: `"Plain
+    /// Texture"`, `"Volume Texture"`, `"Shadow"` or `"Environment"`. Plain
+    /// images answer `"Plain Texture"` too; this describes how a texture
+    /// system would use the file, not whether `maketx` made it.
+    pub fn texture_type(&self, image_path: &Path) -> Result<String> {
+        self.info_string(image_path, 0, 0, "texturetype", "query texture type")
+    }
+
+    /// The texture format, a finer-grained sibling of
+    /// [`ImageCache::texture_type`] that distinguishes, for example,
+    /// `"CubeFace Environment"` from `"LatLong Environment"`.
+    pub fn texture_format(&self, image_path: &Path) -> Result<String> {
+        self.info_string(image_path, 0, 0, "textureformat", "query texture format")
+    }
+
+    /// The average color of a subimage, one value per channel.
+    ///
+    /// OpenImageIO derives it from the 1×1 mip level, so only mipmapped
+    /// files — textures made by [`make_texture`](crate::make_texture) — can
+    /// answer; everything else is `None`.
+    pub fn average_color(&self, image_path: &Path, subimage: u32) -> Result<Option<Vec<f32>>> {
+        let spec = self.image_spec_at(image_path, subimage, 0)?;
+        self.info_floats(
+            image_path,
+            subimage,
+            spec.channel_count(),
+            "averagecolor",
+            "query average color",
+        )
+    }
+
+    /// The average of the alpha channel; `None` when the image has no alpha
+    /// channel or no 1×1 mip level to derive it from.
+    pub fn average_alpha(&self, image_path: &Path, subimage: u32) -> Result<Option<f32>> {
+        let alpha = self.info_floats(
+            image_path,
+            subimage,
+            1,
+            "averagealpha",
+            "query average alpha",
+        )?;
+        Ok(alpha.map(|values| values[0]))
+    }
+
+    /// The single color every pixel of the subimage holds, or `None` if the
+    /// image is not constant (or was not marked constant by `maketx`).
+    pub fn constant_color(&self, image_path: &Path, subimage: u32) -> Result<Option<Vec<f32>>> {
+        let spec = self.image_spec_at(image_path, subimage, 0)?;
+        self.info_floats(
+            image_path,
+            subimage,
+            spec.channel_count(),
+            "constantcolor",
+            "query constant color",
+        )
+    }
+
+    /// The single alpha value every pixel holds; `None` when the image is not
+    /// constant or has no alpha channel.
+    pub fn constant_alpha(&self, image_path: &Path, subimage: u32) -> Result<Option<f32>> {
+        let alpha = self.info_floats(
+            image_path,
+            subimage,
+            1,
+            "constantalpha",
+            "query constant alpha",
+        )?;
+        Ok(alpha.map(|values| values[0]))
+    }
+
+    /// The thumbnail a file carries for a subimage, or `None` if the file or
+    /// its format has none. In OpenImageIO 3.1 the formats that store one are
+    /// PSD, camera raw, and Targa.
+    pub fn thumbnail(&self, image_path: &Path, subimage: u32) -> Result<Option<ImageBuf>> {
+        let filename = path_to_utf8(image_path)?;
+        let subimage = level_index(subimage)?;
+        let mut thumb = ImageBuf::empty()?;
+        let (filled, error) = self.with_cache(|mut cache| {
+            let filled = sys::imagecache::imagecache_get_thumbnail(
+                cache.as_mut(),
+                filename,
+                thumb.inner_mut(),
+                subimage,
+            );
+            let error = if filled {
+                String::new()
+            } else {
+                sys::imagecache::imagecache_geterror(cache, true)
+            };
+            (filled, error)
+        });
+        match (filled, error) {
+            (true, _) => Ok(Some(thumb)),
+            (false, error) if error.is_empty() => Ok(None),
+            (false, error) => Err(Error::operation("read thumbnail", error)),
+        }
+    }
+
+    /// One integer image query; `Ok(None)` when the file cannot answer it.
+    fn info_int(
+        &self,
+        image_path: &Path,
+        subimage: u32,
+        mip_level: u32,
+        dataname: &'static str,
+        operation: &'static str,
+    ) -> Result<Option<i32>> {
+        let mut value = 0_i32;
+        let datatype =
+            sys::typedesc::typedesc_from_basetype_arraylen(sys::typedesc::BaseType::Int32, 0);
+        // SAFETY: the buffer is one i32 and the declared type is one 32-bit
+        // integer, so OpenImageIO writes at most four bytes into it.
+        let filled = unsafe {
+            self.info_query(
+                image_path,
+                subimage,
+                mip_level,
+                dataname,
+                datatype,
+                (&mut value as *mut i32).cast::<u8>(),
+                operation,
+            )?
+        };
+        Ok(filled.then_some(value))
+    }
+
+    /// One float-array image query of `count` values; `Ok(None)` when the
+    /// file cannot answer it.
+    fn info_floats(
+        &self,
+        image_path: &Path,
+        subimage: u32,
+        count: u32,
+        dataname: &'static str,
+        operation: &'static str,
+    ) -> Result<Option<Vec<f32>>> {
+        let mut values = vec![0.0_f32; count.max(1) as usize];
+        // A scalar for one value, because the alpha queries compare against
+        // exactly that; an array of `count` otherwise.
+        let arraylen = if count == 1 {
+            0
+        } else {
+            count.min(i32::MAX as u32) as i32
+        };
+        let datatype = sys::typedesc::typedesc_from_basetype_arraylen(
+            sys::typedesc::BaseType::Float32,
+            arraylen,
+        );
+        // SAFETY: the buffer holds exactly as many f32 values as the declared
+        // type describes, and OpenImageIO zero-pads channels past the image's
+        // own rather than reading past either side.
+        let filled = unsafe {
+            self.info_query(
+                image_path,
+                subimage,
+                0,
+                dataname,
+                datatype,
+                values.as_mut_ptr().cast::<u8>(),
+                operation,
+            )?
+        };
+        Ok(filled.then_some(values))
+    }
+
+    /// One string image query. The queries answered as strings always have an
+    /// answer for a readable file, so absence is reported as an error.
+    fn info_string(
+        &self,
+        image_path: &Path,
+        subimage: u32,
+        mip_level: u32,
+        dataname: &'static str,
+        operation: &'static str,
+    ) -> Result<String> {
+        let mut pointer: *const std::os::raw::c_char = std::ptr::null();
+        let datatype =
+            sys::typedesc::typedesc_from_basetype_arraylen(sys::typedesc::BaseType::String, 0);
+        // SAFETY: the buffer is one pointer and the declared type is one
+        // string, which OpenImageIO answers by storing one `char` pointer to
+        // a `ustring`'s storage — immortal by design, so reading it after the
+        // call is sound.
+        let filled = unsafe {
+            self.info_query(
+                image_path,
+                subimage,
+                mip_level,
+                dataname,
+                datatype,
+                (&mut pointer as *mut *const std::os::raw::c_char).cast::<u8>(),
+                operation,
+            )?
+        };
+        if !filled || pointer.is_null() {
+            return Err(Error::operation(
+                operation,
+                "OpenImageIO did not answer the query".to_owned(),
+            ));
+        }
+        // SAFETY: the pointer is non-null and points at a nul-terminated
+        // ustring that is never freed.
+        let answer = unsafe { std::ffi::CStr::from_ptr(pointer) };
+        Ok(answer.to_string_lossy().into_owned())
+    }
+
+    /// Ask OpenImageIO one image query. `Ok(true)` means `data` was filled,
+    /// `Ok(false)` that the file cannot answer this query (OpenImageIO says
+    /// so by failing without a message), and `Err` carries a reported error.
+    ///
+    /// # Safety
+    /// `data` must point at storage laid out exactly as `datatype` describes.
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn info_query(
+        &self,
+        image_path: &Path,
+        subimage: u32,
+        mip_level: u32,
+        dataname: &'static str,
+        datatype: sys::typedesc::TypeDesc,
+        data: *mut u8,
+        operation: &'static str,
+    ) -> Result<bool> {
+        let filename = path_to_utf8(image_path)?;
+        let subimage = level_index(subimage)?;
+        let mip_level = level_index(mip_level)?;
+        let (filled, error) = self.with_cache(|mut cache| {
+            // SAFETY: forwarded from the caller.
+            let filled = unsafe {
+                sys::imagecache::imagecache_get_image_info(
+                    cache.as_mut(),
+                    filename,
+                    subimage,
+                    mip_level,
+                    dataname,
+                    datatype,
+                    data,
+                )
+            };
+            let error = if filled {
+                String::new()
+            } else {
+                sys::imagecache::imagecache_geterror(cache, true)
+            };
+            (filled, error)
+        });
+        match (filled, error) {
+            (true, _) => Ok(true),
+            (false, error) if error.is_empty() => Ok(false),
+            (false, error) => Err(Error::operation(operation, error)),
+        }
     }
 
     /// Return basic cache statistics suitable for diagnostics.

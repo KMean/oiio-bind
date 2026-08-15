@@ -1,6 +1,6 @@
 # Draft reports for OpenImageIO
 
-Thirteen issues from building Rust bindings against OpenImageIO 3.1/3.2, plus
+Fourteen issues from building Rust bindings against OpenImageIO 3.1/3.2, plus
 one open observation not yet settled enough to report.
 
 Issues 1 and 2 have self-contained reproductions, so a maintainer running one
@@ -936,6 +936,53 @@ deepdata.init(npixels, nchans,
 
 (with the same change in the tiled variant). Found while binding deep region
 reads for Rust; the binding sidesteps it by always reading every channel.
+
+---
+
+## Issue 14 — `ImageCache` ignores the constant-color metadata of textures made through the `make_texture` API
+
+`ImageBufAlgo::make_texture` computes and writes `oiio:ConstantColor` and
+`oiio:AverageColor` (`maketexture.cpp:1955` and `:1969` on `main`, `:1951`
+and `:1965` in 3.1.16.0), but `ImageCache` only honours them when the file's
+`Software` tag starts with "OpenImageIO" or "maketx"
+(`imagecache.cpp:489-491`, same lines on `main` and 3.1.16.0):
+
+```cpp
+string_view software = spec.get_string_attribute("Software");
+bool from_maketx     = Strutil::istarts_with(software, "OpenImageIO")
+                   || Strutil::istarts_with(software, "maketx");
+```
+
+The `maketx` and `oiiotool` executables stamp a `Software` tag; the library
+call sets none (its only use of the command line is appending to
+`Exif:ImageHistory`, `maketexture.cpp:1632-1636` on `main`). So the same
+constant texture behaves differently by provenance: made with `oiiotool
+-otex`, `get_image_info("constantcolor")` answers; made with
+`ImageBufAlgo::make_texture` from C++ or Python, the file carries the same
+`oiio:ConstantColor` attribute and the query fails — and with it the
+constant-color fast paths the cache builds on `is_constant_image`.
+
+`average_color` partially masks the problem by falling back to sampling the
+1×1 mip level; `constantcolor` and `constantalpha` have no fallback.
+
+Reproduction from Python: `ImageBufAlgo.make_texture(oiio.MakeTxTexture,
+constant_buf, "t.tx", config)` with `maketx:constant_color_detect` set, then
+`ImageCache().get_image_info("t.tx", 0, 0, "constantcolor", "float[4]")` —
+fails; the same file plus `oiiotool --attrib Software "maketx"` — succeeds.
+
+Two candidate fixes: trust the `oiio:`-namespaced attributes on their own
+name (they exist only because something OpenImageIO-shaped wrote them), or
+have the library `make_texture` stamp the `Software` tag the way its CLI
+front-ends do. Found while binding the cache queries for Rust; the binding
+works around it by stamping `Software` itself when the caller sets none.
+
+Related version note, not filed as an issue because `main` already fixed
+both halves: through 3.1.16, Targa thumbnail round trips come back with red
+and blue exchanged (the writer dumps raw RGB top-down where the reader
+decodes stored-BGR; fixed on `main` at `targaoutput.cpp:265-282`), and a
+thumbnail 256 or larger on either axis is downsized *to* 256 — one past
+what the TGA byte field holds — truncating the stored dimension to zero
+(fixed on `main` at `:693-706`, which resizes to 255 and says why).
 
 ---
 

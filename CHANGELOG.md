@@ -131,6 +131,28 @@ before the fork, but nothing was ever published under it, so starting both at
   `rectangles` capability and the fallback fails without a message, so the
   wrapper refuses with a clear one; the method exists for third-party
   plugins.
+- The `ImageCache` image queries: `exists` (the one question that is not
+  an error to ask of a missing file), `is_udim`, `subimage_count`,
+  `mip_level_count`, `file_format`, `texture_type`, `texture_format`,
+  `average_color`/`average_alpha` (from the 1×1 mip level; `None` without
+  one) and `constant_color`/`constant_alpha` (`None` unless marked
+  constant). Answers OpenImageIO declines without recording an error are
+  `None`; reported failures are errors. `make_texture` now stamps a
+  `Software` tag when the configuration sets none, because the cache only
+  honours a texture's own constant-color metadata under one (upstream
+  issue 14 in `contrib/upstream-issues.md`) — without it, API-made
+  textures silently lose what `maketx` wrote into them.
+- Thumbnails: `ImageCache::thumbnail` reads the postage stamp PSD, camera
+  raw and Targa files carry (`None` where the format stores none);
+  `ImageBuf::{has_thumbnail, thumbnail, set_thumbnail, clear_thumbnail}`
+  carry one in memory — `has_thumbnail` probes the stored image rather
+  than OpenImageIO's flag, which `set_thumbnail` forgets to raise through
+  3.1.14; `ImageOutput::set_thumbnail` writes one, refusing the shapes
+  Targa fails on silently (channel mismatch, and either dimension at 256
+  or above, which 3.1 truncates to a zero-size stamp). The written stamp
+  comes back with red and blue exchanged on every 3.1 release — an
+  upstream writer/reader disagreement fixed only on unreleased `main` —
+  and the test suite pins that so a change breaks loudly.
 - `ImageBuf::write_to`: write the whole current subimage through an
   already-open [`ImageOutput`] — multi-part files, in-memory writers, and
   open-time format conversion. OpenImageIO never compares the two

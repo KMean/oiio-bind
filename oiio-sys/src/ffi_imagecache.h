@@ -94,13 +94,13 @@ imagecache_filename_from_handle(ImageCache& imagecache, ImageHandle* handle);
 bool
 imagecache_get_image_info(ImageCache& imagecache, rust::Str filename,
                           int subimage, int miplevel, rust::Str dataname,
-                          TypeDesc datatype, const uint8_t* data);
+                          TypeDesc datatype, uint8_t* data);
 
 bool
 imagecache_get_image_info_with_handle(ImageCache& imagecache, ImageHandle* file,
                                       Perthread* thread_info, int subimage,
                                       int miplevel, rust::Str dataname,
-                                      TypeDesc datatype, const uint8_t* data);
+                                      TypeDesc datatype, uint8_t* data);
 
 bool
 imagecache_get_imagespec(ImageCache& imagecache, rust::Str filename,
