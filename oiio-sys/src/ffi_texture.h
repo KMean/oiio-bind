@@ -18,22 +18,49 @@ texturesystem_create(bool shared);
 // width; passing zeros asks for a point sample of the highest resolution.
 //
 // `result` receives one value per channel and must be exactly nchannels long.
+//
+// A non-empty `missing_color` (at least one value per result channel) makes
+// a missing or broken texture fill the result with it and succeed, which is
+// OpenImageIO's own missingcolor contract; empty means missing files error.
 bool
 texturesystem_texture(TextureSystem& texturesystem, const rust::Str filename,
-                      const TextureLookupOptions& options, float s, float t,
+                      const TextureLookupOptions& options,
+                      rust::Slice<const float> missing_color, float s, float t,
                       float dsdx, float dtdx, float dsdy, float dtdy,
                       rust::Slice<float> result, rust::String& error);
 
-// An environment lookup by direction vector; the guards and the fill of the
-// channels past the file's are the plain texture lookup's.
+// An environment lookup by direction vector; the guards, the fill of the
+// channels past the file's, and the missing-color contract are the plain
+// texture lookup's.
 bool
 texturesystem_environment(TextureSystem& texturesystem,
                           const rust::Str filename,
-                          const TextureLookupOptions& options, float r_x,
+                          const TextureLookupOptions& options,
+                          rust::Slice<const float> missing_color, float r_x,
                           float r_y, float r_z, float drdx_x, float drdx_y,
                           float drdx_z, float drdy_x, float drdy_y,
                           float drdy_z, rust::Slice<float> result,
                           rust::String& error);
+
+// Whether the name is a UDIM pattern such as "tex.<UDIM>.exr".
+bool
+texturesystem_is_udim(TextureSystem& texturesystem, const rust::Str filename);
+
+// The concrete tile file a UDIM pattern and texture coordinates refer to,
+// or an empty string when that tile is unpopulated. The TextureHandle the
+// resolution produces never crosses the bridge; it is turned back into a
+// filename here.
+rust::String
+texturesystem_resolve_udim(TextureSystem& texturesystem,
+                           const rust::Str pattern, float s, float t);
+
+// Every concrete file of a UDIM set, indexed as utile + vtile * nutiles,
+// with empty strings for unpopulated tiles.
+void
+texturesystem_inventory_udim(TextureSystem& texturesystem,
+                             const rust::Str pattern,
+                             rust::Vec<rust::String>& filenames, int& nutiles,
+                             int& nvtiles);
 
 rust::String
 texturesystem_geterror(TextureSystem& texturesystem);

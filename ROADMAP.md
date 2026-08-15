@@ -97,6 +97,15 @@ behavioural difference between patch releases was found — see `mad` in
   OpenImageIO tallies into unbounded stack scratch), and `compare_yee`
   (its own result type, image-coordinate worst pixel, in-window region and
   sane viewing parameters required).
+- [x] Texture lookups for production: `TextureOptions::missing_color`
+  (lost textures return a color instead of killing the lookup) and the
+  UDIM surface — `is_udim`, `resolve_udim`, `inventory_udim` — with
+  `TextureHandle` pointers confined to the C++ shims.
+- [ ] `TextureHandle`-based lookups, the per-call name-hash skip renderers
+  use. Deferred: the API can arrive without breaking anything, and its
+  safety design (a handle borrowing the system, per-thread records) is
+  `ImageCache::handle`'s, already proven here. Until then every lookup is
+  by name.
 
 ## Notes on the OpenImageIO 3.1 span API
 

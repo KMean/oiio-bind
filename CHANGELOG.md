@@ -142,6 +142,20 @@ before the fork, but nothing was ever published under it, so starting both at
   honours a texture's own constant-color metadata under one (upstream
   issue 14 in `contrib/upstream-issues.md`) — without it, API-made
   textures silently lose what `maketx` wrote into them.
+- `TextureOptions::missing_color`: set, a lookup against a missing or
+  broken texture fills the result with it and succeeds — the mechanism
+  renderers use so one lost file does not kill a frame. It needs one value
+  per requested channel (OpenImageIO reads exactly that many), and it
+  works for files that never existed: the wrapper's usual open-and-check
+  probe steps aside, because the missing-texture path is the point.
+  `TextureOptions` is no longer `Copy` for it; it stays `Clone`.
+- UDIM: `TextureSystem::is_udim`, `resolve_udim` (the concrete tile file
+  for a texture coordinate, `None` where the sparse set has no tile) and
+  `inventory_udim`, returning a `UdimInventory` whose grid is indexed
+  u-fastest with a `u_tiles` stride — the layout OpenImageIO builds, not
+  the `v_tiles` stride its header documents. OpenImageIO's
+  `TextureHandle` values never cross the bridge; the shims resolve them
+  back to filenames.
 - `algo::circular_shift`, with the wrap-around semantics OpenImageIO
   documents and an empty-destination requirement: the shifted writes are a
   bijection of the region, so a larger pre-allocated destination would keep

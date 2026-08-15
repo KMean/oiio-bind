@@ -28,10 +28,12 @@ mod ffi {
 
         pub fn texturesystem_create(shared: bool) -> SharedPtr<TextureSystem>;
 
+        #[allow(clippy::too_many_arguments)]
         pub fn texturesystem_texture(
             texturesystem: Pin<&mut TextureSystem>,
             filename: &str,
             options: &TextureLookupOptions,
+            missing_color: &[f32],
             s: f32,
             t: f32,
             dsdx: f32,
@@ -42,10 +44,12 @@ mod ffi {
             error: &mut String,
         ) -> bool;
 
+        #[allow(clippy::too_many_arguments)]
         pub fn texturesystem_environment(
             texturesystem: Pin<&mut TextureSystem>,
             filename: &str,
             options: &TextureLookupOptions,
+            missing_color: &[f32],
             r_x: f32,
             r_y: f32,
             r_z: f32,
@@ -58,6 +62,26 @@ mod ffi {
             result: &mut [f32],
             error: &mut String,
         ) -> bool;
+
+        pub fn texturesystem_is_udim(
+            texturesystem: Pin<&mut TextureSystem>,
+            filename: &str,
+        ) -> bool;
+
+        pub fn texturesystem_resolve_udim(
+            texturesystem: Pin<&mut TextureSystem>,
+            pattern: &str,
+            s: f32,
+            t: f32,
+        ) -> String;
+
+        pub fn texturesystem_inventory_udim(
+            texturesystem: Pin<&mut TextureSystem>,
+            pattern: &str,
+            filenames: &mut Vec<String>,
+            nutiles: &mut i32,
+            nvtiles: &mut i32,
+        );
 
         pub fn texturesystem_geterror(texturesystem: Pin<&mut TextureSystem>) -> String;
         pub fn texturesystem_attribute_int(

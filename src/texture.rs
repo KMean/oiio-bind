@@ -7,7 +7,7 @@
 //! itself. It reads through an image cache, so the same file serves many
 //! lookups without being re-read.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::{path_to_utf8, sys, AttributeValue, Error, ImageBuf, PixelFormat, Result};
 
@@ -448,7 +448,7 @@ pub fn make_texture_from_buffer(
 }
 
 /// How one lookup should be filtered.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TextureOptions {
     /// First channel of the texture to read.
     pub first_channel: u32,
@@ -472,6 +472,13 @@ pub struct TextureOptions {
     pub t_width: f32,
     /// Value for channels the texture does not have.
     pub fill: f32,
+    /// What a missing or broken texture returns instead of an error.
+    ///
+    /// Set, a lookup against a file that does not exist or cannot be read
+    /// fills the result with these values and succeeds — the mechanism
+    /// renderers use so one lost texture does not kill a frame. It needs
+    /// one value per requested channel. Unset, missing textures are errors.
+    pub missing_color: Option<Vec<f32>>,
 }
 
 impl Default for TextureOptions {
@@ -488,12 +495,13 @@ impl Default for TextureOptions {
             s_width: 1.0,
             t_width: 1.0,
             fill: 0.0,
+            missing_color: None,
         }
     }
 }
 
 impl TextureOptions {
-    fn to_sys(self) -> Result<sys::texture::TextureLookupOptions> {
+    fn to_sys(&self) -> Result<sys::texture::TextureLookupOptions> {
         Ok(sys::texture::TextureLookupOptions {
             first_channel: i32::try_from(self.first_channel).map_err(|_| {
                 Error::InvalidImageSpec("first channel exceeds i32::MAX".to_owned())
@@ -510,6 +518,34 @@ impl TextureOptions {
             t_width: self.t_width,
             fill: self.fill,
         })
+    }
+}
+
+/// The concrete files of a UDIM set; see [`TextureSystem::inventory_udim`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UdimInventory {
+    /// One entry per grid cell, `None` where the set has no tile — UDIM
+    /// sets may be sparse.
+    ///
+    /// Indexed `u + v * u_tiles`, u varying fastest, which is the layout
+    /// OpenImageIO builds. (Its header documents a `v_tiles` stride; the
+    /// implementation says otherwise.)
+    pub tiles: Vec<Option<PathBuf>>,
+    /// Columns of the tile grid.
+    pub u_tiles: u32,
+    /// Rows of the tile grid.
+    pub v_tiles: u32,
+}
+
+impl UdimInventory {
+    /// The tile at column `u`, row `v`, if populated.
+    pub fn tile(&self, u: u32, v: u32) -> Option<&Path> {
+        if u >= self.u_tiles || v >= self.v_tiles {
+            return None;
+        }
+        self.tiles
+            .get((u + v * self.u_tiles) as usize)
+            .and_then(|tile| tile.as_deref())
     }
 }
 
@@ -638,6 +674,7 @@ impl TextureSystem {
                 "a texture lookup needs at least one channel".to_owned(),
             ));
         }
+        let missing_color = Self::validate_missing_color(options, result.len())?;
         let filename = path_to_utf8(texture_path)?;
         let options = options.to_sys()?;
 
@@ -647,6 +684,7 @@ impl TextureSystem {
                 system,
                 filename,
                 &options,
+                missing_color,
                 s,
                 t,
                 derivatives.dsdx,
@@ -690,6 +728,7 @@ impl TextureSystem {
                 "an environment lookup needs at least one channel".to_owned(),
             ));
         }
+        let missing_color = Self::validate_missing_color(options, result.len())?;
         let filename = path_to_utf8(texture_path)?;
         let options = options.to_sys()?;
 
@@ -699,6 +738,7 @@ impl TextureSystem {
                 system,
                 filename,
                 &options,
+                missing_color,
                 direction[0],
                 direction[1],
                 direction[2],
@@ -719,6 +759,60 @@ impl TextureSystem {
                 error = self.with_system(sys::texture::texturesystem_geterror);
             }
             Err(Error::operation("environment lookup", error))
+        }
+    }
+
+    /// Whether the name is a UDIM pattern, such as `tex.<UDIM>.exr` or the
+    /// `%(UDIM)d`, `<u>`/`<v>`/`<U>`/`<V>` and `_u##v##` spellings.
+    pub fn is_udim(&self, texture_path: &Path) -> Result<bool> {
+        let filename = path_to_utf8(texture_path)?;
+        Ok(self.with_system(|system| sys::texture::texturesystem_is_udim(system, filename)))
+    }
+
+    /// The concrete tile file a UDIM pattern refers to at these texture
+    /// coordinates, or `None` where no tile exists — UDIM sets may be
+    /// sparse. The integer part of `s` selects the column and of `t` the
+    /// row, as UDIM numbering does.
+    pub fn resolve_udim(&self, pattern: &Path, s: f32, t: f32) -> Result<Option<PathBuf>> {
+        let filename = path_to_utf8(pattern)?;
+        let resolved = self
+            .with_system(|system| sys::texture::texturesystem_resolve_udim(system, filename, s, t));
+        Ok((!resolved.is_empty()).then(|| PathBuf::from(resolved)))
+    }
+
+    /// Every concrete file of a UDIM set, with `None` for unpopulated tiles.
+    pub fn inventory_udim(&self, pattern: &Path) -> Result<UdimInventory> {
+        let filename = path_to_utf8(pattern)?;
+        let mut filenames = Vec::new();
+        let mut u_tiles = 0_i32;
+        let mut v_tiles = 0_i32;
+        self.with_system(|system| {
+            sys::texture::texturesystem_inventory_udim(
+                system,
+                filename,
+                &mut filenames,
+                &mut u_tiles,
+                &mut v_tiles,
+            );
+        });
+        Ok(UdimInventory {
+            tiles: filenames
+                .into_iter()
+                .map(|name| (!name.is_empty()).then(|| PathBuf::from(name)))
+                .collect(),
+            u_tiles: u_tiles.max(0) as u32,
+            v_tiles: v_tiles.max(0) as u32,
+        })
+    }
+
+    fn validate_missing_color(options: &TextureOptions, channels: usize) -> Result<&[f32]> {
+        match &options.missing_color {
+            None => Ok(&[]),
+            Some(color) if color.len() == channels => Ok(color),
+            Some(color) => Err(Error::InvalidRoi(format!(
+                "the missing color holds {} values for a {channels}-channel lookup",
+                color.len()
+            ))),
         }
     }
 

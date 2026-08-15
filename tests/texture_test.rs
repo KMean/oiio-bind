@@ -412,6 +412,7 @@ fn a_texture_system_can_be_shared_across_threads() {
         for thread in 0..4 {
             let textures = std::sync::Arc::clone(&textures);
             let path = path.clone();
+            let options = options.clone();
             scope.spawn(move || {
                 for step in 0..32 {
                     let s = (thread as f32 * 0.25) + step as f32 * 0.005;
@@ -529,4 +530,131 @@ fn a_texture_channel_count_cannot_overflow_the_stack() {
     // Clamped to MAX_CHANNELS, so this either succeeds with that many channels
     // or fails cleanly. What it must not do is take the process with it.
     let _ = oiio::make_texture(oiio::TextureMode::Texture, &source, &output, &config);
+}
+
+/// A missing color turns a lost texture into that color and success — the
+/// mechanism renderers use so one lost file does not kill a frame — while a
+/// texture that exists answers with its own pixels, and a missing color of
+/// the wrong length is refused before OpenImageIO could read past it.
+#[test]
+fn missing_color_answers_for_lost_textures() {
+    let scratch = ScratchDir::new("missingcolor");
+    let real = a_built_texture(&scratch);
+    let textures = TextureSystem::new().unwrap();
+    let derivatives = Derivatives::uniform(1.0 / 64.0);
+
+    let options = TextureOptions {
+        missing_color: Some(vec![0.25, 0.5, 0.75]),
+        ..TextureOptions::default()
+    };
+
+    // A file that was never made: the missing color, reported as success.
+    let lost = scratch.file("never-made.tx");
+    let mut rgb = [0.0_f32; 3];
+    textures
+        .texture(&lost, &options, 0.5, 0.5, derivatives, &mut rgb)
+        .unwrap();
+    assert_eq!(rgb, [0.25, 0.5, 0.75]);
+
+    // The same lost file without a missing color stays an error.
+    let plain = TextureOptions::default();
+    assert!(textures
+        .texture(&lost, &plain, 0.5, 0.5, derivatives, &mut rgb)
+        .is_err());
+
+    // A real texture is answered from its pixels, not the missing color.
+    textures
+        .texture(&real, &options, 0.5, 0.5, derivatives, &mut rgb)
+        .unwrap();
+    assert_ne!(rgb, [0.25, 0.5, 0.75], "the real texture's own pixels");
+    assert!(rgb.iter().all(|v| v.is_finite()));
+
+    // One value for a three-channel lookup cannot cover the result.
+    let short = TextureOptions {
+        missing_color: Some(vec![1.0]),
+        ..TextureOptions::default()
+    };
+    let error = textures
+        .texture(&lost, &short, 0.5, 0.5, derivatives, &mut rgb)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("3-channel"),
+        "unexpected error: {error}"
+    );
+
+    // The environment lookup honours the same contract.
+    let mut env = [0.0_f32; 3];
+    textures
+        .environment(
+            &lost,
+            &options,
+            [0.0, 0.0, 1.0],
+            [0.01, 0.0, 0.0],
+            [0.0, 0.01, 0.0],
+            &mut env,
+        )
+        .unwrap();
+    assert_eq!(env, [0.25, 0.5, 0.75]);
+}
+
+/// UDIM patterns: recognized, resolved to concrete tiles by texture
+/// coordinate, and inventoried with `None` holes for sparse sets.
+#[test]
+fn udim_patterns_resolve_and_inventory() {
+    let scratch = ScratchDir::new("udim");
+
+    // Two tiles: 1001 at (u 0, v 0) and 1002 at (u 1, v 0), each its own
+    // constant color.
+    for (id, color) in [("1001", [0.9_f32, 0.1, 0.1]), ("1002", [0.1, 0.9, 0.1])] {
+        let spec = ImageSpec::new(32, 32, 3, PixelFormat::F32).unwrap();
+        let mut tile = oiio::ImageBuf::new(&spec).unwrap();
+        oiio::algo::fill(&mut tile, &color, None).unwrap();
+        oiio::make_texture_from_buffer(
+            oiio::TextureMode::Texture,
+            &tile,
+            &scratch.file(&format!("tile.{id}.tx")),
+            &oiio::TextureConfig::new(),
+        )
+        .unwrap();
+    }
+
+    let pattern = scratch.file("tile.<UDIM>.tx");
+    let textures = TextureSystem::new().unwrap();
+
+    assert!(textures.is_udim(&pattern).unwrap());
+    assert!(!textures.is_udim(&scratch.file("tile.1001.tx")).unwrap());
+
+    // Resolution walks the UDIM numbering: the integer part of s selects
+    // the column.
+    let first = textures.resolve_udim(&pattern, 0.5, 0.5).unwrap();
+    assert_eq!(
+        first.as_deref(),
+        Some(scratch.file("tile.1001.tx").as_path())
+    );
+    let second = textures.resolve_udim(&pattern, 1.5, 0.5).unwrap();
+    assert_eq!(
+        second.as_deref(),
+        Some(scratch.file("tile.1002.tx").as_path())
+    );
+
+    // A tile nobody made: None, not an error — UDIM sets are sparse.
+    assert_eq!(textures.resolve_udim(&pattern, 7.5, 3.5).unwrap(), None);
+
+    let inventory = textures.inventory_udim(&pattern).unwrap();
+    assert!(inventory.u_tiles >= 2, "{inventory:?}");
+    assert!(inventory.v_tiles >= 1, "{inventory:?}");
+    assert_eq!(
+        inventory.tiles.len(),
+        (inventory.u_tiles * inventory.v_tiles) as usize
+    );
+    assert_eq!(
+        inventory.tile(0, 0),
+        Some(scratch.file("tile.1001.tx").as_path())
+    );
+    assert_eq!(
+        inventory.tile(1, 0),
+        Some(scratch.file("tile.1002.tx").as_path())
+    );
+    assert_eq!(inventory.tile(9, 0), None, "an unpopulated cell is None");
+    assert_eq!(inventory.tile(99, 99), None, "outside the grid is None");
 }
