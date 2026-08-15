@@ -109,6 +109,13 @@ before the fork, but nothing was ever published under it, so starting both at
 - Tests against OpenImageIO's and OpenEXR's own image corpora, opt-in through
   `OIIO_BIND_TEST_IMAGES` and `OIIO_BIND_TEST_EXR_IMAGES`, including
   OpenEXR's `Damaged` directory of reader crash cases.
+- The transcode and reader-probe surface from the second (docs-driven)
+  sweep: `ImageOutput::copy_image_from`, the lossless native-data copy
+  `iconvert` is built on, with the untouched-subimage guard and the
+  scanline cursor advanced; `ImageInput::from_path_with_config` for
+  configuration hints like `oiio:UnassociatedAlpha`;
+  `ImageInput::supports` and `is_valid_file` for capability and header
+  probes.
 - `ImageBuf::write_to`: write the whole current subimage through an
   already-open [`ImageOutput`] — multi-part files, in-memory writers, and
   open-time format conversion. OpenImageIO never compares the two

@@ -16,6 +16,45 @@ pub struct ImageInput {
 }
 
 impl ImageInput {
+    /// Open an image file with configuration hints.
+    ///
+    /// The hint spec's attributes steer the reader before it opens:
+    /// `oiio:UnassociatedAlpha` asks for alpha left unassociated,
+    /// `oiio:RawColor` suppresses colour conversion in formats that would
+    /// apply one, and each format documents its own. The hint spec's
+    /// dimensions are ignored; only its attributes matter.
+    pub fn from_path_with_config(image_path: &Path, config: &ImageSpec) -> Result<Self> {
+        let image_path_str = path_to_utf8(image_path)?;
+        let native = config.to_sys()?;
+        let Some(native) = native.as_ref() else {
+            return Err(Error::InvalidImageSpec(
+                "OpenImageIO could not allocate the configuration hints".to_owned(),
+            ));
+        };
+        match sys::imageio::imageinput_open_with_config(image_path_str, native) {
+            Ok(imageinput) if !imageinput.is_null() => Ok(Self {
+                inner: imageinput,
+                _proxy: None,
+                _bytes: None,
+            }),
+            Ok(_) => {
+                let message = if sys::imageio::has_error() {
+                    sys::imageio::get_error(true)
+                } else {
+                    "OpenImageIO did not provide an error message".to_owned()
+                };
+                Err(Error::OpenImage {
+                    path: image_path.to_path_buf(),
+                    message,
+                })
+            }
+            Err(exception) => Err(Error::OpenImage {
+                path: image_path.to_path_buf(),
+                message: exception.what().to_owned(),
+            }),
+        }
+    }
+
     /// Open an image file.
     pub fn from_path(image_path: &Path) -> Result<Self> {
         let image_path_str = path_to_utf8(image_path)?;
@@ -389,6 +428,26 @@ impl ImageInput {
         self.inner
             .as_ref()
             .expect("ImageInput invariant violated: null native pointer")
+    }
+
+    /// Whether this reader's format supports a named feature, such as
+    /// `"mipmap"`, `"multiimage"`, `"exif"` or `"ioproxy"`.
+    pub fn supports(&self, feature: &str) -> bool {
+        sys::imageio::imageinput_supports(self.inner(), feature)
+    }
+
+    /// Whether another file appears readable by this reader's format,
+    /// judged from its header without opening it fully.
+    pub fn is_valid_file(&self, image_path: &Path) -> Result<bool> {
+        let filename = path_to_utf8(image_path)?;
+        Ok(sys::imageio::imageinput_valid_file(self.inner(), filename))
+    }
+
+    /// The raw reader handle, for wrappers whose shim takes the native
+    /// pointer (`ImageOutput::copy_image_from`). `pub(crate)` so the pointer
+    /// never crosses the crate boundary.
+    pub(crate) fn native_mut(&mut self) -> std::pin::Pin<&mut sys::imageio::ImageInput> {
+        self.inner_mut()
     }
 
     fn inner_mut(&mut self) -> std::pin::Pin<&mut sys::imageio::ImageInput> {
@@ -968,6 +1027,43 @@ impl ImageOutput {
     pub(crate) fn mark_whole_subimage_written(&mut self) {
         let end = i64::from(self.spec.origin()[1]) + i64::from(self.spec.dimensions()[1]);
         self.next_scanline = end.min(i64::from(i32::MAX)) as i32;
+    }
+
+    /// Copy a reader's current subimage into this writer — the lossless
+    /// transcode path `iconvert` is built on.
+    ///
+    /// Pixel data is carried in the file's native format wherever the
+    /// formats allow, without a decode to a caller type in between; deep
+    /// images are copied sample-for-sample. OpenImageIO verifies that the
+    /// two specifications agree on dimensions and channel count and reports
+    /// a clear error when they do not. Nothing may have been written to the
+    /// current subimage yet, and the writer stays open afterwards.
+    pub fn copy_image_from(&mut self, input: &mut ImageInput) -> Result<()> {
+        const OPERATION: &str = "copy image from reader";
+        let top = self.spec.origin()[1];
+        if self.next_scanline != top {
+            return Err(Error::operation(
+                OPERATION,
+                format!(
+                    "rows {top}..{} of this subimage were already written; the copy \
+                     needs an untouched subimage",
+                    self.next_scanline
+                ),
+            ));
+        }
+        // SAFETY: the pointer comes from a live &mut ImageInput, is consumed
+        // within this one call, and the pinned reader is not moved.
+        let succeeded = unsafe {
+            let in_ptr = input.native_mut().get_unchecked_mut() as *mut sys::imageio::ImageInput;
+            sys::imageio::imageoutput_copy_image(self.inner_mut(), in_ptr)
+        };
+        if !succeeded {
+            return Err(self.take_error(OPERATION));
+        }
+        // The whole subimage is written; the cursor keeps write_scanlines
+        // and write_to honest about it.
+        self.mark_whole_subimage_written();
+        Ok(())
     }
 
     fn take_error(&mut self, operation: &'static str) -> Error {

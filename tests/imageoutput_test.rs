@@ -61,6 +61,64 @@ fn mixed_channel_formats_round_trip_through_an_exr() -> Result<()> {
     Ok(())
 }
 
+/// The lossless transcode path: reader straight into writer, no decode to a
+/// caller type in between, with the writer-state guards around it.
+#[test]
+fn copy_image_from_transcodes_losslessly_and_guards_state() -> Result<()> {
+    let scratch = ScratchDir::new("copyimg");
+    let spec = ImageSpec::new(9, 7, 3, PixelFormat::F16)?;
+    let source = scratch.file("src.exr");
+    let written = f16_ramp(spec.element_count()?);
+    let mut output = ImageOutput::create(&source, &spec)?;
+    output.write_image(&written)?;
+    output.close()?;
+
+    // The transcode round trip.
+    let mut input = ImageInput::from_path(&source)?;
+    let copy = scratch.file("copy.exr");
+    let mut output = ImageOutput::create(&copy, &input.image_spec()?)?;
+    output.copy_image_from(&mut input)?;
+    output.close()?;
+    let (copy_spec, copied): (ImageSpec, Vec<f16>) = read_back(&copy)?;
+    assert_eq!(copy_spec.format(), PixelFormat::F16, "still half");
+    assert_eq!(copied, written, "carried losslessly");
+
+    // Mismatched dimensions are refused with OpenImageIO's own clear error.
+    let mut input = ImageInput::from_path(&source)?;
+    let wrong = ImageSpec::new(4, 4, 3, PixelFormat::F16)?;
+    let mut output = ImageOutput::create(&scratch.file("wrong.exr"), &wrong)?;
+    assert!(output.copy_image_from(&mut input).is_err());
+
+    // A partially written subimage cannot take the copy.
+    let mut input = ImageInput::from_path(&source)?;
+    let mut output = ImageOutput::create(&scratch.file("touched.exr"), &spec)?;
+    output.write_scanlines(0..1, &f16_ramp(9 * 3))?;
+    let error = output.copy_image_from(&mut input).unwrap_err();
+    assert!(error.to_string().contains("already written"), "{error}");
+
+    // Reader capability probes, file validity, and config-hint opens.
+    let input = ImageInput::from_path(&source)?;
+    assert!(input.supports("multiimage"), "EXR reads multi-part files");
+    assert!(!input.supports("not-a-feature"));
+    assert!(input.is_valid_file(&source)?);
+    let png = scratch.file("other.png");
+    let png_spec = ImageSpec::new(4, 4, 3, PixelFormat::U8)?;
+    let mut png_out = ImageOutput::create(&png, &png_spec)?;
+    png_out.write_image(&vec![0_u8; png_spec.element_count()?])?;
+    png_out.close()?;
+    assert!(
+        !input.is_valid_file(&png)?,
+        "a PNG is not valid for the EXR reader"
+    );
+
+    let hints =
+        ImageSpec::new(1, 1, 1, PixelFormat::U8)?.with_attribute("oiio:UnassociatedAlpha", 1);
+    let hinted = ImageInput::from_path_with_config(&source, &hints)?;
+    assert_eq!(hinted.image_spec()?.dimensions(), [9, 7, 1]);
+    hinted.close()?;
+    Ok(())
+}
+
 fn read_back<T: Pixel>(path: &Path) -> Result<(ImageSpec, Vec<T>)> {
     let mut input = ImageInput::from_path(path)?;
     let spec = input.image_spec()?;
