@@ -258,6 +258,44 @@ Cargo must still place the required DLLs beside the executable or make their
 directory available through `PATH`.
 
 
+## See it working
+
+Two small applications in this repository are built entirely on the crate's
+public API and double as living examples.
+
+**`oiiox`**, an `oiiotool`-flavoured command chain, ships inside the crate
+as an example — no extra dependencies:
+
+```bash
+cargo run --release --example oiiox -- -i input.exr --info --stats --resize 512x512 --colorconvert lin_srgb srgb --o out.png
+```
+
+```bash
+cargo run --release --example oiiox -- -i a.exr -i b.exr --diff
+```
+
+`--help` lists the whole chain language: reading and writing, `--info`,
+`--stats`, `--resize`, `--flip`/`--flop`, `--premult`/`--unpremult`,
+`--colorconvert`, channel shuffles with `--ch R,G,B,A=1.0`, and `--diff`,
+which exits non-zero when images differ — usable directly in CI.
+
+**`oiio-viewer`**, a minimal image and sequence viewer, lives in
+[`viewer/`](viewer/) as its own crate so the library keeps its dependency
+graph free of windowing:
+
+```bash
+cd viewer
+```
+
+```bash
+cargo run --release -- path/to/shots/
+```
+
+Open files or a directory as a sequence; arrow keys step frames, `+`/`-`
+change exposure by stops, `R` reloads, and a file that fails to decode
+shows its error in the title bar instead of taking the viewer down. See
+[viewer/README.md](viewer/README.md) for the details.
+
 ## What "safe" means here
 
 The crate's purpose is that ordinary use cannot cause undefined behaviour,

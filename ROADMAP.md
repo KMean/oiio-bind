@@ -118,6 +118,16 @@ behavioural difference between patch releases was found — see `mad` in
   by-name path's validation (bounds, missing color, the UDIM gates), and
   creation runs a real `exists` probe because OpenImageIO's `good()` is
   only the broken flag, which a never-opened missing file passes.
+- [x] Demonstration applications on the public API: `examples/oiiox.rs`,
+  an `oiiotool`-flavoured command chain, and `viewer/`, a minimal image
+  and sequence viewer in its own workspace-excluded crate. Ergonomics
+  follow-ups noticed while building them: OpenImageIO prints its own
+  duplicate error line to stderr when a file fails to open, even though
+  the crate drains the error channel — worth tracing;
+  `ImageBuf::subimage_count` answers 0 for a derived in-memory buffer
+  where 1 would read more naturally; and a convenience for "the same spec
+  at a different size, channel names kept" would simplify pre-allocating
+  `resize` destinations.
 
 ## Notes on the OpenImageIO 3.1 span API
 

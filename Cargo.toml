@@ -22,6 +22,9 @@ repository = "https://github.com/KMean/oiio-bind.git"
 
 [workspace]
 members = ["oiio-sys"]
+# The viewer is a demonstration binary with windowing dependencies, kept out
+# of the workspace so they never enter the library's dependency graph.
+exclude = ["viewer"]
 
 [workspace.dependencies]
 anyhow = "1.0.80"

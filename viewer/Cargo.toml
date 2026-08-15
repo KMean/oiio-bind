@@ -1,0 +1,14 @@
+[package]
+name = "oiio-viewer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# The empty workspace table keeps this crate out of the parent workspace, so
+# the windowing dependencies below never enter the library's dependency graph.
+[workspace]
+
+[dependencies]
+oiio = { path = ".." }
+winit = "0.30"
+softbuffer = "0.4"

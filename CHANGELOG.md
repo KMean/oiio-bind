@@ -2,6 +2,18 @@
 
 This fork's changes, newest first.
 
+## Unreleased
+
+- Two demonstration applications built entirely on the public API:
+  `examples/oiiox.rs`, an `oiiotool`-flavoured command chain (read, write,
+  info, stats, resize, flip/flop, premult/unpremult, colour conversion,
+  channel shuffles, and a CI-friendly `--diff` that exits non-zero on
+  differences) with no dependencies beyond the crate; and `viewer/`, a
+  minimal image and sequence viewer in its own workspace-excluded crate,
+  with exposure control, sequence stepping, a proper linear-to-sRGB
+  display transform, and title-bar errors instead of crashes for broken
+  files.
+
 ## 0.2.0 — 2026-08-15
 
 Both crates move to 0.2.0 together: `oiio-sys` gained the handle bridge and
