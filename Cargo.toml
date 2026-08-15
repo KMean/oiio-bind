@@ -1,6 +1,6 @@
 [package]
 name = "oiio"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 # The oldest toolchain CI actually builds and tests with. Older ones may well
 # work; they are simply not verified, and cargo reporting that plainly beats a
@@ -33,7 +33,7 @@ thiserror = "1.0.57"
 [dependencies]
 cxx = { workspace = true }
 half = { workspace = true }
-oiio-sys = { path = "oiio-sys", version = "0.1.0" }
+oiio-sys = { path = "oiio-sys", version = "0.2.0" }
 thiserror = { workspace = true }
 
 # anyhow is only used by the integration tests, so it is not imposed on
@@ -43,7 +43,7 @@ anyhow = { workspace = true }
 proptest = { workspace = true }
 # The differential tests drive the raw C++ API through the sys bridge and
 # compare it byte-for-byte against the safe crate.
-oiio-sys = { path = "oiio-sys", version = "0.1.0" }
+oiio-sys = { path = "oiio-sys", version = "0.2.0" }
 
 # The docs are the same across all platforms so we only need to build once.
 [package.metadata.docs.rs]

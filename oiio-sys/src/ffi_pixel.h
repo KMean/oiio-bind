@@ -1,5 +1,6 @@
 #pragma once
 
+#include <OpenImageIO/filesystem.h>
 #include <OpenImageIO/image_span.h>
 #include <OpenImageIO/imageio.h>
 #include <OpenImageIO/oiioversion.h>
@@ -7,7 +8,10 @@
 #include <rust/cxx.h>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
+#include <regex>
+#include <string>
 
 // Deliberately not written as !OIIO_VERSION_GREATER_EQUAL(3, 1, 4). That macro
 // expands to an unparenthesised `OIIO_VERSION >= ...`, so a leading `!` binds
@@ -110,6 +114,50 @@ writable_byte_span(rust::Slice<uint8_t> data, const PixelLayout& layout)
         layout.width, layout.height, layout.depth, layout.channel_stride,
         layout.x_stride, layout.y_stride, layout.z_stride,
         layout.channel_size);
+}
+
+// True when a filename carries a UDIM pattern marker but would blow up
+// OpenImageIO's `udim_setup`: that function compiles a std::regex derived
+// from the basename with no try/catch (`imagecache.cpp:4159`), and — worse —
+// the `ImageCacheFile` constructor it runs in sits between a manual
+// `lock_bin`/`unlock_bin` pair in `find_file` (`imagecache.cpp:1542-1553`),
+// so the escaping exception leaks the file-cache bin lock and every later
+// query hashing to that bin deadlocks. The only safe place to stop such a
+// name is before `find_file` ever sees it, which is what the shims use this
+// for. `Filesystem::filename_to_regex` escapes only dot, parens, brackets,
+// braces and glob characters, so a basename like `+<UDIM>.exr` still forms
+// invalid regex.
+//
+// The marker spellings and the basename scope mirror `udim_setup`
+// (`imagecache.cpp:4128-4136`, `:4149`); the markers are substituted with a
+// benign literal before compiling, because upstream's own substitutions are
+// fixed, always-valid fragments — compilability hinges on the remainder.
+inline bool
+malformed_udim_pattern(OIIO::string_view filename)
+{
+    static const char* const markers[]
+        = { "<UDIM>", "%(UDIM)d", "<u>",      "<v>",     "<uvtile>",
+            "_u##v##", "<U>",      "<V>",      "<UVTILE>" };
+    std::string name = OIIO::Filesystem::filename(std::string(filename));
+    bool udim_like   = false;
+    for (const char* marker : markers) {
+        for (size_t pos = name.find(marker); pos != std::string::npos;
+             pos = name.find(marker)) {
+            udim_like = true;
+            name.replace(pos, std::strlen(marker), "0000");
+        }
+    }
+    if (!udim_like)
+        return false;
+    // A literal, existing file is never treated as a pattern by udim_setup.
+    if (OIIO::Filesystem::exists(filename))
+        return false;
+    try {
+        std::regex probe(OIIO::Filesystem::filename_to_regex(name));
+        return false;
+    } catch (const std::exception&) {
+        return true;
+    }
 }
 
 }  // namespace oiio::detail

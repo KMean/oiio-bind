@@ -149,8 +149,20 @@ ImageHandle*
 imagecache_get_image_handle(ImageCache& imagecache, rust::Str filename,
                             Perthread* thread_info, const TextureOpt* options)
 {
+    // A malformed UDIM-like name must be stopped before find_file: the
+    // regex throw inside the ImageCacheFile constructor leaks a manually
+    // held file-cache bin lock (see ffi_pixel.h), so catching alone would
+    // leave later queries deadlocking.
+    if (detail::malformed_udim_pattern(
+            OIIO::string_view(filename.data(), filename.size())))
+        return nullptr;
     OIIO::ustring c_filename(filename.data(), filename.size());
-    return imagecache.get_image_handle(c_filename, thread_info, options);
+    // Regex barrier, belt and braces.
+    try {
+        return imagecache.get_image_handle(c_filename, thread_info, options);
+    } catch (const std::exception&) {
+        return nullptr;
+    }
 }
 
 bool
@@ -170,10 +182,20 @@ imagecache_get_image_info(ImageCache& imagecache, rust::Str filename,
                           int subimage, int miplevel, rust::Str dataname,
                           TypeDesc datatype, uint8_t* data)
 {
+    // Stopped before find_file — the regex throw inside the ImageCacheFile
+    // constructor leaks a manually held bin lock (see ffi_pixel.h) — with
+    // the catch below as belt and braces.
+    if (detail::malformed_udim_pattern(
+            OIIO::string_view(filename.data(), filename.size())))
+        return false;
     OIIO::ustring c_filename(filename.data(), filename.size());
     OIIO::ustring c_dataname(dataname.data(), dataname.size());
-    return imagecache.get_image_info(c_filename, subimage, miplevel, c_dataname,
-                                     datatype, (void*)data);
+    try {
+        return imagecache.get_image_info(c_filename, subimage, miplevel,
+                                         c_dataname, datatype, (void*)data);
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 bool
@@ -202,9 +224,17 @@ imagecache_get_imagespec_copy(ImageCache& imagecache, rust::Str filename,
                               int subimage)
 {
     auto spec = std::make_unique<ImageSpec>();
-    OIIO::ustring c_filename(filename.data(), filename.size());
-    if (!imagecache.get_imagespec(c_filename, *spec, subimage))
+    if (detail::malformed_udim_pattern(
+            OIIO::string_view(filename.data(), filename.size())))
         return {};
+    OIIO::ustring c_filename(filename.data(), filename.size());
+    // Regex barrier: see the note in imagecache_get_image_info.
+    try {
+        if (!imagecache.get_imagespec(c_filename, *spec, subimage))
+            return {};
+    } catch (const std::exception&) {
+        return {};
+    }
     return spec;
 }
 
@@ -227,16 +257,25 @@ imagecache_get_cache_dimensions_copy(ImageCache& imagecache,
 {
     OIIO::ustring c_filename(filename.data(), filename.size());
     ImageSpec native_spec;
-    if (!imagecache.get_imagespec(c_filename, native_spec, subimage))
+    if (detail::malformed_udim_pattern(
+            OIIO::string_view(filename.data(), filename.size())))
         return {};
+    // Regex barrier: see the note in imagecache_get_image_info.
+    try {
+        if (!imagecache.get_imagespec(c_filename, native_spec, subimage))
+            return {};
 
-    // get_cache_dimensions only overwrites the compact ImageDims prefix.
-    // Seed the object so the untouched format and semantic fields stay valid.
-    auto spec = std::make_unique<ImageSpec>(native_spec);
-    if (!imagecache.get_cache_dimensions(c_filename, *spec, subimage,
-                                         miplevel))
+        // get_cache_dimensions only overwrites the compact ImageDims prefix.
+        // Seed the object so the untouched format and semantic fields stay
+        // valid.
+        auto spec = std::make_unique<ImageSpec>(native_spec);
+        if (!imagecache.get_cache_dimensions(c_filename, *spec, subimage,
+                                             miplevel))
+            return {};
+        return spec;
+    } catch (const std::exception&) {
         return {};
-    return spec;
+    }
 }
 
 std::unique_ptr<ImageSpec>
@@ -248,7 +287,21 @@ imagecache_get_image_spec_at_copy_with_error(ImageCache& imagecache,
     error = rust::String();
     ImageSpec native_spec;
     OIIO::ustring c_filename(filename.data(), filename.size());
-    if (!imagecache.get_imagespec(c_filename, native_spec, subimage)) {
+    if (detail::malformed_udim_pattern(
+            OIIO::string_view(filename.data(), filename.size()))) {
+        error = rust::String::lossy(
+            "the UDIM-like name cannot form a valid tile pattern");
+        return {};
+    }
+    // Regex barrier: see the note in imagecache_get_image_info.
+    bool spec_ok = false;
+    try {
+        spec_ok = imagecache.get_imagespec(c_filename, native_spec, subimage);
+    } catch (const std::exception& thrown) {
+        error = rust::String::lossy(thrown.what());
+        return {};
+    }
+    if (!spec_ok) {
         error = take_cache_error(imagecache);
         return {};
     }
@@ -295,7 +348,15 @@ imagecache_get_thumbnail(ImageCache& imagecache, rust::Str filename,
                          ImageBuf& thumbnail, int subimage)
 {
     OIIO::ustring c_filename(filename.data(), filename.size());
-    return imagecache.get_thumbnail(c_filename, thumbnail, subimage);
+    if (detail::malformed_udim_pattern(
+            OIIO::string_view(filename.data(), filename.size())))
+        return false;
+    // Regex barrier: see the note in imagecache_get_image_info.
+    try {
+        return imagecache.get_thumbnail(c_filename, thumbnail, subimage);
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 bool
@@ -362,9 +423,21 @@ imagecache_get_pixels_span_with_error(
         return false;
     }
 
-    if (imagecache_get_pixels_span(imagecache, filename, subimage, miplevel,
-                                   roi, format, result))
-        return true;
+    if (detail::malformed_udim_pattern(
+            OIIO::string_view(filename.data(), filename.size()))) {
+        error = rust::String::lossy(
+            "the UDIM-like name cannot form a valid tile pattern");
+        return false;
+    }
+    // Regex barrier: see the note in imagecache_get_image_info.
+    try {
+        if (imagecache_get_pixels_span(imagecache, filename, subimage,
+                                       miplevel, roi, format, result))
+            return true;
+    } catch (const std::exception& thrown) {
+        error = rust::String::lossy(thrown.what());
+        return false;
+    }
     error = take_cache_error(imagecache);
     return false;
 }

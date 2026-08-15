@@ -2,8 +2,38 @@
 
 This fork's changes, newest first.
 
-## Unreleased
+## 0.2.0 — 2026-08-15
 
+Both crates move to 0.2.0 together: `oiio-sys` gained the handle bridge and
+the pattern barriers, and `oiio` builds its new surface on them.
+
+- The seventh adversarial review, scoped to the handle surface, confirmed
+  four findings, fixed here: missing-color fills are now exact for lookups
+  wider than four channels when the file cannot be read (the shim fills
+  them itself; OpenImageIO's own fill repeats the color's first four
+  values — upstream issue 18 — and still does so for an existing UDIM
+  set's unpopulated tile, which the `missing_color` documentation now
+  says); a UDIM-like name that cannot form a valid tile pattern (such as
+  `+<UDIM>.exr`) is refused with a clear error everywhere a name enters —
+  OpenImageIO compiles the pattern into a `std::regex` with no guard
+  *while holding a manually released file-cache bin lock*, so the escaping
+  exception used to abort the process through the bridge, and merely
+  catching it would leak the lock and deadlock the next query (upstream
+  issue 19); and a UDIM set whose every populated tile is unreadable is
+  now treated as missing — upstream's aggregate can report success while
+  copying uninitialised stack (issue 15), which previously could turn
+  into a spurious refusal quoting garbage.
+- `TextureHandle`: resolve a texture name once, look up many times without
+  the per-call name hash — `TextureSystem::handle` returns a handle that
+  borrows the system, so invalidation (which destroys the state handles
+  point into, and takes `&mut self`) cannot happen while one is alive; the
+  borrow checker refuses it. Handle lookups (`texture`, `environment`)
+  carry the identical bounds checks and missing-color contract as their
+  by-name twins, through the same shared validation. Creation verifies the
+  file for real: OpenImageIO's `good()` is only the broken flag, which a
+  never-opened missing file has not earned, so the wrapper also runs the
+  `exists` probe — while UDIM patterns remain valid handles whose lookups
+  resolve concrete tiles per call.
 - A fully independent corpus differential: `contrib/corpus_hash.cpp` is a
   standalone C++ program using nothing but public OpenImageIO API — none of
   this crate's shims — and `examples/corpus_hash.rs` prints the identical

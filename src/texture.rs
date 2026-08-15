@@ -478,6 +478,13 @@ pub struct TextureOptions {
     /// fills the result with these values and succeeds — the mechanism
     /// renderers use so one lost texture does not kill a frame. It needs
     /// one value per requested channel. Unset, missing textures are errors.
+    ///
+    /// One caveat survives from OpenImageIO: when the *file* is missing the
+    /// fill is exact, but when an existing UDIM set's individual tile is
+    /// unpopulated, lookups wider than four channels receive the color's
+    /// first four values repeated — OpenImageIO fills per four-channel
+    /// chunk and never advances the color (drafted as upstream issue 18 in
+    /// `contrib/upstream-issues.md`).
     pub missing_color: Option<Vec<f32>>,
 }
 
@@ -518,6 +525,171 @@ impl TextureOptions {
             t_width: self.t_width,
             fill: self.fill,
         })
+    }
+}
+
+/// A texture name already resolved against a [`TextureSystem`].
+///
+/// Looking up through a handle skips the name-table hash every by-name call
+/// performs — the difference renderers care about at millions of lookups per
+/// frame. A handle borrows the system, so it cannot outlive it, and
+/// invalidation (which destroys the state handles point into, and takes
+/// `&mut self` on the system) cannot happen while any handle is alive.
+pub struct TextureHandle<'system> {
+    system: &'system TextureSystem,
+    inner: *mut sys::texture::TextureHandle,
+}
+
+// SAFETY: a handle is a resolved reference to file state the texture system
+// owns, and every operation on it goes through the system, whose lookup
+// paths are the thread-safe surface `TextureSystem`'s own Send/Sync argument
+// rests on. OpenImageIO's API pairs shared handles with per-thread state it
+// manages itself when none is passed, which is what these wrappers do.
+unsafe impl Send for TextureHandle<'_> {}
+unsafe impl Sync for TextureHandle<'_> {}
+
+impl TextureHandle<'_> {
+    /// The texture name this handle resolved to.
+    pub fn filename(&self) -> String {
+        let inner = self.inner;
+        self.system.with_system(|system| {
+            // SAFETY: the handle is live for as long as the borrow of the
+            // system.
+            unsafe { sys::texture::texturesystem_handle_filename(system, inner) }
+        })
+    }
+
+    /// Whether the texture is still readable — false once the file has
+    /// become broken since the handle was made.
+    pub fn is_good(&self) -> bool {
+        let inner = self.inner;
+        self.system.with_system(|system| {
+            // SAFETY: as in `filename`.
+            unsafe { sys::texture::texturesystem_handle_good(system, inner) }
+        })
+    }
+
+    fn exists(&self) -> bool {
+        let inner = self.inner;
+        self.system.with_system(|system| {
+            // SAFETY: as in `filename`.
+            unsafe { sys::texture::texturesystem_handle_exists(system, inner) }
+        })
+    }
+
+    /// A filtered lookup through the handle; identical semantics to
+    /// [`TextureSystem::texture`], without the per-call name lookup.
+    pub fn texture(
+        &self,
+        options: &TextureOptions,
+        s: f32,
+        t: f32,
+        derivatives: Derivatives,
+        result: &mut [f32],
+    ) -> Result<()> {
+        if result.is_empty() {
+            return Err(Error::InvalidRoi(
+                "a texture lookup needs at least one channel".to_owned(),
+            ));
+        }
+        let missing_color = TextureSystem::validate_missing_color(options, result.len())?;
+        let options = options.to_sys()?;
+        let inner = self.inner;
+
+        let mut error = String::new();
+        let succeeded = self.system.with_system(|system| {
+            // SAFETY: the handle is live for as long as the borrow of the
+            // system, and the slices are exactly as validated above.
+            unsafe {
+                sys::texture::texturesystem_texture_by_handle(
+                    system,
+                    inner,
+                    &options,
+                    missing_color,
+                    s,
+                    t,
+                    derivatives.dsdx,
+                    derivatives.dtdx,
+                    derivatives.dsdy,
+                    derivatives.dtdy,
+                    result,
+                    &mut error,
+                )
+            }
+        });
+        if succeeded {
+            Ok(())
+        } else {
+            if error.is_empty() {
+                error = self
+                    .system
+                    .with_system(sys::texture::texturesystem_geterror);
+            }
+            Err(Error::operation("texture lookup", error))
+        }
+    }
+
+    /// An environment lookup through the handle; identical semantics to
+    /// [`TextureSystem::environment`].
+    pub fn environment(
+        &self,
+        options: &TextureOptions,
+        direction: [f32; 3],
+        d_dx: [f32; 3],
+        d_dy: [f32; 3],
+        result: &mut [f32],
+    ) -> Result<()> {
+        if result.is_empty() {
+            return Err(Error::InvalidRoi(
+                "an environment lookup needs at least one channel".to_owned(),
+            ));
+        }
+        let missing_color = TextureSystem::validate_missing_color(options, result.len())?;
+        let options = options.to_sys()?;
+        let inner = self.inner;
+
+        let mut error = String::new();
+        let succeeded = self.system.with_system(|system| {
+            // SAFETY: as in `texture`.
+            unsafe {
+                sys::texture::texturesystem_environment_by_handle(
+                    system,
+                    inner,
+                    &options,
+                    missing_color,
+                    direction[0],
+                    direction[1],
+                    direction[2],
+                    d_dx[0],
+                    d_dx[1],
+                    d_dx[2],
+                    d_dy[0],
+                    d_dy[1],
+                    d_dy[2],
+                    result,
+                    &mut error,
+                )
+            }
+        });
+        if succeeded {
+            Ok(())
+        } else {
+            if error.is_empty() {
+                error = self
+                    .system
+                    .with_system(sys::texture::texturesystem_geterror);
+            }
+            Err(Error::operation("environment lookup", error))
+        }
+    }
+}
+
+impl std::fmt::Debug for TextureHandle<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TextureHandle")
+            .field("filename", &self.filename())
+            .finish_non_exhaustive()
     }
 }
 
@@ -760,6 +932,50 @@ impl TextureSystem {
             }
             Err(Error::operation("environment lookup", error))
         }
+    }
+
+    /// Resolve a texture name to a handle for repeated lookups.
+    ///
+    /// Every by-name lookup pays a name-table hash; a handle pays it once,
+    /// which is why renderers resolve their textures at scene load. The
+    /// handle borrows this system, so invalidation — which destroys the
+    /// state handles point into and takes `&mut self` — cannot happen while
+    /// one is alive; the borrow checker refuses it.
+    ///
+    /// A name whose file cannot be opened is an error here rather than a
+    /// handle that fails every lookup. A UDIM pattern is a valid handle:
+    /// its lookups resolve the concrete tile per call, exactly as by-name
+    /// lookups do. A file that becomes unreadable *after* the handle was
+    /// made behaves like any lost texture — lookups error, or fill with
+    /// [`TextureOptions::missing_color`] when one is set.
+    pub fn handle(&self, texture_path: &Path) -> Result<TextureHandle<'_>> {
+        let filename = path_to_utf8(texture_path)?;
+        let inner = self.with_system(|system| {
+            // SAFETY: the name is a plain string; the returned pointer is
+            // owned by the texture system, not the caller.
+            unsafe { sys::texture::texturesystem_get_texture_handle(system, filename) }
+        });
+        if inner.is_null() {
+            return Err(Error::OpenImage {
+                path: texture_path.to_path_buf(),
+                message: "the texture system could not resolve the name".to_owned(),
+            });
+        }
+        let handle = TextureHandle {
+            system: self,
+            inner,
+        };
+        // good() alone is only OpenImageIO's broken flag, which a
+        // never-opened missing file has not earned yet; the exists probe
+        // verifies the file for real (and answers true for UDIM patterns,
+        // whose virtual record is never opened).
+        if !handle.is_good() || !handle.exists() {
+            return Err(Error::OpenImage {
+                path: texture_path.to_path_buf(),
+                message: "the texture system could not open or read the file".to_owned(),
+            });
+        }
+        Ok(handle)
     }
 
     /// Whether the name is a UDIM pattern, such as `tex.<UDIM>.exr` or the

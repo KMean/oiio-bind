@@ -1,6 +1,6 @@
 # Draft reports for OpenImageIO
 
-Seventeen issues from building Rust bindings against OpenImageIO 3.1/3.2, plus
+Nineteen issues from building Rust bindings against OpenImageIO 3.1/3.2, plus
 one open observation not yet settled enough to report.
 
 Issues 1 and 2 have self-contained reproductions, so a maintainer running one
@@ -1119,6 +1119,68 @@ probe instances inside `ImageInput::create` (`imageioplugin.cpp:686-687`,
 `valid_file` as unusable on open readers) would close it. Found while
 binding the probe for Rust; the binding creates a throwaway instance of the
 same plugin.
+
+---
+
+## Issue 18 — `missingcolor` fills repeat their first four values for lookups wider than four channels
+
+Texture and environment lookups of more than four channels are split into
+four-channel chunks by recursion (`texturesys.cpp:1531-1551` in 3.1.9.0,
+same shape on `main`; `environment.cpp:303-322`). The recursion advances
+`result`, the derivative pointers, and `options.firstchannel` per chunk —
+but never `options.missingcolor`. `missing_texture` then writes
+`result[c] = options.missingcolor[c]` for `c` in `0..nchannels` of *each
+chunk* (`texturesys.cpp:1435-1437`), ignoring `firstchannel`.
+
+So an eight-channel lookup with a `missingcolor` of `[c0..c7]` against a
+missing or broken file — or a sparse UDIM set's unpopulated tile — returns
+`[c0, c1, c2, c3, c0, c1, c2, c3]`. In bounds, reported as success, and
+wrong for every channel past the fourth, which is precisely the multi-AOV
+case where per-channel missing values (a distinctive sentinel per AOV)
+would be used.
+
+The fix is to make `missing_texture` honour the chunk position: either
+advance a copy of the pointer alongside the recursion, or index
+`missingcolor[options.firstchannel + c]` with the documented requirement
+that the array covers the requested channel range.
+
+---
+
+## Issue 19 — a malformed UDIM-like filename aborts the caller: `udim_setup` compiles its tile regex unguarded
+
+`ImageCacheFile::udim_setup` builds the tile-matching pattern from the
+caller's filename and compiles it with `std::regex decoder(pat);` — no
+`try`/`catch` (`imagecache.cpp:4159` in 3.1.9.0; identical at 3.1.16.0 and
+on `main`; zero `catch` anywhere in `imagecache.cpp`).
+`Filesystem::filename_to_regex` escapes only `.()[]{}` and the glob
+characters (`filesystem.cpp:1123-1142`), so a basename that is invalid
+regex after that partial escaping — a leading quantifier is the simplest:
+`+<UDIM>.exr` becomes `+([0-9]{4})\.exr` — throws `std::regex_error` out
+of the `ImageCacheFile` constructor, through `find_file`, and out of
+whichever public API first touched the name: `get_image_info`,
+`get_image_handle`, `TextureSystem::get_texture_handle`, a texture lookup.
+
+Callers that cannot unwind — C bindings, `noexcept` boundaries, and every
+binding built on cxx — terminate outright; C++ callers get an exception
+from functions whose error contract is a `false` return plus `geterror()`.
+And catching does not make it survivable: the throwing constructor runs
+between `find_file`'s *manual* `m_files.lock_bin(filename)` /
+`m_files.unlock_bin(bin)` pair (`imagecache.cpp:1542-1553`), so the
+unwinding exception leaks the held file-cache bin lock — a caller that
+catches and retries, or merely touches another file hashing to the same
+bin, deadlocks. Measured through a catch-wrapped binding: the first query
+returns false, the second blocks forever.
+Notably, `get_directory_entries` guards its own compilation of the same
+pattern (`filesystem.cpp:279-300`) — but its result is discarded and the
+pattern recompiled bare at `:4159`.
+
+The fix is a `try`/`catch` around the `decoder` construction (or
+validating the pattern once, where `get_directory_entries` already does),
+marking the file broken with a clear message instead of throwing; RAII for
+the bin lock would close the deadlock half independently. Found while
+binding texture handles for Rust; the binding refuses such names before
+`find_file` can see them, because a barrier alone would trade the abort
+for the deadlock.
 
 ---
 

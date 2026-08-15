@@ -260,3 +260,21 @@ fn udim_and_broken_file_queries_answer_honestly() {
     assert_eq!(cache.constant_color(&plain, 0).unwrap(), None);
     assert!(cache.thumbnail(&plain, 0).unwrap().is_none());
 }
+
+/// The cache side of the malformed-pattern barrier: a name OpenImageIO
+/// cannot compile into a tile regex is answered, never aborted on.
+#[test]
+fn malformed_udim_patterns_are_answered_not_aborted() {
+    let scratch = ScratchDir::new("badpattern");
+    let cache = ImageCache::new().unwrap();
+    let malformed = scratch.file("+<UDIM>.exr");
+
+    assert!(!cache.is_udim(&malformed).unwrap());
+    assert!(!cache.exists(&malformed).unwrap());
+    assert!(cache.image_spec(&malformed).is_err());
+    assert!(
+        cache.thumbnail(&malformed, 0).is_err()
+            || cache.thumbnail(&malformed, 0).unwrap().is_none()
+    );
+    assert!(cache.subimage_count(&malformed).is_err());
+}

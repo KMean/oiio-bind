@@ -691,3 +691,184 @@ fn missing_color_covers_corrupt_files_but_not_declined_probes() {
         "a corrupt file takes the missing color"
     );
 }
+
+/// A handle is the same lookup without the per-call name hash: bit-identical
+/// answers to the by-name path, a real filename, and the same bounds
+/// refusals.
+#[test]
+fn handle_lookups_match_by_name_lookups() {
+    let scratch = ScratchDir::new("texhandle");
+    let path = a_built_texture(&scratch);
+    let textures = TextureSystem::new().unwrap();
+    let options = TextureOptions::default();
+    let derivatives = Derivatives::uniform(1.0 / 64.0);
+
+    let handle = textures.handle(&path).unwrap();
+    assert!(handle.is_good());
+    assert!(
+        handle.filename().ends_with("built.tx"),
+        "unexpected filename: {}",
+        handle.filename()
+    );
+
+    for (s, t) in [(0.1_f32, 0.2_f32), (0.5, 0.5), (0.9, 0.7), (0.25, 0.75)] {
+        let mut by_name = [0.0_f32; 3];
+        textures
+            .texture(&path, &options, s, t, derivatives, &mut by_name)
+            .unwrap();
+        let mut by_handle = [0.0_f32; 3];
+        handle
+            .texture(&options, s, t, derivatives, &mut by_handle)
+            .unwrap();
+        assert_eq!(by_handle, by_name, "at ({s}, {t})");
+    }
+
+    // The same bounds the by-name path refuses, refused through the handle.
+    let mut rgb = [0.0_f32; 3];
+    let bad_subimage = TextureOptions {
+        subimage: 5,
+        ..TextureOptions::default()
+    };
+    let error = handle
+        .texture(&bad_subimage, 0.5, 0.5, derivatives, &mut rgb)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("subimage"),
+        "unexpected error: {error}"
+    );
+    let bad_channel = TextureOptions {
+        first_channel: 99,
+        ..TextureOptions::default()
+    };
+    let error = handle
+        .texture(&bad_channel, 0.5, 0.5, derivatives, &mut rgb)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("channels"),
+        "unexpected error: {error}"
+    );
+
+    // A missing file is refused at handle creation, not on every lookup.
+    assert!(textures.handle(&scratch.file("never-made.tx")).is_err());
+}
+
+/// A UDIM pattern is a valid handle whose lookups resolve concrete tiles per
+/// call, exactly like by-name lookups do.
+#[test]
+fn handles_resolve_udim_patterns() {
+    let scratch = ScratchDir::new("texhandleudim");
+    for (id, color) in [("1001", [0.9_f32, 0.1, 0.1]), ("1002", [0.1, 0.9, 0.1])] {
+        let spec = ImageSpec::new(32, 32, 3, PixelFormat::F32).unwrap();
+        let mut tile = oiio::ImageBuf::new(&spec).unwrap();
+        oiio::algo::fill(&mut tile, &color, None).unwrap();
+        oiio::make_texture_from_buffer(
+            oiio::TextureMode::Texture,
+            &tile,
+            &scratch.file(&format!("tile.{id}.tx")),
+            &oiio::TextureConfig::new().with_format(PixelFormat::F32),
+        )
+        .unwrap();
+    }
+    let pattern = scratch.file("tile.<UDIM>.tx");
+    let textures = TextureSystem::new().unwrap();
+    let options = TextureOptions::default();
+    let derivatives = Derivatives::uniform(1.0 / 32.0);
+
+    let handle = textures.handle(&pattern).unwrap();
+    for (s, tile_color) in [(0.5_f32, [0.9_f32, 0.1, 0.1]), (1.5, [0.1, 0.9, 0.1])] {
+        let mut by_handle = [0.0_f32; 3];
+        handle
+            .texture(&options, s, 0.5, derivatives, &mut by_handle)
+            .unwrap();
+        let mut by_name = [0.0_f32; 3];
+        textures
+            .texture(&pattern, &options, s, 0.5, derivatives, &mut by_name)
+            .unwrap();
+        assert_eq!(by_handle, by_name, "handle and name agree at s={s}");
+        for (channel, (got, wanted)) in by_handle.iter().zip(tile_color).enumerate() {
+            assert!(
+                (got - wanted).abs() < 1e-3,
+                "s={s} channel {channel}: {got} != {wanted}"
+            );
+        }
+    }
+
+    // A tile nobody made: an error without a missing color, that color with.
+    let mut rgb = [0.0_f32; 3];
+    assert!(handle
+        .texture(&options, 7.5, 3.5, derivatives, &mut rgb)
+        .is_err());
+    let with_missing = TextureOptions {
+        missing_color: Some(vec![0.2, 0.4, 0.6]),
+        ..TextureOptions::default()
+    };
+    handle
+        .texture(&with_missing, 7.5, 3.5, derivatives, &mut rgb)
+        .unwrap();
+    assert_eq!(
+        rgb,
+        [0.2, 0.4, 0.6],
+        "the sparse hole takes the missing color"
+    );
+}
+
+/// The seventh review's regressions: a missing fill wider than four channels
+/// is exact (the shim fills it, where OpenImageIO would repeat the color's
+/// first four values), and a malformed UDIM-like name is an error, not a
+/// process abort — OpenImageIO compiles the tile pattern into a std::regex
+/// with no guard, and the exception used to cross the bridge as terminate.
+#[test]
+fn missing_fills_are_exact_and_malformed_patterns_are_errors() {
+    let scratch = ScratchDir::new("seventhtex");
+    let textures = TextureSystem::new().unwrap();
+    let derivatives = Derivatives::uniform(0.01);
+
+    // Six distinct missing-color values through a six-channel lookup of a
+    // file that was never made: every value lands, none repeat.
+    let color = vec![0.1_f32, 0.2, 0.3, 0.4, 0.5, 0.6];
+    let options = TextureOptions {
+        missing_color: Some(color.clone()),
+        ..TextureOptions::default()
+    };
+    let mut wide = [0.0_f32; 6];
+    textures
+        .texture(
+            &scratch.file("never-made.tx"),
+            &options,
+            0.5,
+            0.5,
+            derivatives,
+            &mut wide,
+        )
+        .unwrap();
+    assert_eq!(wide.to_vec(), color, "the missing fill is exact past four");
+
+    // A name that becomes invalid regex after OpenImageIO's partial
+    // escaping: every path that touches it answers instead of aborting.
+    let malformed = scratch.file("+<UDIM>.exr");
+    assert!(textures.handle(&malformed).is_err());
+    let mut rgb = [0.0_f32; 3];
+    assert!(textures
+        .texture(
+            &malformed,
+            &TextureOptions::default(),
+            0.5,
+            0.5,
+            derivatives,
+            &mut rgb
+        )
+        .is_err());
+    // Even with a missing color it is refused: a malformed pattern is a
+    // typo to surface, not a lost file to paper over.
+    let error = textures
+        .texture(&malformed, &options, 0.5, 0.5, derivatives, &mut wide)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("tile pattern"),
+        "unexpected error: {error}"
+    );
+    assert!(!textures.is_udim(&malformed).unwrap());
+    assert_eq!(textures.resolve_udim(&malformed, 0.5, 0.5).unwrap(), None);
+    let inventory = textures.inventory_udim(&malformed).unwrap();
+    assert_eq!(inventory.tiles.len(), 0);
+}

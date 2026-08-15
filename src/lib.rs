@@ -97,7 +97,7 @@ pub use pixel_format::PixelFormat;
 pub use roi::Roi;
 pub use texture::{
     make_texture, make_texture_from_buffer, Derivatives, InterpolationMode, MipMode, TextureConfig,
-    TextureMode, TextureOptions, TextureSystem, UdimInventory, WrapMode,
+    TextureHandle, TextureMode, TextureOptions, TextureSystem, UdimInventory, WrapMode,
 };
 
 /// Backwards-compatible name for errors returned by `ImageInput`.

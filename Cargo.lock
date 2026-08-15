@@ -284,7 +284,7 @@ dependencies = [
 
 [[package]]
 name = "oiio"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "cxx",
@@ -296,7 +296,7 @@ dependencies = [
 
 [[package]]
 name = "oiio-sys"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "cxx",

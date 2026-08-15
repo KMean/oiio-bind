@@ -112,11 +112,12 @@ behavioural difference between patch releases was found — see `mad` in
   on all 463 readable subimages and on every error/deep verdict. This is
   the check the in-process differentials cannot make: a bug inside the
   crate's own C++ shims would show up here.
-- [ ] `TextureHandle`-based lookups, the per-call name-hash skip renderers
-  use. Deferred: the API can arrive without breaking anything, and its
-  safety design (a handle borrowing the system, per-thread records) is
-  `ImageCache::handle`'s, already proven here. Until then every lookup is
-  by name.
+- [x] `TextureHandle`-based lookups, the per-call name-hash skip renderers
+  use. The safety design is `ImageCache::handle`'s: the handle borrows the
+  system, so invalidation cannot happen while one lives. Lookups share the
+  by-name path's validation (bounds, missing color, the UDIM gates), and
+  creation runs a real `exists` probe because OpenImageIO's `good()` is
+  only the broken flag, which a never-opened missing file passes.
 
 ## Notes on the OpenImageIO 3.1 span API
 

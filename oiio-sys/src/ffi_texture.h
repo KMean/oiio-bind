@@ -6,6 +6,7 @@
 
 namespace oiio {
 using TextureSystem = OIIO::TextureSystem;
+using TextureHandle = OIIO::TextureSystem::TextureHandle;
 
 struct TextureLookupOptions;
 
@@ -41,6 +42,48 @@ texturesystem_environment(TextureSystem& texturesystem,
                           float drdx_z, float drdy_x, float drdy_y,
                           float drdy_z, rust::Slice<float> result,
                           rust::String& error);
+
+// The handle path: resolve a name once, look up many times without the
+// per-call name hash. The handle points into state the texture system owns
+// and stays valid until the file is invalidated. Both lookups carry the
+// same bounds checks and missing-color contract as their by-name twins.
+TextureHandle*
+texturesystem_get_texture_handle(TextureSystem& texturesystem,
+                                 const rust::Str filename);
+
+bool
+texturesystem_handle_good(TextureSystem& texturesystem, TextureHandle* handle);
+
+// Whether the handle's file really exists and is readable; good() alone is
+// only the broken flag, which a never-opened missing file has not earned.
+bool
+texturesystem_handle_exists(TextureSystem& texturesystem,
+                            TextureHandle* handle);
+
+rust::String
+texturesystem_handle_filename(TextureSystem& texturesystem,
+                              TextureHandle* handle);
+
+bool
+texturesystem_texture_by_handle(TextureSystem& texturesystem,
+                                TextureHandle* handle,
+                                const TextureLookupOptions& options,
+                                rust::Slice<const float> missing_color,
+                                float s, float t, float dsdx, float dtdx,
+                                float dsdy, float dtdy,
+                                rust::Slice<float> result,
+                                rust::String& error);
+
+bool
+texturesystem_environment_by_handle(TextureSystem& texturesystem,
+                                    TextureHandle* handle,
+                                    const TextureLookupOptions& options,
+                                    rust::Slice<const float> missing_color,
+                                    float r_x, float r_y, float r_z,
+                                    float drdx_x, float drdx_y, float drdx_z,
+                                    float drdy_x, float drdy_y, float drdy_z,
+                                    rust::Slice<float> result,
+                                    rust::String& error);
 
 // Whether the name is a UDIM pattern such as "tex.<UDIM>.exr".
 bool
