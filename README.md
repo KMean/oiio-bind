@@ -23,11 +23,11 @@ Building `oiio-sys` requires an OpenImageIO 3.1.4 or newer 3.1.x development ins
 including the C++ headers and libraries. The bindings currently target the
 OpenImageIO 3.1 API.
 
-These crates are not published to crates.io yet, so depend on the repository:
+Add the crate from crates.io:
 
 ```toml
 [dependencies]
-oiio = { git = "https://github.com/KMean/oiio-bind", branch = "main" }
+oiio = "0.1"
 ```
 
 Read an image through a private, thread-safe cache:
@@ -349,9 +349,9 @@ the process with it.
 - [source repository](https://github.com/KMean/oiio-bind)
 - [OpenImageIO 3.1 C++ documentation](https://openimageio.readthedocs.io/en/v3.1.12.0/)
 
-`oiio` and `oiio-sys` are not on crates.io yet, so there are no package or
-docs.rs links to give. Build the API documentation locally with
-`cargo doc --workspace --open`.
+- [oiio on crates.io](https://crates.io/crates/oiio) and
+  [its API documentation on docs.rs](https://docs.rs/oiio)
+- [oiio-sys on crates.io](https://crates.io/crates/oiio-sys)
 
 
 ## Credits

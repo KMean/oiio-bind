@@ -1,11 +1,11 @@
 # Publishing to crates.io
 
-Neither `oiio` nor `oiio-sys` has ever been published; both names are free.
-This is the first release, and both crates go out at 0.1.0.
+**Done: both crates were published at 0.1.0 on 2026-08-15.** The checklist
+below is kept for the next release; the "Afterwards" items were applied the
+same day (README updated, `v0.1.0` tagged).
 
-Everything below has been checked except the two `cargo publish` commands
-themselves, which need a crates.io token and are irreversible: a published
-version can be yanked, but never replaced or deleted.
+Remember that publishing is irreversible: a published version can be yanked,
+but never replaced or deleted.
 
 ## Order
 
