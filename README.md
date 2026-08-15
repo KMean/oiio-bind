@@ -274,10 +274,18 @@ cargo run --release --example oiiox -- -i input.exr --info --stats --resize 512x
 cargo run --release --example oiiox -- -i a.exr -i b.exr --diff
 ```
 
+A `#` or `%04d` in a path runs the chain once per frame, over the frames
+found on disk — a colour-managed proxy sequence is one line:
+
+```bash
+cargo run --release --example oiiox -- -i shot.#.exr --colorconvert lin_srgb srgb --o preview.#.jpg
+```
+
 `--help` lists the whole chain language: reading and writing, `--info`,
 `--stats`, `--resize`, `--flip`/`--flop`, `--premult`/`--unpremult`,
-`--colorconvert`, channel shuffles with `--ch R,G,B,A=1.0`, and `--diff`,
-which exits non-zero when images differ — usable directly in CI.
+`--colorconvert`, channel shuffles with `--ch R,G,B,A=1.0`, `--frames`,
+and `--diff`, which exits non-zero when images differ — usable directly
+in CI.
 
 **`oiio-viewer`**, a minimal image and sequence viewer, lives in
 [`viewer/`](viewer/) as its own crate so the library keeps its dependency

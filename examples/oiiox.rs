@@ -7,9 +7,14 @@
 //! a `--diff` whose images differ beyond the failure threshold makes the run
 //! exit with code 2 once the whole chain has executed.
 //!
+//! A `#` (four digits) or `%0Nd` wildcard in an `-i` or `--o` path turns the
+//! chain into a sequence: it runs once per frame, over the frames found on
+//! disk for the first wildcarded input, or over an explicit `--frames`.
+//!
 //! ```text
 //! cargo run --example oiiox -- -i in.exr --info --stats --resize 512x288 --flip --o out.png
 //! cargo run --example oiiox -- -i render.exr -i reference.exr --diff
+//! cargo run --example oiiox -- -i shot.#.exr --colorconvert lin_srgb srgb --o preview.#.jpg
 //! ```
 
 use std::path::Path;
@@ -50,9 +55,199 @@ fn main() -> ExitCode {
     }
 }
 
-/// Execute the command chain left to right. `Ok(true)` means every command
-/// ran but at least one `--diff` failed.
+/// Split the chain from the frame directive, then run it — once, or once
+/// per frame when any `-i`/`--o` path carries a `#` or `%0Nd` wildcard, in
+/// `oiiotool`'s manner. `Ok(true)` means every command ran but at least one
+/// `--diff` failed.
 fn run(arguments: &[String]) -> CliResult<bool> {
+    let mut chain: Vec<String> = Vec::new();
+    let mut frame_spec: Option<String> = None;
+    let mut words = arguments.iter();
+    while let Some(word) = words.next() {
+        if word == "--frames" {
+            frame_spec = Some(value(&mut words, "--frames")?.to_owned());
+        } else {
+            chain.push(word.clone());
+        }
+    }
+
+    if !chain.iter().any(|word| wildcard_width(word).is_some()) {
+        if frame_spec.is_some() {
+            return Err(
+                "--frames needs a frame wildcard (# or %04d) in an -i or --o path".to_owned(),
+            );
+        }
+        return run_chain(&chain);
+    }
+
+    let frames = match frame_spec {
+        Some(spec) => parse_frames(&spec)?,
+        None => discover_frames(&chain)?,
+    };
+    println!("sequence: {} frame(s)", frames.len());
+    let mut diff_failed = false;
+    for frame in frames {
+        let substituted: Vec<String> = chain
+            .iter()
+            .map(|word| substitute_frame(word, frame))
+            .collect();
+        diff_failed |= run_chain(&substituted)?;
+    }
+    Ok(diff_failed)
+}
+
+/// The width of the frame wildcard in `word`, if it has one: a run of `#`
+/// characters (a single `#` is four digits, `oiiotool`'s convention), or a
+/// printf-style `%0Nd`.
+fn wildcard_width(word: &str) -> Option<usize> {
+    if let Some(start) = word.find('#') {
+        let run = word[start..].chars().take_while(|&c| c == '#').count();
+        return Some(if run == 1 { 4 } else { run });
+    }
+    let percent = word.find("%0")?;
+    let rest = &word[percent + 2..];
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    if !digits.is_empty() && rest[digits.len()..].starts_with('d') {
+        return digits.parse().ok();
+    }
+    None
+}
+
+/// `word` with every frame wildcard replaced by `frame`, zero-padded to the
+/// wildcard's width.
+fn substitute_frame(word: &str, frame: u32) -> String {
+    let Some(width) = wildcard_width(word) else {
+        return word.to_owned();
+    };
+    let number = format!("{frame:0width$}");
+    if word.contains('#') {
+        let mut result = String::new();
+        let mut characters = word.chars().peekable();
+        while let Some(character) = characters.next() {
+            if character == '#' {
+                while characters.peek() == Some(&'#') {
+                    characters.next();
+                }
+                result.push_str(&number);
+            } else {
+                result.push(character);
+            }
+        }
+        result
+    } else {
+        word.replace(&format!("%0{width}d"), &number)
+    }
+}
+
+/// The `--frames` value: `A-B` ranges and single numbers, comma-separated,
+/// e.g. `1-8` or `1,3,9-12`.
+fn parse_frames(spec: &str) -> CliResult<Vec<u32>> {
+    let invalid =
+        || format!("--frames wants numbers and A-B ranges, e.g. 1-8 or 1,3,9-12, got {spec:?}");
+    let mut frames = Vec::new();
+    for part in spec.split(',') {
+        if let Some((from, to)) = part.split_once('-') {
+            let from: u32 = from.trim().parse().map_err(|_| invalid())?;
+            let to: u32 = to.trim().parse().map_err(|_| invalid())?;
+            if from > to {
+                return Err(invalid());
+            }
+            frames.extend(from..=to);
+        } else {
+            frames.push(part.trim().parse().map_err(|_| invalid())?);
+        }
+    }
+    if frames.is_empty() {
+        return Err(invalid());
+    }
+    Ok(frames)
+}
+
+/// Without `--frames`, the frames are whatever exists on disk: the first
+/// wildcarded `-i` pattern's directory is scanned and every file whose name
+/// matches the pattern with digits in the wildcard's place contributes its
+/// number.
+fn discover_frames(chain: &[String]) -> CliResult<Vec<u32>> {
+    let mut words = chain.iter();
+    let pattern = loop {
+        match words.next().map(String::as_str) {
+            Some("-i") => {
+                if let Some(path) = words.next() {
+                    if wildcard_width(path).is_some() {
+                        break path.clone();
+                    }
+                }
+            }
+            Some(_) => {}
+            None => {
+                return Err(
+                    "a frame wildcard in --o needs one in an -i too, or an explicit --frames"
+                        .to_owned(),
+                );
+            }
+        }
+    };
+
+    let path = Path::new(&pattern);
+    let directory = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_owned(),
+        _ => Path::new(".").to_owned(),
+    };
+    let file_pattern = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("the pattern {pattern:?} has no file name"))?;
+    let marker = if file_pattern.contains('#') {
+        let start = file_pattern.find('#').expect("checked above");
+        let run = file_pattern[start..]
+            .chars()
+            .take_while(|&c| c == '#')
+            .count();
+        (start, run)
+    } else {
+        let width = wildcard_width(file_pattern).expect("chosen for its wildcard");
+        let start = file_pattern
+            .find("%0")
+            .expect("printf wildcards start with %0");
+        // The %, the 0, the width digits, and the d.
+        (start, 2 + width.to_string().len() + 1)
+    };
+    let prefix = &file_pattern[..marker.0];
+    let suffix = &file_pattern[marker.0 + marker.1..];
+
+    let mut frames = Vec::new();
+    let describe =
+        |error: std::io::Error| format!("could not scan {}: {error}", directory.display());
+    for entry in std::fs::read_dir(&directory).map_err(describe)? {
+        let entry = entry.map_err(describe)?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(middle) = name
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.strip_suffix(suffix))
+        else {
+            continue;
+        };
+        if !middle.is_empty() && middle.chars().all(|c| c.is_ascii_digit()) {
+            if let Ok(frame) = middle.parse() {
+                frames.push(frame);
+            }
+        }
+    }
+    if frames.is_empty() {
+        return Err(format!(
+            "no files in {} match {file_pattern:?}",
+            directory.display()
+        ));
+    }
+    frames.sort_unstable();
+    frames.dedup();
+    Ok(frames)
+}
+
+/// Execute one command chain left to right. `Ok(true)` means every command
+/// ran but at least one `--diff` failed.
+fn run_chain(arguments: &[String]) -> CliResult<bool> {
     let mut stack: Vec<ImageBuf> = Vec::new();
     let mut diff_failed = false;
     let mut words = arguments.iter();
@@ -387,10 +582,16 @@ has finished.
   --ch <list>                reorder channels by name, index or name=constant,
                              e.g. --ch R,G,B or --ch 2,1,0,A=1.0
   --diff                     compare the two topmost images and pop the later
+  --frames <list>            frames for a wildcard chain, e.g. 1-8 or 1,3,9-12
   --help                     print this text
+
+A # (four digits) or %0Nd in an -i or --o path makes the chain a sequence:
+it runs once per frame, over the frames found on disk for the first
+wildcarded input, or over --frames when given.
 
 examples:
   oiiox -i in.exr --info --stats --resize 512x288 --flip --o out.png
-  oiiox -i render.exr -i reference.exr --diff"
+  oiiox -i render.exr -i reference.exr --diff
+  oiiox -i shot.#.exr --colorconvert lin_srgb srgb --o preview.#.jpg"
     );
 }

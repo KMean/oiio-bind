@@ -4,6 +4,11 @@ This fork's changes, newest first.
 
 ## Unreleased
 
+- `oiiox` runs sequences the way `oiiotool` does: a `#` (four digits) or
+  `%0Nd` wildcard in an `-i` or `--o` path makes the chain execute once
+  per frame, over the frames found on disk for the first wildcarded
+  input or an explicit `--frames 1-8` list — a colour-managed proxy
+  sequence is one command instead of a shell loop.
 - Two demonstration applications built entirely on the public API:
   `examples/oiiox.rs`, an `oiiotool`-flavoured command chain (read, write,
   info, stats, resize, flip/flop, premult/unpremult, colour conversion,
