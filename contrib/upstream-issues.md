@@ -56,7 +56,7 @@ question is unchanged across the whole 3.1 series.
 
 ---
 
-## Issue 1 — filed as #5400, needs a correcting follow-up
+## Issue 1 — filed as #5400; the correcting follow-up was posted 2026-08-14 and the issue retitled
 
 **Title:** `bug: ImageInput::read_image() with an image_span transposes x and y for tiled images`
 

@@ -29,6 +29,15 @@ against a pointer overload declared
 forwards its ranges in order, which is what made me confident this is a slip
 rather than a convention I had misread.
 
+> **STATUS: a revised version of this was POSTED to #5400 on 2026-08-14**
+> (comment 5292609883). The posted comment supersedes this draft and is the
+> source of truth; it reports single-channel measurements (992 of 1024 wrong
+> for 32×32, matching this draft's three-channel geometry exactly) and does
+> not carry the two sentences below that the 2026-08-15 re-verification
+> corrected — the "fixed points = main diagonal" description and the
+> unqualified square-image generalisation were draft-only and never went
+> online. This file is kept for the verification addenda.
+
 **Correction 1: partial edge tiles are not the trigger.** Square images with
 square tiles and partial edge tiles return `true`. The `(xend-x) == width` and
 `(yend-y) == height` escape hatches in `ImageSpec::valid_tile_range` coincide
