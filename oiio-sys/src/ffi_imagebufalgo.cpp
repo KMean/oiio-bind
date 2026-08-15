@@ -1064,6 +1064,18 @@ imagebufalgo_scale(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
     if (refuse_distant_pair(dst, a, b, "scale")
         || refuse_deep_mismatch(dst, a, b, "scale"))
         return false;
+    // A pre-allocated destination wider than the multi-channel input makes
+    // the kernel read a[c] past that input's last pixel: IBAprep clamps the
+    // channel range only to max(dst, a, b), and scale_impl loops it over
+    // the wide operand unchecked. Same class the mad and copy guards close.
+    const int wide = std::max(a.nchannels(), b.nchannels());
+    if (dst.initialized() && !dst.deep() && dst.nchannels() != wide) {
+        dst.errorfmt("scale: the destination is allocated with {} channels "
+                     "and the wider source has {}; use an empty destination "
+                     "or matching channel counts",
+                     dst.nchannels(), wide);
+        return false;
+    }
     // The KWArgs parameter is reserved and ignored in 3.1; not forwarded.
     return OIIO::ImageBufAlgo::scale(dst, a, b, {}, roi, nthreads);
 }
@@ -1163,6 +1175,24 @@ refuse_bad_chan_reduce(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
                      operation, dst.nchannels());
         return true;
     }
+    // The spatial half of the same hazard: upstream clamps only its private
+    // copy of the region against the destination and hands the kernel the
+    // ORIGINAL one, so every position outside a smaller destination's window
+    // lands the write iterator on the buffer's shared blackpixel scratch —
+    // concurrent unsynchronized writes from the thread pool. The walked
+    // region must lie inside the destination's window.
+    if (dst.initialized() && !dst.deep()) {
+        const OIIO::ROI walked = roi.defined() ? roi : src.roi();
+        const OIIO::ROI window = dst.roi();
+        if (walked.xbegin < window.xbegin || walked.xend > window.xend
+            || walked.ybegin < window.ybegin || walked.yend > window.yend) {
+            dst.errorfmt(
+                "{}: the region to reduce does not fit the allocated "
+                "destination's data window; use an empty destination",
+                operation);
+            return true;
+        }
+    }
     return false;
 }
 
@@ -1256,6 +1286,20 @@ imagebufalgo_normalize(ImageBuf& dst, const ImageBuf& src, float in_center,
                      "source is {}; use an empty destination or matching "
                      "formats",
                      dst.spec().format, src.spec().format);
+        return false;
+    }
+    // The kernel writes r[0..2] unconditionally, ignoring the channel
+    // clamp, and upstream refuses only a destination WIDER than the source
+    // -- so a pre-allocated one- or two-channel destination is written past
+    // each pixel and past the end of the allocation at the last one. The
+    // channel counts must match exactly.
+    if (dst.initialized() && !dst.deep()
+        && dst.nchannels() != src.nchannels()) {
+        dst.errorfmt("normalize: the destination is allocated with {} "
+                     "channels and the source has {}; the kernel writes "
+                     "three channels regardless, so use an empty destination "
+                     "or matching counts",
+                     dst.nchannels(), src.nchannels());
         return false;
     }
     // The 3/4-channel refusal is recorded on the SOURCE, not the

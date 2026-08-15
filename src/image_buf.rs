@@ -493,6 +493,20 @@ impl ImageBuf {
         }
         let buf_spec = self.spec()?;
         let out_spec = output.spec();
+        // ImageBuf::write validates the pixels and then overwrites that
+        // verdict with the write's own return, so a failed deferred read
+        // would publish the untouched allocation into the file — or into
+        // in-memory bytes — under a success return. Run the read here,
+        // where its failure is reportable, and refuse a flat buffer whose
+        // pixels never arrived. A deep buffer holds samples, not flat
+        // pixels, and is checked by the deepness guards below instead.
+        if !self.is_deep() {
+            if !self.name().is_empty() && !self.pixels_valid() {
+                let (subimage, mip_level) = (self.subimage(), self.mip_level());
+                self.read_at(subimage, mip_level, None)?;
+            }
+            self.require_filled(OPERATION)?;
+        }
         if self.is_deep() && !out_spec.is_deep() {
             return Err(Error::operation(
                 OPERATION,
@@ -695,10 +709,14 @@ impl ImageBuf {
         let spec = self.spec()?;
         let [origin_x, origin_y, _] = spec.origin();
         let [width, height, _] = spec.dimensions();
+        // Widened to i64: with a negative origin and a huge coordinate the
+        // i32 subtraction wraps negative in release builds, which reads as
+        // "inside" and lets the coordinate through to OpenImageIO's silent
+        // out-of-window skip — the very thing this guard reports.
         let inside = x >= origin_x
             && y >= origin_y
-            && (x - origin_x) < width as i32
-            && (y - origin_y) < height as i32;
+            && (i64::from(x) - i64::from(origin_x)) < i64::from(width)
+            && (i64::from(y) - i64::from(origin_y)) < i64::from(height);
         if inside {
             Ok(())
         } else {
@@ -902,20 +920,21 @@ impl ImageBuf {
         let channel = i32::try_from(channel)
             .map_err(|_| Error::InvalidRoi("channel exceeds i32::MAX".to_owned()))?;
         self.require_wrappable(wrap)?;
-        Ok(sys::imagebuf::imagebuf_getchannel(
-            self.inner(),
-            x,
-            y,
-            0,
-            channel,
-            wrap.to_sys(),
-        ))
+        let value =
+            sys::imagebuf::imagebuf_getchannel(self.inner(), x, y, 0, channel, wrap.to_sys());
+        // The point read triggers the deferred file read, whose failure
+        // OpenImageIO records without telling the iterator, which serves the
+        // untouched allocation; checked after the call, as get_pixels does.
+        self.require_filled("read a channel")?;
+        Ok(value)
     }
 
     /// Every channel of one pixel, written into `values`.
     ///
     /// A slice shorter than the channel count reads that many channels; a
-    /// longer one has its tail zeroed by OpenImageIO.
+    /// longer one has its tail zeroed — by this crate, since OpenImageIO
+    /// writes only the first `channel_count` values and would leave the
+    /// rest holding whatever the caller had there.
     pub fn pixel_at_into(&self, x: i32, y: i32, wrap: Wrap, values: &mut [f32]) -> Result<()> {
         self.require_flat("read a pixel")?;
         self.require_wrappable(wrap)?;
@@ -932,6 +951,16 @@ impl ImageBuf {
                 count,
                 wrap.to_sys(),
             );
+        }
+        let channels = self.channel_count() as usize;
+        if values.len() > channels {
+            values[channels..].fill(0.0);
+        }
+        // Checked after the call: the deferred read happens inside it, and a
+        // failure leaves the slice holding the untouched allocation.
+        if let Err(error) = self.require_filled("read a pixel") {
+            values.fill(0.0);
+            return Err(error);
         }
         Ok(())
     }
@@ -967,7 +996,7 @@ impl ImageBuf {
                 wrap.to_sys(),
             );
         }
-        Ok(())
+        self.finish_point_read(values)
     }
 
     /// [`ImageBuf::interpolated_pixel_into`] with bicubic interpolation.
@@ -989,7 +1018,7 @@ impl ImageBuf {
                 wrap.to_sys(),
             );
         }
-        Ok(())
+        self.finish_point_read(values)
     }
 
     /// A bilinearly interpolated pixel addressed in NDC — `0..1` across the
@@ -1015,7 +1044,7 @@ impl ImageBuf {
                 wrap.to_sys(),
             );
         }
-        Ok(())
+        self.finish_point_read(values)
     }
 
     /// [`ImageBuf::interpolated_pixel_ndc_into`] with bicubic interpolation.
@@ -1037,6 +1066,17 @@ impl ImageBuf {
                 values.as_mut_ptr(),
                 wrap.to_sys(),
             );
+        }
+        self.finish_point_read(values)
+    }
+
+    /// The shared epilogue of the point reads: the deferred file read runs
+    /// inside the call, and a failure leaves the output holding the
+    /// untouched allocation — error and scrub, as `get_pixels_into` does.
+    fn finish_point_read(&self, values: &mut [f32]) -> Result<()> {
+        if let Err(error) = self.require_filled("interpolate a pixel") {
+            values.fill(0.0);
+            return Err(error);
         }
         Ok(())
     }
@@ -1076,11 +1116,15 @@ impl ImageBuf {
 
     fn require_positive_display(&self, operation: &'static str) -> Result<()> {
         let spec = self.spec()?;
-        let [width, height, _] = spec.full_dimensions();
-        if width == 0 || height == 0 {
+        // All three axes: OpenImageIO wraps z as well as x and y whenever a
+        // point falls outside the data window, and a zero full_depth is an
+        // integer division by zero inside wrap_periodic and wrap_mirror.
+        let [width, height, depth] = spec.full_dimensions();
+        if width == 0 || height == 0 || depth == 0 {
             return Err(Error::operation(
                 operation,
-                "the display window has zero size, which this operation divides by".to_owned(),
+                "the display window has a zero-sized axis, which this operation divides by"
+                    .to_owned(),
             ));
         }
         Ok(())

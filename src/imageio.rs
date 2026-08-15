@@ -651,7 +651,12 @@ impl ImageOutput {
                 pixel::as_bytes(pixels),
             )
         };
-        self.check("write image", succeeded)
+        self.check("write image", succeeded)?;
+        // The whole subimage is written now; advancing the scanline cursor
+        // makes a later write_scanlines or write_to refuse with this crate's
+        // message instead of failing format-dependently inside the writer.
+        self.mark_whole_subimage_written();
+        Ok(())
     }
 
     /// Write a contiguous range of scanlines of a two-dimensional image.
@@ -753,7 +758,11 @@ impl ImageOutput {
                 pixel::as_bytes(pixels),
             )
         };
-        self.check("write tiles", succeeded)
+        self.check("write tiles", succeeded)?;
+        // Tiles touched this subimage; conservatively mark it written so a
+        // later write_to refuses rather than interleaving format-dependently.
+        self.mark_whole_subimage_written();
+        Ok(())
     }
 
     /// Write a deep image.

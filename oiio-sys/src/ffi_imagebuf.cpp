@@ -284,7 +284,7 @@ void
 imagebuf_interppixel_NDC(const ImageBuf& imagebuf, float s, float t,
                          float* pixel, WrapMode wrap)
 {
-    imagebuf.interppixel(s, t, pixel, wrap);
+    imagebuf.interppixel_NDC(s, t, pixel, wrap);
 }
 
 void
@@ -298,7 +298,7 @@ void
 imagebuf_interppixel_bicubic_NDC(const ImageBuf& imagebuf, float s, float t,
                                  float* pixel, WrapMode wrap)
 {
-    imagebuf.interppixel_bicubic(s, t, pixel, wrap);
+    imagebuf.interppixel_bicubic_NDC(s, t, pixel, wrap);
 }
 
 void

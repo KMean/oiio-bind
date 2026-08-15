@@ -139,8 +139,12 @@ impl Roi {
     }
 
     /// Whether a pixel coordinate lies inside this region, at depth zero.
+    ///
+    /// The z range really is tested against zero, matching OpenImageIO's
+    /// own defaulted `contains`; a volumetric region that excludes depth
+    /// zero contains no such coordinate. The channel range is not consulted.
     pub fn contains(&self, x: i32, y: i32) -> bool {
-        self.x().contains(&x) && self.y().contains(&y)
+        self.x().contains(&x) && self.y().contains(&y) && self.z().contains(&0)
     }
 
     /// Whether every pixel and channel of `other` lies inside this region.
@@ -326,6 +330,8 @@ mod tests {
 
         assert!(a.contains(3, 3));
         assert!(!a.contains(4, 3), "the range is half-open");
+        let volume = Roi::new(0..4, 0..4, 3..5, 0..1).unwrap();
+        assert!(!volume.contains(1, 1), "depth zero is outside z 3..5");
         assert!(union.contains_roi(&a) && union.contains_roi(&b));
         assert!(!a.contains_roi(&b));
 

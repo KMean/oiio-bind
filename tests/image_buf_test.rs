@@ -382,6 +382,42 @@ fn a_same_size_subset_swap_is_reported_not_silently_kept() {
     assert_eq!(image.channel_count(), 2);
 }
 
+/// NDC coordinates span the display window; the shims used to forward to
+/// the pixel-space interpolators, so every NDC lookup sampled the corner.
+#[test]
+fn ndc_interpolation_addresses_the_display_window() {
+    use oiio::Wrap;
+    let spec = ImageSpec::new(64, 1, 1, PixelFormat::F32).unwrap();
+    let mut buffer = ImageBuf::new(&spec).unwrap();
+    let roi = spec.data_window().unwrap();
+    let ramp: Vec<f32> = (0..64).map(|x| x as f32).collect();
+    buffer.set_pixels(roi, &ramp).unwrap();
+
+    let mut ndc = [0.0_f32];
+    buffer
+        .interpolated_pixel_ndc_into(0.5, 0.5, Wrap::Clamp, &mut ndc)
+        .unwrap();
+    let mut pixel_space = [0.0_f32];
+    buffer
+        .interpolated_pixel_into(32.0, 0.5, Wrap::Clamp, &mut pixel_space)
+        .unwrap();
+    assert_eq!(
+        ndc[0], pixel_space[0],
+        "NDC 0.5 is the display window's middle, not pixel coordinate 0.5"
+    );
+    assert!(
+        (ndc[0] - 31.5).abs() < 1.0,
+        "the middle of the ramp: {ndc:?}"
+    );
+
+    // An oversized slice's tail is zeroed by the crate, as documented.
+    let mut wide = [9.0_f32; 4];
+    buffer
+        .pixel_at_into(1, 0, Wrap::Default, &mut wide)
+        .unwrap();
+    assert_eq!(&wide[1..], &[0.0; 3], "the tail is zeroed: {wide:?}");
+}
+
 #[test]
 fn point_access_reads_writes_and_interpolates() {
     use oiio::Wrap;

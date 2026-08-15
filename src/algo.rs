@@ -2253,10 +2253,13 @@ pub fn zover(
     finish(dst, "zover", succeeded)
 }
 
-/// Multiply every channel of `a` by single-channel `b`, per pixel.
+/// Multiply an image by a single-channel one, per pixel.
 ///
-/// `b` must have exactly one channel; this is the mask or matte multiply
-/// [`mul`] cannot express, since arithmetic requires matching counts.
+/// Exactly one of the two operands must have one channel — OpenImageIO
+/// accepts the single-channel image on either side — and every channel of
+/// the other is multiplied by it: the mask or matte multiply [`mul`] cannot
+/// express, since arithmetic requires matching counts. A pre-allocated
+/// destination must match the wider operand's channel count.
 pub fn scale(dst: &mut ImageBuf, a: &ImageBuf, b: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
     let succeeded = unsafe {

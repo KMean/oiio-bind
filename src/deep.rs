@@ -257,13 +257,18 @@ impl DeepImage {
                     .to_owned(),
             ));
         }
-        // The merge concatenates both pixels, splits at every boundary, and
-        // sorts — so the scratch requirement covers the combined pixel with
-        // room for the splits.
-        let combined = self
+        // The merge concatenates both pixels, splits every sample at every
+        // other sample's boundaries, and then sorts the result — so
+        // mutually overlapping samples grow quadratically, and the final
+        // sort's stack scratch must be bounded by that worst case, not by a
+        // linear headroom.
+        let before = self
             .samples_at(pixel)
-            .saturating_add(src.samples_at(src_pixel))
-            .saturating_mul(2);
+            .saturating_add(src.samples_at(src_pixel));
+        let combined = before
+            .saturating_mul(before)
+            .saturating_mul(2)
+            .saturating_add(before);
         self.require_stack_scratch("merge deep pixels", combined)?;
         // The 3.1 series takes the source pixel as an int (widened to
         // int64 upstream only after 3.1); the crate's pixel cap keeps every

@@ -868,6 +868,89 @@ fn a_deep_channel_name_that_is_not_utf8_is_read_lossily_not_fatally() {
     assert_eq!(read.value(0, 0, 0, 0).unwrap(), 0.25);
 }
 
+/// The fifth review's destination guards: normalize wrote three channels
+/// into however few the destination had, scale read the wide operand out to
+/// the destination's channel count, and the channel reductions marched the
+/// whole source region across a smaller destination — every out-of-window
+/// position landing parallel writes on the shared blackpixel scratch.
+#[test]
+fn preallocated_destinations_cannot_be_walked_past() {
+    let src3 = flat(8, 8, 3);
+
+    let mut narrow = ImageBuf::new(&ImageSpec::new(8, 8, 1, PixelFormat::F32).unwrap()).unwrap();
+    assert!(algo::normalize(&mut narrow, &src3, 0.0, 0.0, 1.0, None).is_err());
+
+    let mask = flat(8, 8, 1);
+    let mut wide = ImageBuf::new(&ImageSpec::new(8, 8, 5, PixelFormat::F32).unwrap()).unwrap();
+    assert!(algo::scale(&mut wide, &src3, &mask, None).is_err());
+
+    let big = flat(64, 64, 4);
+    let mut tiny = ImageBuf::new(&ImageSpec::new(2, 2, 1, PixelFormat::F32).unwrap()).unwrap();
+    assert!(algo::maxchan(&mut tiny, &big, None).is_err());
+
+    // Matching shapes still work.
+    let mut matched = ImageBuf::new(&ImageSpec::new(8, 8, 3, PixelFormat::F32).unwrap()).unwrap();
+    algo::normalize(&mut matched, &src3, 0.0, 0.0, 1.0, None).unwrap();
+}
+
+/// A failed deferred read must not leak the untouched allocation through the
+/// point reads or `write_to`, the way `get_pixels_into` already refuses.
+#[test]
+fn a_failed_read_cannot_leak_through_point_access_or_write_to() {
+    let scratch = common::ScratchDir::new("pointleak");
+    let spec = ImageSpec::new(64, 64, 3, PixelFormat::F32).unwrap();
+    let whole = scratch.file("whole.exr");
+    common::write_image(&whole, &spec, &common::f32_ramp(64 * 64 * 3)).unwrap();
+    let bytes = std::fs::read(&whole).unwrap();
+    let cut = scratch.file("cut.exr");
+    std::fs::write(&cut, &bytes[..bytes.len() * 2 / 3]).unwrap();
+
+    let buffer = ImageBuf::from_path(&cut).unwrap();
+    assert!(buffer.channel_at(0, 0, 0, oiio::Wrap::Default).is_err());
+    let mut pixel = [7.0_f32; 3];
+    assert!(buffer
+        .pixel_at_into(0, 0, oiio::Wrap::Default, &mut pixel)
+        .is_err());
+    assert!(pixel.iter().all(|value| *value == 0.0), "scrubbed");
+    let mut blended = [7.0_f32; 3];
+    assert!(buffer
+        .interpolated_pixel_into(1.5, 1.5, oiio::Wrap::Black, &mut blended)
+        .is_err());
+    assert!(blended.iter().all(|value| *value == 0.0), "scrubbed");
+
+    let mut buffer = ImageBuf::from_path(&cut).unwrap();
+    let mut output = oiio::ImageOutput::create(&scratch.file("published.exr"), &spec).unwrap();
+    assert!(
+        buffer.write_to(&mut output).is_err(),
+        "a buffer whose pixels never arrived must not be published"
+    );
+}
+
+/// The inside guard survives coordinates whose subtraction overflows, and
+/// the periodic wraps refuse a display window with any zero-sized axis.
+#[test]
+fn guard_arithmetic_cannot_be_overflowed_or_divided_by_zero() {
+    let spec = ImageSpec::new(4, 4, 3, PixelFormat::F32)
+        .unwrap()
+        .with_origin([-1, -1, 0]);
+    let mut buffer = ImageBuf::new(&spec).unwrap();
+    assert!(
+        buffer.set_pixel_at(i32::MAX, 0, &[1.0, 1.0, 1.0]).is_err(),
+        "the wrapped subtraction used to read as inside"
+    );
+
+    let zero_depth = ImageSpec::new(4, 4, 1, PixelFormat::F32)
+        .unwrap()
+        .with_full_window([0, 0, 0], [4, 4, 0]);
+    if let Ok(zero_depth) = zero_depth {
+        let buffer = ImageBuf::new(&zero_depth).unwrap();
+        assert!(
+            buffer.channel_at(10, 10, 0, oiio::Wrap::Periodic).is_err(),
+            "a zero-depth display window is a division by zero inside the wrap"
+        );
+    }
+}
+
 /// `copy` into a pre-allocated destination it cannot cover.
 ///
 /// Property testing on the 3.1.14 CI builds caught a one-channel 2x7 source

@@ -216,6 +216,33 @@ before the fork, but nothing was ever published under it, so starting both at
 
 ### Fixed
 
+- A fifth review, scoped to the surface the binding gap map added and run
+  with the same adversarial verification, confirmed eleven findings and
+  refuted none. The two heap violations: `normalize` writes three channels
+  regardless of the destination's count, so a pre-allocated narrower one
+  was written past its allocation, and `scale` reads the wide operand out
+  to the destination's channel range, so a wider destination read past the
+  operand — both refused now. The channel reductions walked the whole
+  source region across a smaller destination, landing every out-of-window
+  write on the buffer's shared blackpixel scratch from concurrent threads —
+  the walked region must fit the destination now. The NDC interpolators
+  were wired to the pixel-space functions in the shim, so every NDC lookup
+  sampled the wrong location; they call the real NDC entry points now, with
+  a test that catches the corner-vs-centre difference. The point reads and
+  `write_to` served or published the untouched allocation after a failed
+  deferred read, the exact leak `get_pixels_into` already refused — all
+  seven paths now error and scrub. `require_inside`'s subtraction could
+  wrap on a huge coordinate and read as inside; it is widened to `i64`.
+  The periodic wraps now refuse a display window with a zero-sized *depth*
+  too, which OpenImageIO divides by. `merge_pixel_from`'s stack-scratch
+  bound modelled the merge's growth as linear where mutual splitting is
+  quadratic; the bound is quadratic now. `write_image` and `write_tiles`
+  advance the scanline cursor so `write_to`'s untouched-subimage rule sees
+  them. And three documentation contracts tell the truth: `pixel_at_into`'s
+  oversized tail is zeroed by the crate (OpenImageIO leaves it untouched),
+  `Roi::contains` really does test depth zero, and `scale` accepts the
+  single-channel operand on either side.
+
 - A fourth review — six property lenses rather than another per-module pass:
   concurrency claims, unsafe contracts, panic and drop paths, FFI
   conversions, discarded results and documentation contracts, every finding
