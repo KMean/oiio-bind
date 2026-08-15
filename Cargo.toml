@@ -41,6 +41,9 @@ thiserror = { workspace = true }
 [dev-dependencies]
 anyhow = { workspace = true }
 proptest = { workspace = true }
+# The differential tests drive the raw C++ API through the sys bridge and
+# compare it byte-for-byte against the safe crate.
+oiio-sys = { path = "oiio-sys", version = "0.1.0" }
 
 # The docs are the same across all platforms so we only need to build once.
 [package.metadata.docs.rs]
