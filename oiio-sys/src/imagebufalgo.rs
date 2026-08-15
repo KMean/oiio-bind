@@ -215,6 +215,39 @@ mod ffi {
             error: &mut String,
         ) -> CompareSummary;
 
+        pub unsafe fn imagebufalgo_compare_yee(
+            a: &ImageBuf,
+            b: &ImageBuf,
+            luminance: f32,
+            fov: f32,
+            roi: &ROI,
+            nthreads: i32,
+            error: &mut String,
+        ) -> CompareSummary;
+
+        #[allow(clippy::too_many_arguments)]
+        pub unsafe fn imagebufalgo_color_count(
+            src: &ImageBuf,
+            count: &mut [u64],
+            color: &[f32],
+            eps: &[f32],
+            roi: &ROI,
+            nthreads: i32,
+            error: &mut String,
+        ) -> bool;
+
+        #[allow(clippy::too_many_arguments)]
+        pub unsafe fn imagebufalgo_circular_shift(
+            dst: Pin<&mut ImageBuf>,
+            src: &ImageBuf,
+            xshift: i32,
+            yshift: i32,
+            zshift: i32,
+            roi: &ROI,
+            nthreads: i32,
+            error: &mut String,
+        ) -> bool;
+
         pub unsafe fn imagebufalgo_colorconvert(
             dst: Pin<&mut ImageBuf>,
             src: &ImageBuf,

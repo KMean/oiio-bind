@@ -142,6 +142,21 @@ before the fork, but nothing was ever published under it, so starting both at
   honours a texture's own constant-color metadata under one (upstream
   issue 14 in `contrib/upstream-issues.md`) — without it, API-made
   textures silently lose what `maketx` wrote into them.
+- `algo::circular_shift`, with the wrap-around semantics OpenImageIO
+  documents and an empty-destination requirement: the shifted writes are a
+  bijection of the region, so a larger pre-allocated destination would keep
+  uninitialized pixels wherever the wrapping never lands.
+- `algo::color_count`, counting pixels that match each given color within a
+  per-channel tolerance. The colors array must be a whole number of
+  per-channel colors, and at most 32768 colors are counted at once — the
+  workers tally into stack-allocated scratch OpenImageIO never bounds.
+- `algo::compare_yee`, Yee's perceptual metric, returning its own
+  `YeeComparison` type rather than a zero-padded `CompareSummary` because
+  the metric measures no mean, RMS or PSNR. The worst-pixel position is
+  translated to image coordinates (OpenImageIO reports it relative to the
+  region), the region must lie inside the images (outside, pixels read as
+  zeroes and would "compare equal"), and the viewing parameters must be
+  sane — a zero field of view otherwise folds into NaN thresholds.
 - Thumbnails: `ImageCache::thumbnail` reads the postage stamp PSD, camera
   raw and Targa files carry (`None` where the format stores none);
   `ImageBuf::{has_thumbnail, thumbnail, set_thumbnail, clear_thumbnail}`

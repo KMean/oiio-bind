@@ -308,3 +308,70 @@ fn the_measurements_refuse_deep_images() {
     assert!(algo::is_monochrome(&deep, 0.0, None).is_err());
     assert!(algo::pixel_hash_sha1(&deep, "", None).is_err());
 }
+
+/// Counting colors: matches within the default tolerance, one count per
+/// color row, and the mis-shaped or oversized requests are refused.
+#[test]
+fn color_count_counts_each_color_and_validates_its_arrays() {
+    let mut image = flat(4, 4, &[0.25, 0.5, 0.75]);
+    image.set_pixel_at(0, 0, &[1.0, 0.0, 0.0]).unwrap();
+    image.set_pixel_at(3, 3, &[1.0, 0.0, 0.0]).unwrap();
+
+    let counts = algo::color_count(
+        &image,
+        &[1.0, 0.0, 0.0, 0.25, 0.5, 0.75, 0.5, 0.5, 0.5],
+        &[],
+        None,
+    )
+    .unwrap();
+    assert_eq!(counts, vec![2, 14, 0]);
+
+    // A tolerance wide enough to catch everything.
+    let counts = algo::color_count(&image, &[0.5, 0.25, 0.4], &[1.0], None).unwrap();
+    assert_eq!(counts, vec![16]);
+
+    // A colors array that is not a whole number of colors.
+    let error = algo::color_count(&image, &[1.0, 0.0], &[], None).unwrap_err();
+    assert!(
+        error.to_string().contains("whole number"),
+        "unexpected error: {error}"
+    );
+
+    // More colors than the stack-scratch bound.
+    let too_many = vec![0.0_f32; 3 * 32769];
+    let error = algo::color_count(&image, &too_many, &[], None).unwrap_err();
+    assert!(
+        error.to_string().contains("32768"),
+        "unexpected error: {error}"
+    );
+}
+
+/// Yee's perceptual metric: identical images pass, blatantly different ones
+/// fail, and the parameter and region guards hold.
+#[test]
+fn compare_yee_sees_identical_and_blatant_differences() {
+    let a = flat(32, 32, &[0.2, 0.4, 0.6]);
+    let same = algo::compare_yee(&a, &a, 100.0, 45.0, None).unwrap();
+    assert!(
+        same.perceptually_equal(),
+        "an image equals itself: {same:?}"
+    );
+    assert_eq!(same.failures, 0);
+
+    let b = flat(32, 32, &[0.9, 0.1, 0.1]);
+    let different = algo::compare_yee(&a, &b, 100.0, 45.0, None).unwrap();
+    assert!(
+        different.failures > 0,
+        "wildly different colors should be visible: {different:?}"
+    );
+    assert!(!different.perceptually_equal());
+
+    // Nonsense viewing parameters are refused, not folded into NaN.
+    assert!(algo::compare_yee(&a, &b, 0.0, 45.0, None).is_err());
+    assert!(algo::compare_yee(&a, &b, 100.0, 180.0, None).is_err());
+    assert!(algo::compare_yee(&a, &b, f32::NAN, 45.0, None).is_err());
+
+    // A region beyond both images would compare pixels neither has.
+    let outside = Roi::new(0..64, 0..64, 0..1, 0..3).unwrap();
+    assert!(algo::compare_yee(&a, &b, 100.0, 45.0, Some(outside)).is_err());
+}

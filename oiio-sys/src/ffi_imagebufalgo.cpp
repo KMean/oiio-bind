@@ -1554,6 +1554,140 @@ imagebufalgo_compare(const ImageBuf& a, const ImageBuf& b, float failthresh,
     return summary;
 }
 
+CompareSummary
+imagebufalgo_compare_yee(const ImageBuf& a, const ImageBuf& b, float luminance,
+                         float fov, const ROI& roi, int nthreads,
+                         rust::String& error)
+{
+    CompareSummary refused {};
+    if (a.deep() || b.deep()) {
+        error = rust::String::lossy(
+            "compare_yee: deep images are not supported");
+        return refused;
+    }
+    if (!a.initialized() || !b.initialized()) {
+        error = rust::String::lossy(
+            "compare_yee: both images must hold pixels");
+        return refused;
+    }
+    // The comparison allocates three float working copies shaped by the
+    // region, and reads outside either image come back as zeroes — a region
+    // past both images would "compare equal" over pixels neither has. An
+    // undefined region takes OpenImageIO's own default, the union of both.
+    const OIIO::ROI reach = roi_union(get_roi(a.spec()), get_roi(b.spec()));
+    OIIO::ROI region      = roi;
+    if (!region.defined()) {
+        region = reach;
+    } else if (region.xbegin < reach.xbegin || region.xend > reach.xend
+               || region.ybegin < reach.ybegin || region.yend > reach.yend
+               || region.zbegin < reach.zbegin || region.zend > reach.zend) {
+        error = rust::String::lossy(
+            "compare_yee: the region must lie inside the images");
+        return refused;
+    }
+
+    OIIO::ImageBufAlgo::CompareResults results {};
+    const int failures = OIIO::ImageBufAlgo::compare_Yee(a, b, results,
+                                                         luminance, fov,
+                                                         region, nthreads);
+    CompareSummary summary {};
+    summary.max_error = results.maxerror;
+    // compare_Yee reports the worst pixel relative to the region's corner;
+    // every other comparison here speaks image coordinates, so translate.
+    summary.max_x    = results.maxx + region.xbegin;
+    summary.max_y    = results.maxy + region.ybegin;
+    summary.failures = uint64_t(results.nfail);
+    summary.failed   = failures > 0;
+    return summary;
+}
+
+bool
+imagebufalgo_color_count(const ImageBuf& src, rust::Slice<uint64_t> count,
+                         rust::Slice<const float> color,
+                         rust::Slice<const float> eps, const ROI& roi,
+                         int nthreads, rust::String& error)
+{
+    error = rust::String();
+    if (src.deep()) {
+        error = rust::String::lossy(
+            "color_count: deep images are not supported");
+        return false;
+    }
+    // Each worker counts into an OIIO_ALLOCA scratch of one long long per
+    // color, and a stack overflow never throws; bound it well below any
+    // real palette.
+    constexpr size_t max_colors = 32768;
+    if (count.empty() || count.size() > max_colors) {
+        error = rust::String::lossy(
+            "color_count: between 1 and 32768 colors, which is the bound on "
+            "OpenImageIO's per-thread stack scratch");
+        return false;
+    }
+    if (color.size() < count.size() * size_t(src.nchannels())) {
+        // OpenImageIO checks this too, but by recording an error on `src`;
+        // saying it here keeps the source's error state untouched.
+        error = rust::String::lossy(
+            "color_count: the color array must hold one value per channel "
+            "for every counted color");
+        return false;
+    }
+
+    src.geterror(true);
+    static_assert(sizeof(OIIO::imagesize_t) == sizeof(uint64_t),
+                  "imagesize_t is the counts' type");
+    // Iterating a region beyond the data window would count the zeroes the
+    // iterator serves for pixels that do not exist.
+    const ROI bounded = bounded_to_source(src, roi);
+    const bool ok
+        = OIIO::ImageBufAlgo::color_count(src,
+                                          (OIIO::imagesize_t*)count.data(),
+                                          int(count.size()), to_cspan(color),
+                                          to_cspan(eps), bounded, nthreads);
+    if (!ok) {
+        std::string message = src.geterror(true);
+        if (message.empty())
+            message = "OpenImageIO could not count the colors";
+        error = rust::String::lossy(message);
+    }
+    return ok;
+}
+
+bool
+imagebufalgo_circular_shift(ImageBuf& dst, const ImageBuf& src, int xshift,
+                            int yshift, int zshift, const ROI& roi,
+                            int nthreads, rust::String& error)
+{
+    error = rust::String();
+    if (src.deep()) {
+        error = rust::String::lossy(
+            "circular_shift: deep images are not supported");
+        return false;
+    }
+    // The shift is a bijection of the region onto a destination the same
+    // shape, so a fresh destination is fully written; a pre-allocated one
+    // that outsizes the region would keep uninitialized pixels wherever the
+    // wrapped writes never land.
+    if (dst.initialized()) {
+        error = rust::String::lossy(
+            "circular_shift: use an empty destination; the result is shaped "
+            "by the region");
+        return false;
+    }
+
+    dst.geterror(true);
+    const bool ok = OIIO::ImageBufAlgo::circular_shift(dst, src, xshift,
+                                                       yshift, zshift, roi,
+                                                       nthreads);
+    if (!ok || dst.has_error()) {
+        std::string recorded = dst.geterror(true);
+        if (recorded.empty())
+            recorded = "OpenImageIO could not shift the image";
+        error = rust::String::lossy(recorded);
+        return false;
+    }
+    return true;
+}
+
 bool
 imagebufalgo_fill_vertical(ImageBuf& dst, rust::Slice<const float> top,
                            rust::Slice<const float> bottom, const ROI& roi,

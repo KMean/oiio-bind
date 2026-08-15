@@ -159,6 +159,32 @@ imagebufalgo_compare(const ImageBuf& a, const ImageBuf& b, float failthresh,
                      float warnthresh, float failrelative, float warnrelative,
                      const ROI& roi, int nthreads, rust::String& error);
 
+// Yee's perceptual metric. Fills only max_error, max_x/max_y (translated to
+// image coordinates) and failures; the other measurements are zero, and the
+// caller-facing type says so.
+CompareSummary
+imagebufalgo_compare_yee(const ImageBuf& a, const ImageBuf& b, float luminance,
+                         float fov, const ROI& roi, int nthreads,
+                         rust::String& error);
+
+// Count pixels matching each color row. `count` is one slot per color;
+// `color` holds nchannels values per color; `eps` is per-channel and padded
+// by OpenImageIO. Bounded to 32768 colors: the workers count into
+// stack-allocated scratch of one long long per color.
+bool
+imagebufalgo_color_count(const ImageBuf& src, rust::Slice<uint64_t> count,
+                         rust::Slice<const float> color,
+                         rust::Slice<const float> eps, const ROI& roi,
+                         int nthreads, rust::String& error);
+
+// Circularly shift the region. Empty destinations only: the wrapped writes
+// are a bijection of the region, so a larger pre-allocated destination would
+// keep uninitialized pixels.
+bool
+imagebufalgo_circular_shift(ImageBuf& dst, const ImageBuf& src, int xshift,
+                            int yshift, int zshift, const ROI& roi,
+                            int nthreads, rust::String& error);
+
 // Colour space conversion using the default configuration, which is whatever
 // $OCIO names or OpenImageIO's built-in one.
 bool

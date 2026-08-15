@@ -2050,6 +2050,41 @@ pub fn flip(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> 
     finish(dst, "flip", succeeded)
 }
 
+/// Circularly shift the region, pixels pushed off one edge reappearing at
+/// the other — the shift of `[0, 1, 2, 3, 4, 5]` by 2 is `[4, 5, 0, 1, 2, 3]`.
+///
+/// The destination must be empty: the wrapped writes are a bijection of the
+/// region onto a result the same shape, so a fresh destination comes back
+/// fully written, while a larger pre-allocated one would keep uninitialized
+/// pixels wherever the wrapping never lands. Negative and over-sized shifts
+/// wrap as expected.
+pub fn circular_shift(
+    dst: &mut ImageBuf,
+    src: &ImageBuf,
+    shift: [i32; 3],
+    roi: Option<Roi>,
+) -> Result<()> {
+    let roi = region_in(roi, dst)?;
+    let mut message = String::new();
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_circular_shift(
+            dst.inner_mut(),
+            src.inner(),
+            shift[0],
+            shift[1],
+            shift[2],
+            &roi,
+            ALL_THREADS,
+            &mut message,
+        )
+    };
+    if succeeded {
+        Ok(())
+    } else {
+        Err(Error::operation("circular_shift", message))
+    }
+}
+
 /// Mirror horizontally, left to right.
 pub fn flop(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<()> {
     let roi = region_in(roi, dst)?;
@@ -2852,5 +2887,141 @@ pub fn compare_with_relative(
         Ok(summary)
     } else {
         Err(Error::operation("compare", message))
+    }
+}
+
+/// What [`compare_yee`] measured: how many pixels a human would notice
+/// differ, and where the worst one is.
+///
+/// This is its own type rather than a [`CompareSummary`] because Yee's
+/// metric measures none of the mean, root-mean-square or peak
+/// signal-to-noise values — returning the shared type would present real
+/// zeroes that mean "not measured".
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct YeeComparison {
+    /// Pixels predicted to be visibly different.
+    pub failures: u64,
+    /// The largest perceptual factor of a failing pixel; 0 when none fail.
+    pub max_error: f64,
+    /// Image coordinates of the worst pixel.
+    pub max_position: [i32; 2],
+}
+
+impl YeeComparison {
+    /// Whether the images would look the same to a human observer.
+    pub fn perceptually_equal(&self) -> bool {
+        self.failures == 0
+    }
+}
+
+/// Compare two images with Yee's perceptual metric — how many pixels a
+/// human adapted to `luminance` candela per square metre, with the image
+/// spanning `fov` degrees of view, would notice differ.
+///
+/// The first three channels are treated as linear RGB roughly like Adobe
+/// RGB; images with fewer channels are padded with zeroes and the result is,
+/// in OpenImageIO's words, basically meaningless for them. Both images must
+/// be flat and hold pixels, and the region must lie inside them — outside
+/// either data window the pixels read as zeroes, which would compare pixels
+/// neither image has. Two-dimensional images only. OpenImageIO's usual
+/// luminance is 100 and field of view 45; both must be positive, and the
+/// field of view under 180.
+pub fn compare_yee(
+    a: &ImageBuf,
+    b: &ImageBuf,
+    luminance: f32,
+    fov: f32,
+    roi: Option<Roi>,
+) -> Result<YeeComparison> {
+    const OPERATION: &str = "compare_yee";
+    if !(luminance.is_finite() && luminance > 0.0) {
+        return Err(Error::operation(
+            OPERATION,
+            format!("the adaptation luminance must be positive and finite, got {luminance}"),
+        ));
+    }
+    if !(fov.is_finite() && fov > 0.0 && fov < 180.0) {
+        return Err(Error::operation(
+            OPERATION,
+            format!("the field of view must be between 0 and 180 degrees, got {fov}"),
+        ));
+    }
+    let roi = region_in(roi, a)?;
+    let mut message = String::new();
+    let summary = unsafe {
+        sys::imagebufalgo::imagebufalgo_compare_yee(
+            a.inner(),
+            b.inner(),
+            luminance,
+            fov,
+            &roi,
+            ALL_THREADS,
+            &mut message,
+        )
+    };
+    if message.is_empty() {
+        Ok(YeeComparison {
+            failures: summary.failures,
+            max_error: summary.max_error,
+            max_position: [summary.max_x, summary.max_y],
+        })
+    } else {
+        Err(Error::operation(OPERATION, message))
+    }
+}
+
+/// Count the pixels matching each color, within a per-channel tolerance.
+///
+/// `colors` holds one value per channel for every color to count — its
+/// length must be a whole multiple of the image's channel count — and the
+/// result has one count per color, in the same order. `eps` is the
+/// per-channel tolerance: empty means OpenImageIO's default of `0.001`
+/// everywhere (exact for 8-bit images, a wee bit of slack for float), fewer
+/// values than channels repeat the last. A region narrows both the pixels
+/// visited and, through its channel range, the channels that must match.
+/// At most 32768 colors, which bounds the per-thread stack scratch
+/// OpenImageIO counts into.
+pub fn color_count(
+    src: &ImageBuf,
+    colors: &[f32],
+    eps: &[f32],
+    roi: Option<Roi>,
+) -> Result<Vec<u64>> {
+    const OPERATION: &str = "color_count";
+    let channels = usize::try_from(src.channel_count().max(0)).expect("i32 fits usize");
+    if channels == 0 {
+        return Err(Error::operation(
+            OPERATION,
+            "the image has no channels to match against".to_owned(),
+        ));
+    }
+    if colors.is_empty() || !colors.len().is_multiple_of(channels) {
+        return Err(Error::operation(
+            OPERATION,
+            format!(
+                "the colors array holds {} values, which is not a whole number \
+                 of {channels}-channel colors",
+                colors.len()
+            ),
+        ));
+    }
+    let mut counts = vec![0_u64; colors.len() / channels];
+    let roi = region_in(roi, src)?;
+    let mut message = String::new();
+    let succeeded = unsafe {
+        sys::imagebufalgo::imagebufalgo_color_count(
+            src.inner(),
+            &mut counts,
+            colors,
+            eps,
+            &roi,
+            ALL_THREADS,
+            &mut message,
+        )
+    };
+    if succeeded {
+        Ok(counts)
+    } else {
+        Err(Error::operation(OPERATION, message))
     }
 }

@@ -405,3 +405,51 @@ fn channel_sum_collapses_to_one_channel() {
         assert!((value - 0.5).abs() < 1e-5, "got {value}");
     }
 }
+
+/// A circular shift is a bijection: every pixel lands somewhere, wrapped
+/// shifts land where modular arithmetic says, and a pre-allocated
+/// destination — whose extra pixels the bijection would never write — is
+/// refused.
+#[test]
+fn circular_shift_wraps_and_requires_an_empty_destination() {
+    let mut source = ImageBuf::new(&spec(4, 4, 1)).unwrap();
+    for y in 0..4 {
+        for x in 0..4 {
+            source.set_pixel_at(x, y, &[(x + 4 * y) as f32]).unwrap();
+        }
+    }
+
+    let mut shifted = ImageBuf::empty().unwrap();
+    algo::circular_shift(&mut shifted, &source, [1, 2, 0], None).unwrap();
+    for y in 0..4_i32 {
+        for x in 0..4_i32 {
+            let sx = (x - 1).rem_euclid(4);
+            let sy = (y - 2).rem_euclid(4);
+            assert_eq!(
+                shifted.channel_at(x, y, 0, oiio::Wrap::Default).unwrap(),
+                (sx + 4 * sy) as f32,
+                "({x}, {y})"
+            );
+        }
+    }
+
+    // The inverse shift restores the original, negative amounts wrapping
+    // the other way.
+    let mut back = ImageBuf::empty().unwrap();
+    algo::circular_shift(&mut back, &shifted, [-1, -2, 0], None).unwrap();
+    for y in 0..4 {
+        for x in 0..4 {
+            assert_eq!(
+                back.channel_at(x, y, 0, oiio::Wrap::Default).unwrap(),
+                (x + 4 * y) as f32
+            );
+        }
+    }
+
+    let mut allocated = ImageBuf::new(&spec(4, 4, 1)).unwrap();
+    let error = algo::circular_shift(&mut allocated, &source, [1, 0, 0], None).unwrap_err();
+    assert!(
+        error.to_string().contains("empty destination"),
+        "unexpected error: {error}"
+    );
+}

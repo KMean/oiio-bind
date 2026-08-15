@@ -92,6 +92,11 @@ behavioural difference between patch releases was found — see `mad` in
   Targa silent-failure shapes refused. `make_texture` stamps a `Software`
   tag when the caller sets none, so the cache honours API-made textures'
   constant-color metadata (issue 14).
+- [x] The remaining `oiiotool`-core operations: `circular_shift`
+  (empty-destination bijection), `color_count` (bounded to 32768 colors —
+  OpenImageIO tallies into unbounded stack scratch), and `compare_yee`
+  (its own result type, image-coordinate worst pixel, in-window region and
+  sane viewing parameters required).
 
 ## Notes on the OpenImageIO 3.1 span API
 
