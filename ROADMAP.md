@@ -105,6 +105,13 @@ behavioural difference between patch releases was found — see `mad` in
   file's exact bytes, each channel its own format, with
   `ImageSpec::native_pixel_bytes` as the stride — byte-validated against
   the file's own specification before OpenImageIO sees a pointer.
+- [x] An independent C++-vs-crate corpus differential:
+  `contrib/corpus_hash.cpp` (pure OpenImageIO C++, separately compiled, no
+  crate code) and `examples/corpus_hash.rs` hash every subimage of both
+  test corpora as `f32` in the same format; the arms agree byte-for-byte
+  on all 463 readable subimages and on every error/deep verdict. This is
+  the check the in-process differentials cannot make: a bug inside the
+  crate's own C++ shims would show up here.
 - [ ] `TextureHandle`-based lookups, the per-call name-hash skip renderers
   use. Deferred: the API can arrive without breaking anything, and its
   safety design (a handle borrowing the system, per-thread records) is

@@ -4,6 +4,16 @@ This fork's changes, newest first.
 
 ## Unreleased
 
+- A fully independent corpus differential: `contrib/corpus_hash.cpp` is a
+  standalone C++ program using nothing but public OpenImageIO API — none of
+  this crate's shims — and `examples/corpus_hash.rs` prints the identical
+  per-subimage FNV-1a hash of the pixels as `f32` through the safe crate.
+  Fed the same 408-file list from the OpenImageIO and OpenEXR test corpora
+  (multipart EXRs, planar and depth TIFFs, the BMP suite, DDS, PSD, RLA,
+  OpenEXR's `Damaged` fuzzing set), the two arms agree on every one of 505
+  subimages — 463 pixel hashes byte-for-byte, and error/deep verdicts in
+  parity — closing the shared-shim blind spot the in-process differential
+  tests honestly document.
 - Documentation corrections from a second, empirically-grounded verification
   of every claim this crate makes about OpenImageIO (eighteen independent
   checks, each ordered to refute; all seventeen drafted upstream findings
