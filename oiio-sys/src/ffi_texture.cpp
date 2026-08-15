@@ -100,11 +100,17 @@ texturesystem_texture(TextureSystem& texturesystem, const rust::Str filename,
     int subimages = 0;
     if (!texturesystem.get_texture_info(name, 0, OIIO::ustring("subimages"),
                                         OIIO::TypeInt, &subimages)) {
-        if (opt.missingcolor) {
-            // The file is missing or broken, which is exactly what the
-            // missing color exists for. The lookup takes the missing-texture
-            // path before any subimage indexing, fills the result from the
-            // missing color, and reports success.
+        // The probe fails for a missing or broken file — exactly what the
+        // missing color exists for — but also for an existing UDIM set
+        // whose tiles disagree on the answer. Only the missing file may
+        // bypass the bounds checks below: its lookup takes the
+        // missing-texture path before any subimage indexing, while an
+        // existing file would carry the raw subimage into an unchecked
+        // vector index upstream.
+        int exists = 0;
+        (void)texturesystem.get_texture_info(name, 0, OIIO::ustring("exists"),
+                                             OIIO::TypeInt, &exists);
+        if (opt.missingcolor && !exists) {
             (void)texturesystem.geterror(true);
             if (texturesystem.texture(name, opt, s, t, dsdx, dtdx, dsdy, dtdy,
                                       int(result.size()), result.data()))
@@ -114,7 +120,11 @@ texturesystem_texture(TextureSystem& texturesystem, const rust::Str filename,
         }
         error = take_texture_error(texturesystem);
         if (error.empty())
-            error = rust::String::lossy("the texture could not be opened");
+            error = rust::String::lossy(
+                exists ? "the texture exists but could not answer its "
+                         "subimage count; for a UDIM pattern, its tiles "
+                         "may disagree"
+                       : "the texture could not be opened");
         return false;
     }
     if (opt.subimage < 0 || opt.subimage >= subimages) {
@@ -199,7 +209,13 @@ texturesystem_environment(TextureSystem& texturesystem,
     int subimages = 0;
     if (!texturesystem.get_texture_info(name, 0, OIIO::ustring("subimages"),
                                         OIIO::TypeInt, &subimages)) {
-        if (opt.missingcolor) {
+        // The same missing-only gate as the plain lookup. Upstream's
+        // environment() does bounds-check the subimage itself, but the gate
+        // costs one cached probe and does not depend on that staying true.
+        int exists = 0;
+        (void)texturesystem.get_texture_info(name, 0, OIIO::ustring("exists"),
+                                             OIIO::TypeInt, &exists);
+        if (opt.missingcolor && !exists) {
             (void)texturesystem.geterror(true);
             if (texturesystem.environment(name, opt,
                                           Imath::V3f(r_x, r_y, r_z),
@@ -212,7 +228,11 @@ texturesystem_environment(TextureSystem& texturesystem,
         }
         error = take_texture_error(texturesystem);
         if (error.empty())
-            error = rust::String::lossy("the texture could not be opened");
+            error = rust::String::lossy(
+                exists ? "the texture exists but could not answer its "
+                         "subimage count; for a UDIM pattern, its tiles "
+                         "may disagree"
+                       : "the texture could not be opened");
         return false;
     }
     if (opt.subimage < 0 || opt.subimage >= subimages) {

@@ -142,12 +142,36 @@ before the fork, but nothing was ever published under it, so starting both at
   honours a texture's own constant-color metadata under one (upstream
   issue 14 in `contrib/upstream-issues.md`) — without it, API-made
   textures silently lose what `maketx` wrote into them.
-- `ImageInput::read_native_image` (and `_at`): the image exactly as the
-  file stores it, each channel in its own format packed per pixel — the
-  read for hashing, lossless transcoding, or decoding values yourself.
+- `ImageInput::read_native_image` (and `_at`): the image in its declared
+  native channel formats, each channel packed per pixel — the read for
+  value-preserving transcoding or decoding values yourself.
   `ImageSpec::native_pixel_bytes` is its stride. The buffer is sized and
   validated against the file's own specification on both sides of the
-  bridge before OpenImageIO sees a pointer.
+  bridge before OpenImageIO sees a pointer. (Bit-packed formats declare
+  the next whole type as native and are handed back unpacked, which the
+  documentation says plainly.)
+- The sixth adversarial review, scoped to everything above, found and
+  fixed eleven defects before release, the standouts being:
+  `ImageCache::is_udim` now queries `"UDIM"` — OpenImageIO documents the
+  lowercase name but its implementation only answers the capitalized one,
+  so every real UDIM set answered false; `is_valid_file` probes on a
+  throwaway reader, because OpenImageIO's fallback re-opens and closes
+  the probing reader itself for eleven formats without an override,
+  silently invalidating it; the texture missing-color path only bypasses
+  the bounds pre-checks for files that truly do not exist or cannot be
+  read, never for an existing file that declined the probe (a UDIM set
+  with disagreeing tiles would have carried an unchecked subimage index
+  into OpenImageIO); `compare_yee` refuses volumetric images instead of
+  letting OpenImageIO silently drop every slice past the first; the
+  cache string queries refuse UDIM patterns, whose aggregate answer can
+  be a copy of uninitialised stack when every tile has become unreadable
+  (upstream issue 15); `ImageCache::thumbnail` refuses UDIM patterns —
+  OpenImageIO would open the literal pattern and permanently poison its
+  cache record (issue 16) — and reports unreadable files as errors on
+  every call, not just the first; stale queued cache errors are drained
+  before queries so a documented `None` cannot become a later call's
+  `Err`; and `subimage_count`/`mip_level_count` error instead of
+  inventing zero when a file declines to answer.
 - `TextureOptions::missing_color`: set, a lookup against a missing or
   broken texture fills the result with it and succeeds — the mechanism
   renderers use so one lost file does not kill a frame. It needs one value

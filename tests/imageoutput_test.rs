@@ -792,3 +792,30 @@ fn native_reads_return_the_stored_bytes() -> Result<()> {
     assert_eq!(offset, native.len(), "every byte accounted for");
     Ok(())
 }
+
+/// Probing another file's validity must not touch the probing reader:
+/// OpenImageIO's fallback re-opens and closes the receiver for formats
+/// without a cheap header check, so the shim probes on a throwaway
+/// instance and this reader keeps reading afterwards.
+#[test]
+fn is_valid_file_leaves_the_reader_usable() -> Result<()> {
+    let scratch = ScratchDir::new("validprobe");
+    let spec = ImageSpec::new(8, 8, 3, PixelFormat::U8)?;
+    let a = scratch.file("a.tga");
+    let b = scratch.file("b.tga");
+    for path in [&a, &b] {
+        let mut output = ImageOutput::create(path, &spec)?;
+        output.write_image(&vec![100_u8; spec.element_count()?])?;
+        output.close()?;
+    }
+
+    // Targa has no valid_file override, so this used to close the reader.
+    let mut input = ImageInput::from_path(&a)?;
+    assert!(input.is_valid_file(&b)?);
+    assert!(!input.is_valid_file(&scratch.file("missing.tga"))?);
+
+    let mut pixels = vec![0_u8; spec.element_count()?];
+    input.read_image_into(&mut pixels)?;
+    assert!(pixels.iter().all(|&v| v == 100), "the reader still reads");
+    Ok(())
+}

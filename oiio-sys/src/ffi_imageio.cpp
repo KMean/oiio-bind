@@ -635,7 +635,16 @@ imageinput_supports(const ImageInput& imageinput, const rust::Str feature)
 bool
 imageinput_valid_file(const ImageInput& imageinput, const rust::Str filename)
 {
-    return imageinput.valid_file(std::string(filename));
+    // The base ImageInput::valid_file const_casts `this` and, for plugins
+    // without an override, re-opens and closes the receiver on the probe
+    // file — silently closing the caller's live reader and resetting its
+    // I/O proxy. Probe with a throwaway instance of the same plugin
+    // instead, so the caller's reader is never touched.
+    std::unique_ptr<ImageInput> probe
+        = ImageInput::create(imageinput.format_name());
+    if (!probe)
+        return false;
+    return probe->valid_file(std::string(filename));
 }
 
 const ImageSpec&

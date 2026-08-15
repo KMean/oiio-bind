@@ -1,6 +1,6 @@
 # Draft reports for OpenImageIO
 
-Fourteen issues from building Rust bindings against OpenImageIO 3.1/3.2, plus
+Seventeen issues from building Rust bindings against OpenImageIO 3.1/3.2, plus
 one open observation not yet settled enough to report.
 
 Issues 1 and 2 have self-contained reproductions, so a maintainer running one
@@ -983,6 +983,85 @@ decodes stored-BGR; fixed on `main` at `targaoutput.cpp:265-282`), and a
 thumbnail 256 or larger on either axis is downsized *to* 256 — one past
 what the TGA byte field holds — truncating the stored dimension to zero
 (fixed on `main` at `:693-706`, which resizes to 255 and says why).
+
+---
+
+## Issue 15 — the UDIM aggregate in `get_image_info` can return uninitialised stack memory as a successful answer
+
+`ImageCacheImpl::get_image_info`'s UDIM branch (`imagecache.cpp:3092-3135`
+on `main` and 3.1.16.0) aggregates a query over the pattern's concrete
+tiles: the first tile's answer lands in `char* common = OIIO_ALLOCA(char,
+size)`, later tiles are compared against it, and at the end `memcpy(data,
+common, size); return true;`.
+
+Tiles whose concrete file cannot be opened are skipped —
+`if (concretefile && !concretefile->broken())` at `:3109` has no else — and
+skipping does not clear `first`. A UDIM set is inventoried by directory
+listing alone (`udim_setup`, `:4142-4186`), so a tile can be present at
+inventory time and unreadable at query time (corrupt, or deleted in
+between). When *every* populated tile is skipped that way, `first` is still
+true at `:3132` and the `memcpy` copies the never-written alloca buffer into
+the caller's storage, returning success.
+
+For integer queries that is a garbage answer presented as valid; for
+`TypeString` queries the caller receives an uninitialised value it must
+treat as a `const char*` — dereferencing it is undefined behaviour, and
+reading `common` at all is formally UB before that. Reachable from the
+public API of any binding, including OpenImageIO's own Python.
+
+The fix is one line: after the loop, `if (first) return false;` before the
+`memcpy`.
+
+Two adjacent notes found in the same review: the documentation for
+`get_image_info` advertises the query name `"udim"`, but the implementation
+compares against the interned `s_UDIM("UDIM")` (`imagecache.cpp:63`,
+`:3084`) — the documented lowercase name is never answered and falls into
+the aggregate above; and a UDIM query that *succeeds* can still leave the
+skipped tiles' "Invalid image file" errors queued (only the failure branch
+at `:3116-3121` eats them), which a caller's next `geterror` misattributes.
+
+---
+
+## Issue 16 — `get_thumbnail` opens UDIM patterns as files, permanently poisoning their cache record, and reports brokenness only once
+
+`ImageCacheImpl::get_thumbnail` (`imagecache.cpp:3444-3465`) calls
+`file->open()` directly, bypassing `verify_file` — the only place carrying
+the UDIM guard ("Can't really open a UDIM-like virtual file",
+`:1588-1591`). Asked for a thumbnail of `tex.<UDIM>.exr`, it tries to open
+the literal pattern, fails, and `mark_broken` sets the pattern's virtual
+record broken permanently. Every later query on that pattern — subimage
+counts, formats, even `exists` — then fails at the broken-file check
+(`:3073`, which precedes the UDIM branches), though the tile set on disk is
+intact: one read-only-looking probe flips `exists` from true to false until
+the file is invalidated.
+
+Separately, `get_thumbnail` is the one query without a broken-file error:
+`ImageCacheFile::open()` returns empty for an already-broken file with no
+message (`:727-729`), and `get_thumbnail` maps that to plain `false`
+(`"// indicates a broken file"`) where its siblings (`get_image_info`
+`:3073-3080`, `get_imagespec`, `get_cache_dimensions`) re-issue "Invalid
+image file …". So the first thumbnail query on a corrupt file errors and
+every subsequent one is indistinguishable from "this format stores no
+thumbnail".
+
+---
+
+## Issue 17 — the base `ImageInput::valid_file` silently closes the reader it is called on
+
+`ImageInput::valid_file(const std::string&)` (`imageinput.cpp:109-146` on
+`main`) `const_cast`s `this` and, for plugins that do not override it,
+probes by `self->open(filename)` + `self->close()` — or, via the IOProxy
+overload, `self->set_ioproxy(...)`, `self->open("")`, `self->close()`,
+`self->ioproxy_clear()`. Called on a reader that is currently open — the
+natural reading of a `const` member — it silently closes that reader,
+resets its proxy, and leaves subsequent reads failing. Eleven shipped
+readers have no override (targa, gif, ico, iff, pnm, rla, cineon, dicom,
+ptex, r3d, softimage), so
+`in = ImageInput::open("a.tga"); in->valid_file("b.tga"); in->read_...`
+breaks, format-dependently. Probing on a scratch instance (or documenting
+`valid_file` as unusable on open readers) would close it. Found while
+binding the probe for Rust; the binding creates a throwaway instance of the
+same plugin.
 
 ---
 

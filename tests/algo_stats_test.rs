@@ -375,3 +375,20 @@ fn compare_yee_sees_identical_and_blatant_differences() {
     let outside = Roi::new(0..64, 0..64, 0..1, 0..3).unwrap();
     assert!(algo::compare_yee(&a, &b, 100.0, 45.0, Some(outside)).is_err());
 }
+
+/// A volumetric comparison would silently drop every slice past the first
+/// inside OpenImageIO, so it is refused.
+#[test]
+fn compare_yee_refuses_volumetric_images() {
+    let spec = ImageSpec::new(8, 8, 3, PixelFormat::F32)
+        .unwrap()
+        .with_depth(2)
+        .unwrap();
+    let mut a = ImageBuf::new(&spec).unwrap();
+    algo::fill(&mut a, &[0.5, 0.5, 0.5], None).unwrap();
+    let error = algo::compare_yee(&a, &a, 100.0, 45.0, None).unwrap_err();
+    assert!(
+        error.to_string().contains("two-dimensional"),
+        "unexpected error: {error}"
+    );
+}

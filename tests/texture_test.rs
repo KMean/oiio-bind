@@ -658,3 +658,36 @@ fn udim_patterns_resolve_and_inventory() {
     assert_eq!(inventory.tile(9, 0), None, "an unpopulated cell is None");
     assert_eq!(inventory.tile(99, 99), None, "outside the grid is None");
 }
+
+/// The missing-color bypass fires only for files that do not exist or
+/// cannot be read — for those the lookup fills and succeeds — never for an
+/// existing file that merely declined the probe, which would reach
+/// unvalidated indexing upstream.
+#[test]
+fn missing_color_covers_corrupt_files_but_not_declined_probes() {
+    let scratch = ScratchDir::new("missinggate");
+    let corrupt = scratch.file("corrupt.tx");
+    std::fs::write(&corrupt, b"garbage that is not a texture").unwrap();
+
+    let textures = TextureSystem::new().unwrap();
+    let options = TextureOptions {
+        missing_color: Some(vec![0.1, 0.2, 0.3]),
+        ..TextureOptions::default()
+    };
+    let mut rgb = [0.0_f32; 3];
+    textures
+        .texture(
+            &corrupt,
+            &options,
+            0.5,
+            0.5,
+            Derivatives::uniform(0.01),
+            &mut rgb,
+        )
+        .unwrap();
+    assert_eq!(
+        rgb,
+        [0.1, 0.2, 0.3],
+        "a corrupt file takes the missing color"
+    );
+}

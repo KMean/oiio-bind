@@ -386,23 +386,53 @@ impl ImageCache {
     }
 
     /// Whether the name is a UDIM pattern, such as `tex.<UDIM>.exr`.
+    ///
+    /// The query name is `"UDIM"`, capitalized: OpenImageIO's documentation
+    /// spells it `udim`, but its implementation compares interned strings
+    /// exactly and only answers the capitalized form — the lowercase name
+    /// falls into the per-tile aggregation and answers `false` for every
+    /// real UDIM set. A pattern whose tile set is empty on disk is an
+    /// error rather than `false`: OpenImageIO treats it as an unreadable
+    /// file.
     pub fn is_udim(&self, image_path: &Path) -> Result<bool> {
         Ok(self
-            .info_int(image_path, 0, 0, "udim", "query UDIM")?
+            .info_int(image_path, 0, 0, "UDIM", "query UDIM")?
             .unwrap_or(0)
             != 0)
     }
 
     /// Number of subimages in the file.
+    ///
+    /// A file that cannot answer is an error, not a zero. The reachable
+    /// case is a UDIM pattern whose tiles disagree on the count —
+    /// OpenImageIO aggregates per-tile answers and declines, without a
+    /// message, when they differ.
     pub fn subimage_count(&self, image_path: &Path) -> Result<u32> {
-        let count = self.info_int(image_path, 0, 0, "subimages", "count subimages")?;
-        Ok(count.unwrap_or(0).max(0) as u32)
+        const OPERATION: &str = "count subimages";
+        let count = self.info_int(image_path, 0, 0, "subimages", OPERATION)?;
+        Self::answered(OPERATION, count)
     }
 
-    /// Number of mip levels of a subimage.
+    /// Number of mip levels of a subimage; as with
+    /// [`ImageCache::subimage_count`], a file that cannot answer is an
+    /// error, not a zero.
     pub fn mip_level_count(&self, image_path: &Path, subimage: u32) -> Result<u32> {
-        let count = self.info_int(image_path, subimage, 0, "miplevels", "count mip levels")?;
-        Ok(count.unwrap_or(0).max(0) as u32)
+        const OPERATION: &str = "count mip levels";
+        let count = self.info_int(image_path, subimage, 0, "miplevels", OPERATION)?;
+        Self::answered(OPERATION, count)
+    }
+
+    /// The counts' shared refusal to invent a zero for a declined query.
+    fn answered(operation: &'static str, count: Option<i32>) -> Result<u32> {
+        match count {
+            Some(count) => Ok(count.max(0) as u32),
+            None => Err(Error::operation(
+                operation,
+                "the file did not answer; a UDIM pattern answers only when \
+                 every tile agrees"
+                    .to_owned(),
+            )),
+        }
     }
 
     /// The name of the format reading the file, such as `"openexr"`.
@@ -427,9 +457,11 @@ impl ImageCache {
 
     /// The average color of a subimage, one value per channel.
     ///
-    /// OpenImageIO derives it from the 1×1 mip level, so only mipmapped
-    /// files — textures made by [`make_texture`](crate::make_texture) — can
-    /// answer; everything else is `None`.
+    /// Two sources can answer: an `oiio:AverageColor` attribute written by
+    /// `maketx`-shaped software (which [`make_texture`](crate::make_texture)
+    /// writes even without a mip pyramid), or — when the attribute is
+    /// absent — sampling a 1×1 coarsest mip level. A plain image with
+    /// neither is `None`.
     pub fn average_color(&self, image_path: &Path, subimage: u32) -> Result<Option<Vec<f32>>> {
         let spec = self.image_spec_at(image_path, subimage, 0)?;
         self.info_floats(
@@ -483,11 +515,34 @@ impl ImageCache {
     /// The thumbnail a file carries for a subimage, or `None` if the file or
     /// its format has none. In OpenImageIO 3.1 the formats that store one are
     /// PSD, camera raw, and Targa.
+    ///
+    /// A UDIM pattern is refused: OpenImageIO's thumbnail path would try to
+    /// open the literal pattern as a file, and the failure permanently marks
+    /// the pattern's cache record broken, poisoning every later query on it.
+    /// An unreadable file is an error, not `None` — OpenImageIO reports the
+    /// brokenness only on the first touch, so it is asked directly here.
     pub fn thumbnail(&self, image_path: &Path, subimage: u32) -> Result<Option<ImageBuf>> {
+        const OPERATION: &str = "read thumbnail";
+        if self
+            .info_int(image_path, 0, 0, "UDIM", OPERATION)?
+            .unwrap_or(0)
+            != 0
+        {
+            return Err(Error::operation(
+                OPERATION,
+                "a UDIM pattern names many files; resolve a concrete tile first \
+                 (OpenImageIO would try to open the pattern itself, and the \
+                 failure poisons its cache record)"
+                    .to_owned(),
+            ));
+        }
         let filename = path_to_utf8(image_path)?;
         let subimage = level_index(subimage)?;
         let mut thumb = ImageBuf::empty()?;
         let (filled, error) = self.with_cache(|mut cache| {
+            // Drain any queued message first, so a failure here reports this
+            // call's error and not a predecessor's.
+            let _ = sys::imagecache::imagecache_geterror(cache.as_mut(), true);
             let filled = sys::imagecache::imagecache_get_thumbnail(
                 cache.as_mut(),
                 filename,
@@ -503,8 +558,23 @@ impl ImageCache {
         });
         match (filled, error) {
             (true, _) => Ok(Some(thumb)),
-            (false, error) if error.is_empty() => Ok(None),
-            (false, error) => Err(Error::operation("read thumbnail", error)),
+            (false, error) if error.is_empty() => {
+                // False without a message is how OpenImageIO reports both "no
+                // thumbnail" and "file already known broken" — it only issues
+                // the brokenness error on the first touch. Tell them apart.
+                if self
+                    .info_int(image_path, 0, 0, "broken", OPERATION)?
+                    .unwrap_or(0)
+                    != 0
+                {
+                    return Err(Error::operation(
+                        OPERATION,
+                        "the file cannot be read".to_owned(),
+                    ));
+                }
+                Ok(None)
+            }
+            (false, error) => Err(Error::operation(OPERATION, error)),
         }
     }
 
@@ -577,6 +647,13 @@ impl ImageCache {
 
     /// One string image query. The queries answered as strings always have an
     /// answer for a readable file, so absence is reported as an error.
+    ///
+    /// UDIM patterns are refused before the query: OpenImageIO aggregates a
+    /// pattern's answer by copying a stack buffer that, when every populated
+    /// tile has become unreadable, was never written — for a string query
+    /// that garbage would be dereferenced as a pointer. The aggregate of a
+    /// string over many tiles is not a meaningful answer anyway; callers
+    /// query a concrete tile.
     fn info_string(
         &self,
         image_path: &Path,
@@ -585,6 +662,16 @@ impl ImageCache {
         dataname: &'static str,
         operation: &'static str,
     ) -> Result<String> {
+        if self
+            .info_int(image_path, 0, 0, "UDIM", operation)?
+            .unwrap_or(0)
+            != 0
+        {
+            return Err(Error::operation(
+                operation,
+                "a UDIM pattern names many files; query a concrete tile instead".to_owned(),
+            ));
+        }
         let mut pointer: *const std::os::raw::c_char = std::ptr::null();
         let datatype =
             sys::typedesc::typedesc_from_basetype_arraylen(sys::typedesc::BaseType::String, 0);
@@ -636,6 +723,10 @@ impl ImageCache {
         let subimage = level_index(subimage)?;
         let mip_level = level_index(mip_level)?;
         let (filled, error) = self.with_cache(|mut cache| {
+            // Drain any queued message first: OpenImageIO's UDIM aggregation
+            // can queue a tile's error and still succeed, and a later
+            // unrelated query must not inherit it.
+            let _ = sys::imagecache::imagecache_geterror(cache.as_mut(), true);
             // SAFETY: forwarded from the caller.
             let filled = unsafe {
                 sys::imagecache::imagecache_get_image_info(

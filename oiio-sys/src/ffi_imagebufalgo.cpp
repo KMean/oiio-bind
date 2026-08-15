@@ -1585,6 +1585,16 @@ imagebufalgo_compare_yee(const ImageBuf& a, const ImageBuf& b, float luminance,
             "compare_yee: the region must lie inside the images");
         return refused;
     }
+    // compare_Yee pastes the region into a depth-1 scratch, silently
+    // dropping every slice past the first while scanning rows for all of
+    // them, so a volumetric comparison would report equality it never
+    // measured.
+    if (region.zend - region.zbegin > 1) {
+        error = rust::String::lossy(
+            "compare_yee: two-dimensional images only; OpenImageIO's "
+            "comparison drops every slice past the first");
+        return refused;
+    }
 
     OIIO::ImageBufAlgo::CompareResults results {};
     const int failures = OIIO::ImageBufAlgo::compare_Yee(a, b, results,

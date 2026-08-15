@@ -772,7 +772,9 @@ impl TextureSystem {
     /// The concrete tile file a UDIM pattern refers to at these texture
     /// coordinates, or `None` where no tile exists — UDIM sets may be
     /// sparse. The integer part of `s` selects the column and of `t` the
-    /// row, as UDIM numbering does.
+    /// row, as UDIM numbering does, except that OpenImageIO clamps negative
+    /// coordinates to column and row zero — `s = -1.5` answers the 1001
+    /// column's tile, not `None`.
     pub fn resolve_udim(&self, pattern: &Path, s: f32, t: f32) -> Result<Option<PathBuf>> {
         let filename = path_to_utf8(pattern)?;
         let resolved = self

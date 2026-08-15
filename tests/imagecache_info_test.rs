@@ -210,3 +210,53 @@ fn oversized_and_mismatched_thumbnails_are_refused() {
         "unexpected error: {error}"
     );
 }
+
+/// The sixth review's regressions: a real UDIM pattern answers true (the
+/// query name is capitalized "UDIM" — the lowercase spelling OpenImageIO
+/// documents is never answered by its implementation), an unreadable file
+/// is an error on every thumbnail call rather than melting into None, a
+/// stale queued error cannot turn a later documented-None into Err, and a
+/// UDIM pattern is refused by the queries that would poison or misread it.
+#[test]
+fn udim_and_broken_file_queries_answer_honestly() {
+    let scratch = ScratchDir::new("sixthcache");
+    let cache = ImageCache::new().unwrap();
+
+    // Two real tiles make the pattern a genuine UDIM set.
+    for id in ["1001", "1002"] {
+        let spec = ImageSpec::new(8, 8, 3, PixelFormat::F32).unwrap();
+        write_image(
+            &scratch.file(&format!("t.{id}.exr")),
+            &spec,
+            &f32_ramp(8 * 8 * 3),
+        )
+        .unwrap();
+    }
+    let pattern = scratch.file("t.<UDIM>.exr");
+    assert!(cache.is_udim(&pattern).unwrap(), "a real UDIM set is UDIM");
+    assert!(!cache.is_udim(&scratch.file("t.1001.exr")).unwrap());
+
+    // Consistent tiles agree, so the aggregate count answers.
+    assert_eq!(cache.subimage_count(&pattern).unwrap(), 1);
+
+    // The queries that would poison the pattern's cache record or read
+    // an aggregate that is not meaningful refuse it instead.
+    assert!(cache.thumbnail(&pattern, 0).is_err());
+    assert!(cache.file_format(&pattern).is_err());
+
+    // An unreadable file: an error on the first thumbnail call and still
+    // an error on the second, where OpenImageIO reports brokenness only
+    // once.
+    let corrupt = scratch.file("corrupt.exr");
+    std::fs::write(&corrupt, b"not an image at all").unwrap();
+    assert!(cache.thumbnail(&corrupt, 0).is_err(), "first call");
+    assert!(cache.thumbnail(&corrupt, 0).is_err(), "second call");
+
+    // And the stale queued error from touching the corrupt file cannot
+    // turn a later documented-None answer into an Err.
+    let plain = scratch.file("plain.exr");
+    let spec = ImageSpec::new(8, 8, 3, PixelFormat::F32).unwrap();
+    write_image(&plain, &spec, &f32_ramp(8 * 8 * 3)).unwrap();
+    assert_eq!(cache.constant_color(&plain, 0).unwrap(), None);
+    assert!(cache.thumbnail(&plain, 0).unwrap().is_none());
+}

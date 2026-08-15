@@ -402,14 +402,19 @@ impl ImageInput {
         DeepImage::from_parts(deep, &spec)
     }
 
-    /// Read the base image exactly as the file stores it.
+    /// Read the base image in its declared native channel formats.
     ///
-    /// Each channel keeps its own storage format — the half/float mix a
-    /// multi-AOV EXR carries — packed per pixel in channel order, so the
-    /// result is byte-exact with the file's pixel data and its stride is
-    /// [`ImageSpec::native_pixel_bytes`]. This is the read for hashing,
-    /// lossless transcoding, or decoding values yourself; for numbers to
-    /// compute with, [`ImageInput::read_image_into`] converts instead.
+    /// Each channel keeps its declared storage format — the half/float mix
+    /// a multi-AOV EXR carries — packed per pixel in channel order, with
+    /// [`ImageSpec::native_pixel_bytes`] as the stride. For most formats
+    /// that is byte-exact with the file's pixel data; formats packing
+    /// samples below a byte or between byte sizes (1/2/4/12-bit TIFF,
+    /// sub-byte PNM) declare the next whole type as native and hand back
+    /// unpacked, rescaled samples, so the guarantee is the *declared*
+    /// formats, not the on-disk bit packing. This is the read for
+    /// value-preserving transcoding or decoding values yourself; for
+    /// numbers to compute with, [`ImageInput::read_image_into`] converts
+    /// instead.
     pub fn read_native_image(&mut self) -> Result<Vec<u8>> {
         self.read_native_image_at(0, 0)
     }
@@ -622,8 +627,14 @@ impl ImageInput {
         sys::imageio::imageinput_supports(self.inner(), feature)
     }
 
-    /// Whether another file appears readable by this reader's format,
-    /// judged from its header without opening it fully.
+    /// Whether another file appears readable by this reader's format.
+    ///
+    /// Formats with a cheap header check answer from the candidate's
+    /// magic bytes; the rest fully open and close it. Either way the probe
+    /// runs on a throwaway reader of the same format — OpenImageIO's own
+    /// fallback would re-open and close *this* reader, silently
+    /// invalidating it, which is why the shim never lets it near the live
+    /// one.
     pub fn is_valid_file(&self, image_path: &Path) -> Result<bool> {
         let filename = path_to_utf8(image_path)?;
         Ok(sys::imageio::imageinput_valid_file(self.inner(), filename))
@@ -1199,10 +1210,12 @@ impl ImageOutput {
 
     /// Attach a thumbnail to the image being written.
     ///
-    /// Only formats reporting the `thumbnail` capability store one — in
-    /// OpenImageIO 3.1 that is Targa alone — and OpenImageIO's fallback
-    /// fails without recording a message, so anything else is refused here
-    /// with a clear one. The thumbnail's channel count must match the
+    /// Only formats reporting the `thumbnail` capability store one — among
+    /// real formats in OpenImageIO 3.1 that is Targa alone; the `null`
+    /// testing sink also claims it, then discards the call with
+    /// OpenImageIO's messageless fallback — and that fallback fails without
+    /// recording anything, so formats not claiming the capability are
+    /// refused here with a clear message. The thumbnail's channel count must match the
     /// image's (Targa refuses a mismatch silently), and both dimensions
     /// must be under 256: the TGA postage stamp stores its size in single
     /// bytes, and through 3.1 OpenImageIO's own downsizing clamps to 256 —
