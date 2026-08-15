@@ -78,6 +78,14 @@ behavioural difference between patch releases was found — see `mad` in
   `ImageOutput::write_deep_image` refuses a writer that was opened for flat
   pixels, and refuses a deep image whose dimensions or channel count disagree
   with the specification.
+- [x] Streaming deep images: `write_deep_scanlines`/`write_deep_tiles` and
+  `read_deep_scanlines_at`/`read_deep_tiles_at`, each band or block a
+  `DeepImage` shaped exactly like its region. Scanline bands are in-order
+  and tile ranges tile-aligned, because OpenEXR lays the sample arrays over
+  the file by trusting the caller's coordinates. Region reads always
+  include every channel — OpenImageIO's deep channel-subset path pairs the
+  kept channels' data with the wrong names (issue 13 in
+  `contrib/upstream-issues.md`).
 
 ## Notes on the OpenImageIO 3.1 span API
 

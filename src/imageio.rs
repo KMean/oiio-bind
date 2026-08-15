@@ -402,6 +402,151 @@ impl ImageInput {
         DeepImage::from_parts(deep, &spec)
     }
 
+    /// Read a contiguous band of scanlines of a deep subimage and mip level.
+    ///
+    /// The returned deep image is the band: as wide as the data window, as
+    /// tall as `y`, its origin at the band's top-left corner, every channel
+    /// included. Bands may be read in any order.
+    ///
+    /// All channels are always read. OpenImageIO's channel-subset path pairs
+    /// each kept channel's data with the wrong channel's name, so this crate
+    /// does not offer it for deep reads.
+    pub fn read_deep_scanlines_at(
+        &mut self,
+        subimage: u32,
+        mip_level: u32,
+        y: Range<i32>,
+    ) -> Result<DeepImage> {
+        const OPERATION: &str = "read deep scanlines";
+        let spec = self.require_deep_spec(OPERATION, subimage, mip_level)?;
+        if spec.is_tiled() {
+            return Err(Error::InvalidImageSpec(
+                "this file is tiled; use read_deep_tiles_at".to_owned(),
+            ));
+        }
+        if spec.dimensions()[2] != 1 {
+            return Err(Error::InvalidImageSpec(
+                "scanline reads require a two-dimensional image".to_owned(),
+            ));
+        }
+        let rows = validate_axis("y", &y, spec.origin()[1], spec.dimensions()[1])?;
+
+        let mut deep = sys::deepdata::deepdata_default();
+        let Some(pinned) = deep.as_mut() else {
+            return Err(Error::operation(
+                OPERATION,
+                "OpenImageIO could not allocate deep data".to_owned(),
+            ));
+        };
+        let succeeded = sys::imageio::imageinput_read_native_deep_scanlines(
+            self.inner_mut(),
+            level_index(subimage)?,
+            level_index(mip_level)?,
+            y.start,
+            y.end,
+            0,
+            0,
+            spec.channel_count() as i32,
+            pinned,
+        );
+        if !succeeded {
+            return Err(self.take_error(OPERATION));
+        }
+
+        let band = ImageSpec::new(
+            spec.dimensions()[0],
+            rows,
+            spec.channel_count(),
+            spec.format(),
+        )?
+        .with_origin([spec.origin()[0], y.start, spec.origin()[2]]);
+        DeepImage::from_parts(deep, &band)
+    }
+
+    /// Read a rectangular block of whole tiles of a deep subimage and mip
+    /// level.
+    ///
+    /// Each range must start on a tile boundary and either end on one or end
+    /// at the edge of the data window — OpenEXR locates the block by tile
+    /// index, so a misaligned range would place its samples at rows and
+    /// columns outside the block. The returned deep image is the block, its
+    /// origin at the block's corner, every channel included (as with
+    /// [`ImageInput::read_deep_scanlines_at`], OpenImageIO's channel-subset
+    /// path mislabels channels, so this crate does not offer it).
+    pub fn read_deep_tiles_at(
+        &mut self,
+        subimage: u32,
+        mip_level: u32,
+        x: Range<i32>,
+        y: Range<i32>,
+        z: Range<i32>,
+    ) -> Result<DeepImage> {
+        const OPERATION: &str = "read deep tiles";
+        let spec = self.require_deep_spec(OPERATION, subimage, mip_level)?;
+        if !spec.is_tiled() {
+            return Err(Error::InvalidImageSpec(
+                "tile reads require a tiled file; use read_deep_scanlines_at".to_owned(),
+            ));
+        }
+        let [tile_width, tile_height, tile_depth] = spec.tile_dimensions();
+        let origin = spec.origin();
+        let dimensions = spec.dimensions();
+        let width = validate_axis("x", &x, origin[0], dimensions[0])?;
+        let height = validate_axis("y", &y, origin[1], dimensions[1])?;
+        let depth = validate_axis("z", &z, origin[2], dimensions[2])?;
+        validate_tile_alignment("x", &x, origin[0], dimensions[0], tile_width)?;
+        validate_tile_alignment("y", &y, origin[1], dimensions[1], tile_height)?;
+        validate_tile_alignment("z", &z, origin[2], dimensions[2], tile_depth.max(1))?;
+
+        let mut deep = sys::deepdata::deepdata_default();
+        let Some(pinned) = deep.as_mut() else {
+            return Err(Error::operation(
+                OPERATION,
+                "OpenImageIO could not allocate deep data".to_owned(),
+            ));
+        };
+        let succeeded = sys::imageio::imageinput_read_native_deep_tiles(
+            self.inner_mut(),
+            level_index(subimage)?,
+            level_index(mip_level)?,
+            x.start,
+            x.end,
+            y.start,
+            y.end,
+            z.start,
+            z.end,
+            0,
+            spec.channel_count() as i32,
+            pinned,
+        );
+        if !succeeded {
+            return Err(self.take_error(OPERATION));
+        }
+
+        let band = ImageSpec::new(width, height, spec.channel_count(), spec.format())?
+            .with_depth(depth)?
+            .with_origin([x.start, y.start, z.start]);
+        DeepImage::from_parts(deep, &band)
+    }
+
+    /// The deep region readers' shared precondition: the subimage exists and
+    /// is deep.
+    fn require_deep_spec(
+        &mut self,
+        operation: &'static str,
+        subimage: u32,
+        mip_level: u32,
+    ) -> Result<ImageSpec> {
+        let spec = self.image_spec_at(subimage, mip_level)?;
+        if !spec.is_deep() {
+            return Err(Error::operation(
+                operation,
+                "this image is not deep; use read_image_into".to_owned(),
+            ));
+        }
+        Ok(spec)
+    }
+
     /// Close the file and report any delayed format or I/O errors.
     ///
     /// Dropping an `ImageInput` without calling this method still releases
@@ -851,7 +996,164 @@ impl ImageOutput {
         }
 
         let succeeded = sys::imageio::imageoutput_write_deep_image(self.inner_mut(), deep.native());
-        self.check("write deep image", succeeded)
+        self.check("write deep image", succeeded)?;
+        // The whole subimage is written; a later streaming call must not run,
+        // because OpenEXR's deep scanline writer would bias the new deep
+        // image's arrays by a cursor that is already past them.
+        self.mark_whole_subimage_written();
+        Ok(())
+    }
+
+    /// Write a contiguous band of scanlines of a deep image.
+    ///
+    /// The deep image must be exactly the band: as wide as the data window,
+    /// as tall as `y`, one channel per declared channel. Its own origin does
+    /// not matter — the samples land at `y`. Channel types that differ from
+    /// the declared ones are converted by OpenImageIO.
+    ///
+    /// Bands must arrive in order, each starting where the previous ended:
+    /// OpenEXR's deep scanline writer keeps its own advancing cursor but
+    /// trusts the caller's starting row when it lays the sample arrays over
+    /// the file, so an out-of-order band would be read outside its arrays.
+    pub fn write_deep_scanlines(&mut self, y: Range<i32>, deep: &DeepImage) -> Result<()> {
+        const OPERATION: &str = "write deep scanlines";
+        self.require_deep_writer(OPERATION)?;
+        if self.spec.is_tiled() {
+            return Err(Error::InvalidImageSpec(
+                "this file is tiled; use write_deep_tiles".to_owned(),
+            ));
+        }
+        if self.spec.dimensions()[2] != 1 {
+            return Err(Error::InvalidImageSpec(
+                "scanline writes require a two-dimensional image".to_owned(),
+            ));
+        }
+        if !self.supports("random_access") && y.start != self.next_scanline {
+            return Err(Error::InvalidRegion {
+                axis: "y",
+                message: format!(
+                    "this format writes scanlines in order: the next row is {}, not {}",
+                    self.next_scanline, y.start
+                ),
+            });
+        }
+        let rows = validate_axis("y", &y, self.spec.origin()[1], self.spec.dimensions()[1])?;
+        self.require_deep_band(OPERATION, deep, [self.spec.dimensions()[0], rows, 1])?;
+
+        let succeeded = sys::imageio::imageoutput_write_deep_scanlines(
+            self.inner_mut(),
+            y.start,
+            y.end,
+            0,
+            deep.native(),
+        );
+        self.check(OPERATION, succeeded)?;
+        self.next_scanline = y.end;
+        Ok(())
+    }
+
+    /// Write a rectangular block of whole tiles of a deep image.
+    ///
+    /// Each range must start on a tile boundary and either end on one or end
+    /// at the edge of the data window — OpenEXR positions the block by tile
+    /// index, so a misaligned range would place samples at rows and columns
+    /// the deep image does not hold. The deep image must be exactly the
+    /// block: its size equal to the ranges, one channel per declared
+    /// channel; its own origin does not matter.
+    pub fn write_deep_tiles(
+        &mut self,
+        x: Range<i32>,
+        y: Range<i32>,
+        z: Range<i32>,
+        deep: &DeepImage,
+    ) -> Result<()> {
+        const OPERATION: &str = "write deep tiles";
+        self.require_deep_writer(OPERATION)?;
+        let [tile_width, tile_height, tile_depth] = self.spec.tile_dimensions();
+        if !self.spec.is_tiled() {
+            return Err(Error::InvalidImageSpec(
+                "tile writes require a specification with a tile size".to_owned(),
+            ));
+        }
+
+        let origin = self.spec.origin();
+        let dimensions = self.spec.dimensions();
+        let width = validate_axis("x", &x, origin[0], dimensions[0])?;
+        let height = validate_axis("y", &y, origin[1], dimensions[1])?;
+        let depth = validate_axis("z", &z, origin[2], dimensions[2])?;
+        validate_tile_alignment("x", &x, origin[0], dimensions[0], tile_width)?;
+        validate_tile_alignment("y", &y, origin[1], dimensions[1], tile_height)?;
+        validate_tile_alignment("z", &z, origin[2], dimensions[2], tile_depth.max(1))?;
+        self.require_deep_band(OPERATION, deep, [width, height, depth])?;
+
+        let succeeded = sys::imageio::imageoutput_write_deep_tiles(
+            self.inner_mut(),
+            x.start,
+            x.end,
+            y.start,
+            y.end,
+            z.start,
+            z.end,
+            deep.native(),
+        );
+        self.check(OPERATION, succeeded)?;
+        // Tiles touched this subimage; conservatively mark it written so a
+        // later whole-image or streaming write refuses rather than
+        // interleaving format-dependently.
+        self.mark_whole_subimage_written();
+        Ok(())
+    }
+
+    /// The two deep streaming writers' shared preconditions: a writer opened
+    /// with a deep specification, on a format that reports `deepdata` —
+    /// OpenImageIO's fallback for the rest fails without recording a message.
+    fn require_deep_writer(&self, operation: &'static str) -> Result<()> {
+        if !self.spec.is_deep() {
+            return Err(Error::operation(
+                operation,
+                "this writer was opened for flat pixels; see ImageSpec::as_deep".to_owned(),
+            ));
+        }
+        if !self.supports("deepdata") {
+            return Err(Error::operation(
+                operation,
+                format!(
+                    "the {} format does not support deep images",
+                    self.format_name()
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Check that a deep image is shaped exactly like the region a streaming
+    /// write covers.
+    fn require_deep_band(
+        &self,
+        operation: &'static str,
+        deep: &DeepImage,
+        expected: [u32; 3],
+    ) -> Result<()> {
+        if deep.dimensions() != expected {
+            return Err(Error::operation(
+                operation,
+                format!(
+                    "the deep image is {:?} but the region covers {expected:?}",
+                    deep.dimensions()
+                ),
+            ));
+        }
+        if deep.channel_count() != self.spec.channel_count() as usize {
+            return Err(Error::operation(
+                operation,
+                format!(
+                    "the deep image has {} channels but the writer expects {}",
+                    deep.channel_count(),
+                    self.spec.channel_count()
+                ),
+            ));
+        }
+        Ok(())
     }
 
     /// Begin a new subimage in the same file.
@@ -958,28 +1260,36 @@ impl ImageOutput {
         origin: i32,
         size: u32,
     ) -> Result<u32> {
-        if range.start >= range.end {
-            return Err(Error::InvalidRegion {
-                axis,
-                message: format!(
-                    "range must be non-empty and increasing, got {}..{}",
-                    range.start, range.end
-                ),
-            });
-        }
-        let end = i64::from(origin) + i64::from(size);
-        if i64::from(range.start) < i64::from(origin) || i64::from(range.end) > end {
-            return Err(Error::InvalidRegion {
-                axis,
-                message: format!(
-                    "range {}..{} lies outside the data window {origin}..{end}",
-                    range.start, range.end
-                ),
-            });
-        }
-        Ok((i64::from(range.end) - i64::from(range.start)) as u32)
+        validate_axis(axis, range, origin, size)
     }
+}
 
+/// Check that a coordinate range is non-empty and inside the data window on
+/// one axis, and return its length.
+fn validate_axis(axis: &'static str, range: &Range<i32>, origin: i32, size: u32) -> Result<u32> {
+    if range.start >= range.end {
+        return Err(Error::InvalidRegion {
+            axis,
+            message: format!(
+                "range must be non-empty and increasing, got {}..{}",
+                range.start, range.end
+            ),
+        });
+    }
+    let end = i64::from(origin) + i64::from(size);
+    if i64::from(range.start) < i64::from(origin) || i64::from(range.end) > end {
+        return Err(Error::InvalidRegion {
+            axis,
+            message: format!(
+                "range {}..{} lies outside the data window {origin}..{end}",
+                range.start, range.end
+            ),
+        });
+    }
+    Ok((i64::from(range.end) - i64::from(range.start)) as u32)
+}
+
+impl ImageOutput {
     fn reject_deep(&self) -> Result<()> {
         if self.spec.is_deep() {
             return Err(Error::UnsupportedDeepImage);
@@ -1027,6 +1337,62 @@ impl ImageOutput {
     pub(crate) fn mark_whole_subimage_written(&mut self) {
         let end = i64::from(self.spec.origin()[1]) + i64::from(self.spec.dimensions()[1]);
         self.next_scanline = end.min(i64::from(i32::MAX)) as i32;
+    }
+
+    /// Write an arbitrary rectangle of pixels, for formats that can place
+    /// pixels at random.
+    ///
+    /// Only formats reporting the `rectangles` capability accept this —
+    /// [`ImageOutput::supports`] tells; OpenImageIO's fallback for the rest
+    /// returns failure without recording a message, which this wrapper turns
+    /// into a clear error before calling. No format shipped with
+    /// OpenImageIO 3.1 reports the capability, so today this is refused for
+    /// every built-in writer; it exists for third-party plugins that do.
+    /// The rectangle must lie inside the data window and the buffer must
+    /// hold exactly its pixels. After a rectangle lands, the subimage
+    /// counts as written for the in-order scanline cursor.
+    pub fn write_rectangle<T: Pixel>(
+        &mut self,
+        x: Range<i32>,
+        y: Range<i32>,
+        pixels: &[T],
+    ) -> Result<()> {
+        self.reject_deep()?;
+        if !self.supports("rectangles") {
+            return Err(Error::operation(
+                "write rectangle",
+                format!(
+                    "the {} format cannot place arbitrary rectangles; OpenImageIO's \
+                     fallback fails without a message, so it is refused here",
+                    self.format_name()
+                ),
+            ));
+        }
+        let origin = self.spec.origin();
+        let dimensions = self.spec.dimensions();
+        let width = self.validate_axis("x", &x, origin[0], dimensions[0])?;
+        let height = self.validate_axis("y", &y, origin[1], dimensions[1])?;
+        let expected = element_count([width, height, 1, self.spec.channel_count()])?;
+        validate_buffer_len(expected, pixels.len())?;
+
+        // SAFETY: Pixel is sealed to initialized scalar layouts, so the byte
+        // view holds initialized values of the declared format.
+        let succeeded = unsafe {
+            sys::imageio::imageoutput_write_rectangle_span(
+                self.inner_mut(),
+                x.start,
+                x.end,
+                y.start,
+                y.end,
+                0,
+                1,
+                pixel::type_desc::<T>(),
+                pixel::as_bytes(pixels),
+            )
+        };
+        self.check("write rectangle", succeeded)?;
+        self.mark_whole_subimage_written();
+        Ok(())
     }
 
     /// Copy a reader's current subimage into this writer — the lossless

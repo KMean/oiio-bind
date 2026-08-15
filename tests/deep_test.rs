@@ -415,3 +415,287 @@ fn a_flat_image_is_not_read_as_deep() {
         "unexpected error: {error}"
     );
 }
+
+/// Build a deep image band by band, stream the bands in order, and read the
+/// file back both whole and as a band that straddles the two written ones.
+#[test]
+fn streams_deep_scanline_bands_and_reads_them_back() {
+    let scratch = ScratchDir::new("deepstream");
+    let path = scratch.file("streamed.exr");
+
+    const WIDTH: u32 = 8;
+    const HEIGHT: u32 = 4;
+    let spec = ImageSpec::new(WIDTH, HEIGHT, 2, PixelFormat::F32)
+        .unwrap()
+        .with_channel_names(["A", "Z"])
+        .unwrap()
+        .as_deep();
+
+    let sample_count = |x: i32, y: i32| ((x + y) % 3) as usize;
+    let expected = |x: i32, y: i32, channel: usize, sample: usize| -> f32 {
+        (x as f32) + (y as f32) * 0.5 + (channel as f32) * 0.25 + (sample as f32) * 0.125
+    };
+
+    // Each band is its own deep image, shaped and placed like the rows it
+    // holds.
+    let band = |rows: std::ops::Range<i32>| -> oiio::DeepImage {
+        let band_spec = ImageSpec::new(WIDTH, (rows.end - rows.start) as u32, 2, PixelFormat::F32)
+            .unwrap()
+            .with_channel_names(["A", "Z"])
+            .unwrap()
+            .with_origin([0, rows.start, 0])
+            .as_deep();
+        let mut deep = DeepImage::new(&band_spec).unwrap();
+        for y in rows {
+            for x in 0..WIDTH as i32 {
+                deep.set_sample_count(x, y, sample_count(x, y)).unwrap();
+                for sample in 0..sample_count(x, y) {
+                    for channel in 0..2 {
+                        deep.set_value(x, y, channel, sample, expected(x, y, channel, sample))
+                            .unwrap();
+                    }
+                }
+            }
+        }
+        deep
+    };
+
+    let mut output = oiio::ImageOutput::create(&path, &spec).unwrap();
+    output.write_deep_scanlines(0..2, &band(0..2)).unwrap();
+    output.write_deep_scanlines(2..4, &band(2..4)).unwrap();
+    output.close().unwrap();
+
+    // Whole-image read: every sample of every band survived.
+    let mut input = ImageInput::from_path(&path).unwrap();
+    let read_back = input.read_deep_image().unwrap();
+    let mut checked = 0usize;
+    for y in 0..HEIGHT as i32 {
+        for x in 0..WIDTH as i32 {
+            assert_eq!(read_back.sample_count(x, y).unwrap(), sample_count(x, y));
+            for sample in 0..sample_count(x, y) {
+                for channel in 0..2 {
+                    let value = read_back.value(x, y, channel, sample).unwrap();
+                    let wanted = expected(x, y, channel, sample);
+                    assert!(
+                        (value - wanted).abs() < 1e-5,
+                        "({x}, {y}) channel {channel} sample {sample}: {value} != {wanted}"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+    }
+    input.close().unwrap();
+    assert!(checked > 0, "the fixture wrote no samples");
+
+    // Band read, straddling the two written bands: reads are random access.
+    let mut input = ImageInput::from_path(&path).unwrap();
+    let middle = input.read_deep_scanlines_at(0, 0, 1..3).unwrap();
+    assert_eq!(middle.dimensions(), [WIDTH, 2, 1]);
+    assert_eq!(middle.origin(), [0, 1, 0]);
+    assert_eq!(middle.channel_count(), 2);
+    for y in 1..3 {
+        for x in 0..WIDTH as i32 {
+            assert_eq!(middle.sample_count(x, y).unwrap(), sample_count(x, y));
+            for sample in 0..sample_count(x, y) {
+                for channel in 0..2 {
+                    let value = middle.value(x, y, channel, sample).unwrap();
+                    let wanted = expected(x, y, channel, sample);
+                    assert!(
+                        (value - wanted).abs() < 1e-5,
+                        "band ({x}, {y}) channel {channel} sample {sample}: {value} != {wanted}"
+                    );
+                }
+            }
+        }
+    }
+    input.close().unwrap();
+}
+
+/// The tiled counterpart: write two whole-tile blocks, read one back by its
+/// aligned range, and refuse a misaligned one.
+#[test]
+fn streams_deep_tile_blocks_and_reads_them_back() {
+    let scratch = ScratchDir::new("deeptiles");
+    let path = scratch.file("tiled.exr");
+
+    const WIDTH: u32 = 32;
+    const HEIGHT: u32 = 16;
+    let spec = ImageSpec::new(WIDTH, HEIGHT, 2, PixelFormat::F32)
+        .unwrap()
+        .with_channel_names(["A", "Z"])
+        .unwrap()
+        .with_tile_size([16, 16, 1])
+        .unwrap()
+        .as_deep();
+
+    let sample_count = |x: i32, y: i32| ((x + y) % 3) as usize;
+    let expected = |x: i32, y: i32, channel: usize, sample: usize| -> f32 {
+        (x as f32) - (y as f32) * 0.5 + (channel as f32) * 0.25 + (sample as f32) * 0.125
+    };
+
+    let block = |xs: std::ops::Range<i32>| -> oiio::DeepImage {
+        let block_spec = ImageSpec::new((xs.end - xs.start) as u32, HEIGHT, 2, PixelFormat::F32)
+            .unwrap()
+            .with_channel_names(["A", "Z"])
+            .unwrap()
+            .with_origin([xs.start, 0, 0])
+            .as_deep();
+        let mut deep = DeepImage::new(&block_spec).unwrap();
+        for y in 0..HEIGHT as i32 {
+            for x in xs.clone() {
+                deep.set_sample_count(x, y, sample_count(x, y)).unwrap();
+                for sample in 0..sample_count(x, y) {
+                    for channel in 0..2 {
+                        deep.set_value(x, y, channel, sample, expected(x, y, channel, sample))
+                            .unwrap();
+                    }
+                }
+            }
+        }
+        deep
+    };
+
+    let mut output = oiio::ImageOutput::create(&path, &spec).unwrap();
+    output
+        .write_deep_tiles(0..16, 0..16, 0..1, &block(0..16))
+        .unwrap();
+    output
+        .write_deep_tiles(16..32, 0..16, 0..1, &block(16..32))
+        .unwrap();
+    output.close().unwrap();
+
+    let mut input = ImageInput::from_path(&path).unwrap();
+
+    // A misaligned block is refused before OpenImageIO can misplace it.
+    let error = input
+        .read_deep_tiles_at(0, 0, 8..24, 0..16, 0..1)
+        .unwrap_err();
+    assert!(matches!(error, Error::InvalidRegion { axis: "x", .. }));
+
+    let right = input.read_deep_tiles_at(0, 0, 16..32, 0..16, 0..1).unwrap();
+    assert_eq!(right.dimensions(), [16, 16, 1]);
+    assert_eq!(right.origin(), [16, 0, 0]);
+    let mut checked = 0usize;
+    for y in 0..HEIGHT as i32 {
+        for x in 16..32 {
+            assert_eq!(right.sample_count(x, y).unwrap(), sample_count(x, y));
+            for sample in 0..sample_count(x, y) {
+                for channel in 0..2 {
+                    let value = right.value(x, y, channel, sample).unwrap();
+                    let wanted = expected(x, y, channel, sample);
+                    assert!(
+                        (value - wanted).abs() < 1e-5,
+                        "block ({x}, {y}) channel {channel} sample {sample}: {value} != {wanted}"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+    }
+    input.close().unwrap();
+    assert!(checked > 0, "the block held no samples");
+}
+
+/// The streaming guards: bands out of order, mis-shaped, after a whole-image
+/// write, or aimed at the wrong storage layout are all refused with this
+/// crate's messages, before OpenEXR's pointer arithmetic can walk outside
+/// the band's arrays.
+#[test]
+fn deep_streaming_is_refused_out_of_order_or_mis_shaped() {
+    let scratch = ScratchDir::new("deepguards");
+
+    let spec = ImageSpec::new(8, 4, 2, PixelFormat::F32)
+        .unwrap()
+        .with_channel_names(["A", "Z"])
+        .unwrap()
+        .as_deep();
+    let band_spec = ImageSpec::new(8, 2, 2, PixelFormat::F32)
+        .unwrap()
+        .with_channel_names(["A", "Z"])
+        .unwrap()
+        .with_origin([0, 2, 0])
+        .as_deep();
+    let band = DeepImage::new(&band_spec).unwrap();
+
+    // Out of order: the second band first.
+    let mut output = oiio::ImageOutput::create(&scratch.file("order.exr"), &spec).unwrap();
+    let error = output.write_deep_scanlines(2..4, &band).unwrap_err();
+    assert!(
+        error.to_string().contains("in order"),
+        "unexpected error: {error}"
+    );
+
+    // Mis-shaped: a two-row band for a three-row range.
+    let error = output.write_deep_scanlines(0..3, &band).unwrap_err();
+    assert!(
+        error.to_string().contains("covers"),
+        "unexpected error: {error}"
+    );
+
+    // Tiles of a scanline file.
+    let error = output
+        .write_deep_tiles(0..8, 0..4, 0..1, &band)
+        .unwrap_err();
+    assert!(matches!(error, Error::InvalidImageSpec(_)));
+
+    // After a whole-image write the subimage is spent; a band on top of it
+    // would misalign OpenEXR's own scanline cursor against the new band's
+    // arrays, so the cursor refuses it here.
+    let whole = DeepImage::new(&spec).unwrap();
+    let mut output = oiio::ImageOutput::create(&scratch.file("spent.exr"), &spec).unwrap();
+    output.write_deep_image(&whole).unwrap();
+    let error = output.write_deep_scanlines(0..2, &band).unwrap_err();
+    assert!(
+        error.to_string().contains("in order"),
+        "unexpected error: {error}"
+    );
+
+    // A flat writer takes no deep bands.
+    let flat_spec = ImageSpec::new(8, 4, 2, PixelFormat::F32).unwrap();
+    let mut flat = oiio::ImageOutput::create(&scratch.file("flat.exr"), &flat_spec).unwrap();
+    let error = flat.write_deep_scanlines(0..2, &band).unwrap_err();
+    assert!(
+        error.to_string().contains("flat pixels"),
+        "unexpected error: {error}"
+    );
+
+    // Scanline bands of a tiled file.
+    let tiled_spec = ImageSpec::new(32, 16, 2, PixelFormat::F32)
+        .unwrap()
+        .with_channel_names(["A", "Z"])
+        .unwrap()
+        .with_tile_size([16, 16, 1])
+        .unwrap()
+        .as_deep();
+    let mut tiled = oiio::ImageOutput::create(&scratch.file("tiled.exr"), &tiled_spec).unwrap();
+    let error = tiled.write_deep_scanlines(0..2, &band).unwrap_err();
+    assert!(matches!(error, Error::InvalidImageSpec(_)));
+
+    // Reading: a band outside the data window, tiles of a scanline file,
+    // and deep reads of a flat file are each refused.
+    let streamed = scratch.file("readable.exr");
+    let mut output = oiio::ImageOutput::create(&streamed, &spec).unwrap();
+    let whole = DeepImage::new(&spec).unwrap();
+    output.write_deep_image(&whole).unwrap();
+    output.close().unwrap();
+
+    let mut input = ImageInput::from_path(&streamed).unwrap();
+    let error = input.read_deep_scanlines_at(0, 0, 2..9).unwrap_err();
+    assert!(matches!(error, Error::InvalidRegion { axis: "y", .. }));
+    let error = input
+        .read_deep_tiles_at(0, 0, 0..8, 0..4, 0..1)
+        .unwrap_err();
+    assert!(matches!(error, Error::InvalidImageSpec(_)));
+    input.close().unwrap();
+
+    let flat_file = scratch.file("flatfile.exr");
+    write_image(&flat_file, &flat_spec, &f32_ramp(8 * 4 * 2)).unwrap();
+    let mut input = ImageInput::from_path(&flat_file).unwrap();
+    let error = input.read_deep_scanlines_at(0, 0, 0..2).unwrap_err();
+    assert!(
+        error.to_string().contains("not deep"),
+        "unexpected error: {error}"
+    );
+    input.close().unwrap();
+}

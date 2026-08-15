@@ -1,6 +1,6 @@
 # Draft reports for OpenImageIO
 
-Twelve issues from building Rust bindings against OpenImageIO 3.1/3.2, plus
+Thirteen issues from building Rust bindings against OpenImageIO 3.1/3.2, plus
 one open observation not yet settled enough to report.
 
 Issues 1 and 2 have self-contained reproductions, so a maintainer running one
@@ -888,6 +888,54 @@ the counters atomics; or snapshot per-thread stats under a lock the writers
 also take. Found while binding the cache for Rust; the binding now requires
 an exclusive borrow for `stats()`/`reset_stats()`, so its callers cannot
 overlap them with reads.
+
+---
+
+## Issue 13 — deep channel-subset reads pair each kept channel's data with the wrong channel's name
+
+`OpenEXRInput::read_native_deep_scanlines` and `read_native_deep_tiles` accept
+a channel subset `[chbegin, chend)`, and both initialise the caller's
+`DeepData` like this (`exrinput.cpp:1637` and `:1717` on `main`, `:1615` and
+`:1695` in 3.1.16.0):
+
+```cpp
+std::vector<TypeDesc> channeltypes;
+m_spec.get_channelformats(channeltypes);
+deepdata.init(npixels, nchans,
+              cspan<TypeDesc>(&channeltypes[chbegin], nchans),
+              m_spec.channelnames);
+```
+
+The channel *types* are offset by `chbegin`; the channel *names* are not.
+`DeepData::init` then assigns positionally — `m_impl->m_channelnames[c] =
+channelnames[c]` (`deepdata.cpp:385` on both `main` and 3.1.16.0) — so kept
+channel `c` receives the data and type of file channel `chbegin + c` under
+the name of file channel `c`.
+
+For any `chbegin > 0` every returned channel is mislabelled. The damage is
+not limited to the label: `init`'s "channel name hunt" (`deepdata.cpp:378`)
+derives `z_channel`, `zback_channel`, `alpha_channel` and each channel's
+associated alpha from those names, so `DeepData::z_channel()`,
+`opaque_z()` and the alpha-aware operations (`sort`, `merge_overlaps`,
+`occlusion_cull`) all act on the wrong channels for a subset read. Reading
+`{Z, ZBack}` out of an `{R, G, B, A, Z, ZBack}` file (`chbegin = 4`) returns
+the depth data named "R" and "G", with no Z channel found at all.
+
+Reachable from OpenImageIO's own Python bindings:
+`ImageInput.read_native_deep_scanlines(subimage, miplevel, ybegin, yend, z,
+chbegin, chend)` with `chbegin > 0`. Whole-image deep reads
+(`read_native_deep_image`, and any call with `chbegin == 0`) are unaffected.
+
+The one-line fix is to offset the names the same way as the types:
+
+```cpp
+deepdata.init(npixels, nchans,
+              cspan<TypeDesc>(&channeltypes[chbegin], nchans),
+              cspan<std::string>(&m_spec.channelnames[chbegin], nchans));
+```
+
+(with the same change in the tiled variant). Found while binding deep region
+reads for Rust; the binding sidesteps it by always reading every channel.
 
 ---
 

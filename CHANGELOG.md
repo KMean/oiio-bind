@@ -116,6 +116,21 @@ before the fork, but nothing was ever published under it, so starting both at
   configuration hints like `oiio:UnassociatedAlpha`;
   `ImageInput::supports` and `is_valid_file` for capability and header
   probes.
+- Deep streaming I/O: `ImageOutput::write_deep_scanlines` and
+  `write_deep_tiles`, `ImageInput::read_deep_scanlines_at` and
+  `read_deep_tiles_at`. Each band or block is its own `DeepImage`, shaped
+  exactly like the region it covers. Scanline bands must arrive in order
+  and tile ranges must be tile-aligned, because OpenEXR positions the
+  sample arrays by trusting the caller's coordinates — out of order or
+  misaligned, it reads outside them. Deep region reads always include
+  every channel: OpenImageIO's channel-subset path pairs each kept
+  channel's data with the wrong channel's name (upstream issue 13 in
+  `contrib/upstream-issues.md`), mislabelling Z and alpha with it.
+- `ImageOutput::write_rectangle`, for formats whose writers can place
+  pixels at random. No format shipped with OpenImageIO 3.1 reports the
+  `rectangles` capability and the fallback fails without a message, so the
+  wrapper refuses with a clear one; the method exists for third-party
+  plugins.
 - `ImageBuf::write_to`: write the whole current subimage through an
   already-open [`ImageOutput`] — multi-part files, in-memory writers, and
   open-time format conversion. OpenImageIO never compares the two

@@ -1152,6 +1152,36 @@ imageoutput_write_tiles_span(ImageOutput& imageoutput, int xbegin, int xend,
 }
 
 bool
+imageoutput_write_rectangle_span(ImageOutput& imageoutput, int xbegin, int xend,
+                                 int ybegin, int yend, int zbegin, int zend,
+                                 TypeDesc format,
+                                 const rust::Slice<const uint8_t> data)
+{
+    const ImageSpec& spec = imageoutput.spec();
+
+    detail::PixelLayout layout;
+    if (!imagespec_valid(spec) || xbegin >= xend || ybegin >= yend
+        || zbegin >= zend || xbegin < spec.x
+        || xend > static_cast<int64_t>(spec.x) + spec.width || ybegin < spec.y
+        || yend > static_cast<int64_t>(spec.y) + spec.height || zbegin < spec.z
+        || zend > static_cast<int64_t>(spec.z) + spec.depth
+        || !detail::bounded_pixel_layout(spec.nchannels,
+                                         static_cast<int64_t>(xend) - xbegin,
+                                         static_cast<int64_t>(yend) - ybegin,
+                                         static_cast<int64_t>(zend) - zbegin,
+                                         format, data.size(), layout)) {
+        imageoutput.errorfmt(
+            "invalid rectangle range or source buffer for bounded write");
+        return false;
+    }
+
+    return imageoutput.write_rectangle(xbegin, xend, ybegin, yend, zbegin,
+                                       zend, format, data.data(),
+                                       layout.x_stride, layout.y_stride,
+                                       layout.z_stride);
+}
+
+bool
 imageoutput_write_deep_scanlines(ImageOutput& imageoutput, int ybegin, int yend,
                                  int z, const DeepData& deepdata)
 {

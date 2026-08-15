@@ -543,6 +543,19 @@ mod ffi {
             data: &[u8],
         ) -> bool;
 
+        /// Safety: the buffer must hold initialized values of `format`.
+        pub unsafe fn imageoutput_write_rectangle_span(
+            imageoutput: Pin<&mut ImageOutput>,
+            xbegin: i32,
+            xend: i32,
+            ybegin: i32,
+            yend: i32,
+            zbegin: i32,
+            zend: i32,
+            format: TypeDesc,
+            data: &[u8],
+        ) -> bool;
+
         pub fn imageoutput_write_deep_scanlines(
             imageoutput: Pin<&mut ImageOutput>,
             ybegin: i32,

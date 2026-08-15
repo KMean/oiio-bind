@@ -718,3 +718,23 @@ fn the_reported_spec_is_the_one_the_file_was_opened_with() {
         "the writer dropped the origin and spec() should show it"
     );
 }
+
+/// No format shipped with OpenImageIO 3.1 reports the `rectangles`
+/// capability, and its fallback fails without recording a message — so the
+/// wrapper must refuse with its own clear one. Pinned on EXR; if a format
+/// ever starts supporting rectangles, this test says so.
+#[test]
+fn write_rectangle_is_refused_with_a_clear_message() {
+    let scratch = ScratchDir::new("rectangle");
+    let path = scratch.file("rect.exr");
+    let spec = ImageSpec::new(8, 8, 3, PixelFormat::F32).unwrap();
+    let mut output = ImageOutput::create(&path, &spec).unwrap();
+    assert!(!output.supports("rectangles"));
+
+    let pixels = f32_ramp(4 * 4 * 3);
+    let error = output.write_rectangle(2..6, 2..6, &pixels).unwrap_err();
+    assert!(
+        error.to_string().contains("rectangles"),
+        "unexpected error: {error}"
+    );
+}

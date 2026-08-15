@@ -495,6 +495,12 @@ imageoutput_write_tiles_span(ImageOutput& imageoutput, int xbegin, int xend,
                              const rust::Slice<const uint8_t> data);
 
 bool
+imageoutput_write_rectangle_span(ImageOutput& imageoutput, int xbegin, int xend,
+                                 int ybegin, int yend, int zbegin, int zend,
+                                 TypeDesc format,
+                                 const rust::Slice<const uint8_t> data);
+
+bool
 imageoutput_write_deep_scanlines(ImageOutput& imageoutput, int ybegin, int yend,
                                  int z, const DeepData& deepdata);
 
