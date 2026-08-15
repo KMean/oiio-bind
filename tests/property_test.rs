@@ -351,6 +351,48 @@ proptest! {
         probe!("channel_sum", |d: &mut ImageBuf| algo::channel_sum(
             d, &source, &[1.0, 1.0, 1.0], region
         ));
+
+        // The operations added by the binding gap map take the same probing:
+        // any of them reporting success over the whole image must have
+        // written the whole image. Errors are always acceptable answers —
+        // several of these have channel-count or layout requirements most
+        // generated shapes will not meet, which is the point: the guards get
+        // exercised from every angle the shapes can reach.
+        probe!("repremult", |d: &mut ImageBuf| algo::repremult(d, &source, region));
+        probe!("zover", |d: &mut ImageBuf| algo::zover(
+            d, &source, &source, false, region
+        ));
+        probe!("scale", |d: &mut ImageBuf| algo::scale(d, &source, &source, region));
+        probe!("normalize", |d: &mut ImageBuf| algo::normalize(
+            d, &source, 0.0, 0.0, 1.0, region
+        ));
+        probe!("fillholes_pushpull", |d: &mut ImageBuf| algo::fillholes_pushpull(d, &source));
+        probe!("rangecompress", |d: &mut ImageBuf| algo::rangecompress(
+            d, &source, false, region
+        ));
+        probe!("rangeexpand", |d: &mut ImageBuf| algo::rangeexpand(
+            d, &source, false, region
+        ));
+        probe!("fix_non_finite", |d: &mut ImageBuf| algo::fix_non_finite(
+            d,
+            &source,
+            oiio::algo::NonFiniteFix::Box3,
+            region
+        )
+        .map(|_| ()));
+        probe!("maxchan", |d: &mut ImageBuf| algo::maxchan(d, &source, region));
+        probe!("minchan", |d: &mut ImageBuf| algo::minchan(d, &source, region));
+        probe!("channel_append", |d: &mut ImageBuf| algo::channel_append(
+            d, &source, &source
+        ));
+        probe!("demosaic", |d: &mut ImageBuf| algo::demosaic(
+            d,
+            &source,
+            oiio::algo::MosaicPattern::Bayer,
+            "linear",
+            "RGGB",
+            None
+        ));
     }
 
     /// Per-channel constant slices, whose length OpenImageIO pads against a
