@@ -738,3 +738,57 @@ fn write_rectangle_is_refused_with_a_clear_message() {
         "unexpected error: {error}"
     );
 }
+
+/// The native read returns the file's exact bytes — each channel its own
+/// storage format, packed per pixel — and decoding them by hand yields
+/// exactly what the converting read produces.
+#[test]
+fn native_reads_return_the_stored_bytes() -> Result<()> {
+    let scratch = ScratchDir::new("nativeread");
+    let spec = ImageSpec::new(4, 4, 3, PixelFormat::F32)?.with_channel_formats(Some(vec![
+        PixelFormat::F16,
+        PixelFormat::F32,
+        PixelFormat::F16,
+    ]))?;
+    let path = scratch.file("mixed.exr");
+    let mut output = ImageOutput::create(&path, &spec)?;
+    output.write_image(&f32_ramp(4 * 4 * 3))?;
+    output.close()?;
+
+    let mut input = ImageInput::from_path(&path)?;
+    let read_spec = input.image_spec()?;
+    assert_eq!(read_spec.native_pixel_bytes()?, 2 + 4 + 2);
+
+    let native = input.read_native_image()?;
+    assert_eq!(native.len(), 4 * 4 * (2 + 4 + 2));
+
+    let mut converted = vec![0.0_f32; 4 * 4 * 3];
+    input.read_image_into(&mut converted)?;
+
+    let formats = read_spec.channel_formats().expect("mixed formats").to_vec();
+    let mut offset = 0_usize;
+    for pixel in 0..16 {
+        for (channel, format) in formats.iter().enumerate() {
+            let value = match format {
+                PixelFormat::F16 => {
+                    let bits = u16::from_le_bytes([native[offset], native[offset + 1]]);
+                    offset += 2;
+                    f32::from(f16::from_bits(bits))
+                }
+                PixelFormat::F32 => {
+                    let raw: [u8; 4] = native[offset..offset + 4].try_into().unwrap();
+                    offset += 4;
+                    f32::from_le_bytes(raw)
+                }
+                other => panic!("unexpected format {other:?}"),
+            };
+            assert_eq!(
+                value,
+                converted[pixel * 3 + channel],
+                "pixel {pixel} channel {channel}"
+            );
+        }
+    }
+    assert_eq!(offset, native.len(), "every byte accounted for");
+    Ok(())
+}

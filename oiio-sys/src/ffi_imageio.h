@@ -500,6 +500,15 @@ imageoutput_write_rectangle_span(ImageOutput& imageoutput, int xbegin, int xend,
                                  TypeDesc format,
                                  const rust::Slice<const uint8_t> data);
 
+// Read a whole subimage exactly as the file stores it, each channel in its
+// own native format packed per pixel. The buffer must hold exactly
+// image_pixels * pixel_bytes(native); validated here against the file's own
+// specification before OpenImageIO sees the pointer.
+bool
+imageinput_read_native_image_bytes(ImageInput& imageinput, int subimage,
+                                   int miplevel, rust::Slice<uint8_t> data,
+                                   rust::String& error);
+
 bool
 imageoutput_write_deep_scanlines(ImageOutput& imageoutput, int ybegin, int yend,
                                  int z, const DeepData& deepdata);

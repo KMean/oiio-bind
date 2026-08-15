@@ -402,6 +402,47 @@ impl ImageInput {
         DeepImage::from_parts(deep, &spec)
     }
 
+    /// Read the base image exactly as the file stores it.
+    ///
+    /// Each channel keeps its own storage format — the half/float mix a
+    /// multi-AOV EXR carries — packed per pixel in channel order, so the
+    /// result is byte-exact with the file's pixel data and its stride is
+    /// [`ImageSpec::native_pixel_bytes`]. This is the read for hashing,
+    /// lossless transcoding, or decoding values yourself; for numbers to
+    /// compute with, [`ImageInput::read_image_into`] converts instead.
+    pub fn read_native_image(&mut self) -> Result<Vec<u8>> {
+        self.read_native_image_at(0, 0)
+    }
+
+    /// Read a subimage and mip level exactly as the file stores it; see
+    /// [`ImageInput::read_native_image`].
+    pub fn read_native_image_at(&mut self, subimage: u32, mip_level: u32) -> Result<Vec<u8>> {
+        const OPERATION: &str = "read native image";
+        let spec = self.image_spec_at(subimage, mip_level)?;
+        if spec.is_deep() {
+            return Err(Error::UnsupportedDeepImage);
+        }
+        let expected = spec
+            .pixel_count()?
+            .checked_mul(spec.native_pixel_bytes()?)
+            .ok_or_else(|| Error::InvalidImageSpec("the image's byte size overflows".to_owned()))?;
+
+        let mut bytes = vec![0_u8; expected];
+        let mut error = String::new();
+        let succeeded = sys::imageio::imageinput_read_native_image_bytes(
+            self.inner_mut(),
+            level_index(subimage)?,
+            level_index(mip_level)?,
+            &mut bytes,
+            &mut error,
+        );
+        if succeeded {
+            Ok(bytes)
+        } else {
+            Err(Error::operation(OPERATION, error))
+        }
+    }
+
     /// Read a contiguous band of scanlines of a deep subimage and mip level.
     ///
     /// The returned deep image is the band: as wide as the data window, as

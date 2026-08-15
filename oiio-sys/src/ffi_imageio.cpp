@@ -1182,6 +1182,50 @@ imageoutput_write_rectangle_span(ImageOutput& imageoutput, int xbegin, int xend,
 }
 
 bool
+imageinput_read_native_image_bytes(ImageInput& imageinput, int subimage,
+                                   int miplevel, rust::Slice<uint8_t> data,
+                                   rust::String& error)
+{
+    error = rust::String();
+    const ImageSpec spec = imageinput.spec(subimage, miplevel);
+    if (spec.format.basetype == OIIO::TypeDesc::UNKNOWN || spec.width <= 0
+        || spec.height <= 0 || spec.depth <= 0 || spec.nchannels <= 0) {
+        error = rust::String::lossy(
+            "read native image: the subimage or mip level does not exist");
+        return false;
+    }
+    if (spec.deep) {
+        error = rust::String::lossy(
+            "read native image: deep images hold samples, not pixels; use "
+            "the deep reading API");
+        return false;
+    }
+
+    const uint64_t pixel_bytes = spec.pixel_bytes(true);
+    const uint64_t pixels      = spec.image_pixels();
+    if (pixel_bytes == 0 || pixels == 0
+        || pixels > std::numeric_limits<uint64_t>::max() / pixel_bytes
+        || uint64_t(data.size()) != pixels * pixel_bytes) {
+        error = rust::String::lossy(OIIO::Strutil::fmt::format(
+            "read native image: the buffer holds {} bytes and the image "
+            "needs {}",
+            data.size(), pixels * pixel_bytes));
+        return false;
+    }
+
+    imageinput.geterror(true);
+    if (!imageinput.read_image(subimage, miplevel, 0, -1,
+                               OIIO::TypeDesc::UNKNOWN, data.data())) {
+        std::string message = imageinput.geterror(true);
+        if (message.empty())
+            message = "OpenImageIO could not read the image";
+        error = rust::String::lossy(message);
+        return false;
+    }
+    return true;
+}
+
+bool
 imageoutput_write_deep_scanlines(ImageOutput& imageoutput, int ybegin, int yend,
                                  int z, const DeepData& deepdata)
 {

@@ -142,6 +142,12 @@ before the fork, but nothing was ever published under it, so starting both at
   honours a texture's own constant-color metadata under one (upstream
   issue 14 in `contrib/upstream-issues.md`) — without it, API-made
   textures silently lose what `maketx` wrote into them.
+- `ImageInput::read_native_image` (and `_at`): the image exactly as the
+  file stores it, each channel in its own format packed per pixel — the
+  read for hashing, lossless transcoding, or decoding values yourself.
+  `ImageSpec::native_pixel_bytes` is its stride. The buffer is sized and
+  validated against the file's own specification on both sides of the
+  bridge before OpenImageIO sees a pointer.
 - `TextureOptions::missing_color`: set, a lookup against a missing or
   broken texture fills the result with it and succeeds — the mechanism
   renderers use so one lost file does not kill a frame. It needs one value

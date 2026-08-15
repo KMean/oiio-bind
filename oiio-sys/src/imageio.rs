@@ -299,6 +299,14 @@ mod ffi {
             data: &mut [u8],
         ) -> bool;
         #[allow(clippy::too_many_arguments)]
+        pub fn imageinput_read_native_image_bytes(
+            imageinput: Pin<&mut ImageInput>,
+            subimage: i32,
+            miplevel: i32,
+            data: &mut [u8],
+            error: &mut String,
+        ) -> bool;
+
         pub fn imageinput_read_native_deep_scanlines(
             imageinput: Pin<&mut ImageInput>,
             subimage: i32,

@@ -306,6 +306,32 @@ impl ImageSpec {
         })
     }
 
+    /// Bytes of one pixel as the file stores it: each channel's own format,
+    /// packed in channel order.
+    ///
+    /// This is the pixel stride of
+    /// [`ImageInput::read_native_image`](crate::ImageInput::read_native_image)'s
+    /// result. An error means some channel's format is one this crate does
+    /// not model, whose size it therefore will not guess.
+    pub fn native_pixel_bytes(&self) -> Result<usize> {
+        let mut total = 0_usize;
+        for index in 0..self.channels {
+            let format = self
+                .channel_format(index)
+                .expect("index ranges over the channel count");
+            let Some(size) = format.byte_size() else {
+                return Err(Error::InvalidImageSpec(format!(
+                    "channel {index} has a storage format this crate does not \
+                     model, so its size cannot be known"
+                )));
+            };
+            total = total
+                .checked_add(size)
+                .ok_or_else(|| Error::InvalidImageSpec("pixel size overflows".to_owned()))?;
+        }
+        Ok(total)
+    }
+
     /// Index of the alpha channel when one is designated.
     pub fn alpha_channel(&self) -> Option<u32> {
         self.alpha_channel
