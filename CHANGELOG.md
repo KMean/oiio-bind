@@ -33,7 +33,9 @@ This fork's changes, newest first.
   sequence rather than everything in the folder: dominant extension first,
   then the largest name pattern — `beauty.####.exr` next to
   `depth.####.exr` no longer plays concatenated — and a `#` pattern
-  argument names a sequence directly, as it does in `oiiox`.
+  argument names a sequence directly, as it does in `oiiox`. When data and
+  display windows differ, both are outlined: the display window solid, the
+  data window as a dashed bounding box.
 - `oiiox` runs sequences the way `oiiotool` does: a `#` (four digits) or
   `%0Nd` wildcard in an `-i` or `--o` path makes the chain execute once
   per frame, over the frames found on disk for the first wildcarded

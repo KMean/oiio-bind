@@ -849,8 +849,11 @@ impl ViewerApp {
                             );
                             painter.image(texture.id(), image_rect, uv, egui::Color32::WHITE);
                         }
-                        // When the windows differ, a faint outline marks the
-                        // display window so the framing is legible.
+                        // When the windows differ, both get outlines the way
+                        // review tools draw them: the display window as a
+                        // solid frame, the data window as a dashed bounding
+                        // box — its pixels often fade to black, so without
+                        // the box its true extent is invisible.
                         if image_rect != view_rect {
                             painter.rect_stroke(
                                 view_rect,
@@ -858,6 +861,18 @@ impl ViewerApp {
                                 egui::Stroke::new(1.0, egui::Color32::from_gray(0x50)),
                                 egui::StrokeKind::Outside,
                             );
+                            let bbox =
+                                egui::Stroke::new(1.0, egui::Color32::from_rgb(0xb8, 0x86, 0x3a));
+                            let corners = [
+                                image_rect.left_top(),
+                                image_rect.right_top(),
+                                image_rect.right_bottom(),
+                                image_rect.left_bottom(),
+                                image_rect.left_top(),
+                            ];
+                            for edge in corners.windows(2) {
+                                painter.extend(egui::Shape::dashed_line(edge, bbox, 4.0, 4.0));
+                            }
                         }
                     }
                     State::Failed(message) => {

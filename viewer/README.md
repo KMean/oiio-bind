@@ -62,5 +62,6 @@ instant and never touch the disk.
 
 An EXR whose data window crops into or overscans past its display window is
 framed by the display window, with the pixels placed where they belong
-inside it and a faint outline marking the frame. Images larger than the
+inside it — the display window drawn as a solid outline and the data window
+as a dashed bounding box, the way review tools mark them. Images larger than the
 GPU's texture limit are subsampled for display rather than refused.
