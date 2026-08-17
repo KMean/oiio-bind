@@ -73,6 +73,7 @@ fn main() -> ExitCode {
 fn print_usage() {
     eprintln!("usage: oiio-viewer <image> [<image>...]");
     eprintln!("       oiio-viewer <directory>");
+    eprintln!("       oiio-viewer <pattern>          e.g. shot.#.exr");
     eprintln!("       oiio-viewer --check <image>");
     eprintln!();
     eprintln!("keys:  Space        play/pause");
@@ -105,16 +106,76 @@ fn run_check(arguments: &[String]) -> ExitCode {
     }
 }
 
-/// Turn the command line into the frame sequence: either every argument is a
-/// file path, or a single directory argument stands for the image files in it.
+/// Turn the command line into the frame sequence: every argument is a file
+/// path, or a single argument stands for a whole sequence — a directory
+/// holding one, or an oiiotool-style pattern such as `shot.#.exr` naming
+/// one directly.
 fn resolve_paths(arguments: &[String]) -> Result<Vec<PathBuf>, String> {
     if let [only] = arguments {
         let path = Path::new(only);
         if path.is_dir() {
             return collect_sequence(path);
         }
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.contains('#'))
+        {
+            return expand_pattern(path);
+        }
     }
     Ok(arguments.iter().map(PathBuf::from).collect())
+}
+
+/// Expand a `shot.#.exr` argument into the matching frames on disk: files
+/// whose name is the pattern's prefix, then digits — any width — then its
+/// suffix, in frame order.
+fn expand_pattern(pattern: &Path) -> Result<Vec<PathBuf>, String> {
+    let name = pattern
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let first = name.find('#').expect("caller checked for a wildcard");
+    let last = name.rfind('#').expect("caller checked for a wildcard");
+    let (prefix, suffix) = (&name[..first], &name[last + 1..]);
+    if suffix.contains('#') {
+        return Err(format!(
+            "{name}: only one `#` run can stand for the frame number"
+        ));
+    }
+    let directory = match pattern.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let describe =
+        |error: std::io::Error| format!("could not read {}: {error}", directory.display());
+    let mut paths = Vec::new();
+    for entry in std::fs::read_dir(&directory).map_err(describe)? {
+        let path = entry.map_err(describe)?.path();
+        let matches = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| frame_of(name, prefix, suffix).is_some());
+        if matches && path.is_file() {
+            paths.push(path);
+        }
+    }
+    if paths.is_empty() {
+        return Err(format!(
+            "no frames matching {name} in {}",
+            directory.display()
+        ));
+    }
+    paths.sort_by(|a, b| natural_order(a, b));
+    Ok(paths)
+}
+
+/// The frame digits of `name` under a prefix/suffix pattern, or `None` when
+/// the name does not match.
+fn frame_of<'a>(name: &'a str, prefix: &str, suffix: &str) -> Option<&'a str> {
+    let rest = name.strip_prefix(prefix)?;
+    let digits = rest.strip_suffix(suffix)?;
+    (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())).then_some(digits)
 }
 
 /// List the image files of `directory` in sorted order.
@@ -173,8 +234,55 @@ fn collect_sequence(directory: &Path) -> Result<Vec<PathBuf>, String> {
         );
         paths.retain(|path| extension_of(path) == chosen);
     }
+
+    // Within one extension, distinct name patterns are distinct sequences —
+    // beauty.####.exr next to depth.####.exr must not play concatenated.
+    // The largest group wins, ties alphabetically; a folder with no
+    // sequence structure at all stays browsable whole.
+    let mut patterns: Vec<(String, usize)> = Vec::new();
+    for path in &paths {
+        let pattern = sequence_pattern(path);
+        match patterns.iter_mut().find(|(name, _)| *name == pattern) {
+            Some((_, count)) => *count += 1,
+            None => patterns.push((pattern, 1)),
+        }
+    }
+    patterns.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    if patterns.len() > 1 && patterns[0].1 > 1 {
+        let (chosen_pattern, kept) = patterns[0].clone();
+        eprintln!(
+            "oiio-viewer: sequence is {chosen_pattern} ({kept} frames); ignoring {} other file(s) — pass a pattern or files to view those",
+            paths.len() - kept
+        );
+        paths.retain(|path| sequence_pattern(path) == chosen_pattern);
+    }
     paths.sort_by(|a, b| natural_order(a, b));
     Ok(paths)
+}
+
+/// The sequence pattern a file name belongs to: the last run of digits in
+/// its stem replaced by `#`, so `beauty.0001.exr` and `beauty.0002.exr`
+/// share a pattern that `depth.0001.exr` does not. Extension digits — as in
+/// `.jp2` — are not frame numbers, and a name with no digits at all is its
+/// own pattern.
+fn sequence_pattern(path: &Path) -> String {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (stem, extension) = match name.rfind('.') {
+        Some(dot) => name.split_at(dot),
+        None => (name.as_str(), ""),
+    };
+    let bytes = stem.as_bytes();
+    let Some(end) = bytes.iter().rposition(|byte| byte.is_ascii_digit()) else {
+        return name.clone();
+    };
+    let mut start = end;
+    while start > 0 && bytes[start - 1].is_ascii_digit() {
+        start -= 1;
+    }
+    format!("{}#{}{extension}", &stem[..start], &stem[end + 1..])
 }
 
 /// Order paths so embedded frame numbers compare numerically — `frame2`
@@ -270,5 +378,35 @@ mod tests {
             natural_order(Path::new("same.exr"), Path::new("same.exr")),
             Ordering::Equal,
         );
+    }
+
+    /// Frames of one sequence share a pattern; a different stem, a
+    /// different extension, or digits only in the extension do not.
+    #[test]
+    fn patterns_separate_sequences() {
+        let pattern = |name: &str| sequence_pattern(Path::new(name));
+        assert_eq!(pattern("multipart.0001.exr"), pattern("multipart.0008.exr"));
+        assert_eq!(pattern("frame2.exr"), pattern("frame10.exr"));
+        assert_ne!(
+            pattern("multipart.0001.exr"),
+            pattern("singlepart.0001.exr")
+        );
+        assert_ne!(pattern("beauty.0001.exr"), pattern("beauty.0001.jpg"));
+        // The version number is part of the pattern; the frame is the
+        // last digit run.
+        assert_eq!(pattern("shot_v2.0001.exr"), "shot_v2.#.exr");
+        // `.jp2` digits are extension, not frame number.
+        assert_eq!(pattern("shot.0001.jp2"), "shot.#.jp2");
+        assert_eq!(pattern("nodigits.exr"), "nodigits.exr");
+    }
+
+    /// A `#` pattern matches digits of any width between its fixed parts.
+    #[test]
+    fn pattern_matching() {
+        assert_eq!(frame_of("shot.0001.exr", "shot.", ".exr"), Some("0001"));
+        assert_eq!(frame_of("shot.12.exr", "shot.", ".exr"), Some("12"));
+        assert_eq!(frame_of("shot..exr", "shot.", ".exr"), None);
+        assert_eq!(frame_of("shot.12a.exr", "shot.", ".exr"), None);
+        assert_eq!(frame_of("other.0001.exr", "shot.", ".exr"), None);
     }
 }

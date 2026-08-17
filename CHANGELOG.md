@@ -29,7 +29,11 @@ This fork's changes, newest first.
   header claiming an absurd size becomes an error placeholder instead of an
   aborting allocation, and a decoder panic is caught and reported the same
   way; and keyboard shortcuts are gated on text editing specifically, not on
-  any widget holding focus.
+  any widget holding focus. A directory argument then resolves to one
+  sequence rather than everything in the folder: dominant extension first,
+  then the largest name pattern — `beauty.####.exr` next to
+  `depth.####.exr` no longer plays concatenated — and a `#` pattern
+  argument names a sequence directly, as it does in `oiiox`.
 - `oiiox` runs sequences the way `oiiotool` does: a `#` (four digits) or
   `%0Nd` wildcard in an `-i` or `--o` path makes the chain execute once
   per frame, over the frames found on disk for the first wildcarded

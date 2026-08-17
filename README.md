@@ -299,10 +299,12 @@ cd viewer
 cargo run --release -- path/to/shots/
 ```
 
-Open files or a directory as a sequence and it plays: Space starts
-playback at an adjustable rate, a scrubber and the arrow keys move
-through frames, the scroll wheel zooms about the cursor and dragging
-pans. Frames decode on a background thread into a prefetching cache, so
+Open files, a directory, or a `shot.#.exr` pattern as a sequence and it
+plays: Space starts playback at an adjustable rate, a scrubber and the
+arrow keys move through frames, the scroll wheel zooms about the cursor
+and dragging pans. A directory resolves to one sequence — dominant
+extension, then dominant name pattern — so EXR renders play without
+their JPEG previews or a sibling pass interleaved. Frames decode on a background thread into a prefetching cache, so
 playback does not stall on I/O. An exposure slider works in stops,
 channels can be isolated (R/G/B/A/luma), multi-part EXR files get a part
 selector, and an inspector panel shows the spec and every metadata

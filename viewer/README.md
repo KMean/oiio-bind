@@ -17,13 +17,17 @@ library's dependency graph stays free of windowing crates.
 ## Running
 
     cargo run --release -- image1.exr image2.exr   # explicit sequence
-    cargo run --release -- path/to/directory       # sorted sequence
+    cargo run --release -- path/to/directory       # the directory's sequence
+    cargo run --release -- path/to/shot.#.exr      # one named sequence
     cargo run --release -- --check image.exr       # decode only, print WxHxC
 
-A directory that mixes formats — EXR renders next to JPEG previews — forms
-its sequence from the dominant extension (EXR wins ties) rather than
-interleaving formats, and frame numbers order numerically whether zero-padded
-or not.
+A directory argument resolves to one sequence, the way `oiiotool` thinks of
+them: image files of the dominant extension (EXR wins ties), then the
+largest name pattern among them — `beauty.####.exr` next to `depth.####.exr`
+is two sequences, and only one plays, with a notice naming what was set
+aside. A `#` pattern names a sequence directly, matching frame digits of
+any width. Frame numbers order numerically whether zero-padded or not, and
+a folder with no numbering at all stays browsable whole.
 
 ## Keys
 
