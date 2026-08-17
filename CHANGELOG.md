@@ -42,7 +42,11 @@ This fork's changes, newest first.
   their channel names (`ID01.red` is `red` of layer `ID01`; suffixes order
   the components; undotted `Z` stays out of the colour slots), picked from
   a dropdown or cycled with `L`, remembered by name across frames and
-  parts, and switched without re-decoding.
+  parts, and switched without re-decoding. The README now draws the scope
+  line plainly: this is an example of the crate's use, not a review-tool
+  product — every channel decodes to `f32` even when four of a hundred
+  are shown, and a real player would use the crate's channel-subset reads
+  instead; the code stays simple enough to read in a sitting.
 - `oiiox` runs sequences the way `oiiotool` does: a `#` (four digits) or
   `%0Nd` wildcard in an `-i` or `--o` path makes the chain execute once
   per frame, over the frames found on disk for the first wildcarded

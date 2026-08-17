@@ -1,7 +1,18 @@
 # oiio-viewer
 
 An image and image-sequence viewer demonstrating the `oiio` crate as a small
-review tool. Frames are decoded by OpenImageIO to linear f32 — files that
+review tool.
+
+**This is an example of the crate's use, not a review-tool product.** The
+code favours clarity over throughput: every channel decodes to linear
+`f32` even when four of a hundred reach the screen, the only cache is a
+small in-memory ring around the playhead, and the display transform runs
+on the CPU. Heavy multichannel sequences therefore play slowly — by
+design, not by accident. A real player built on `oiio` would read just
+the viewed layer through the crate's channel-subset reads, keep pixels in
+half float, prefetch aggressively, and hand the display transform to the
+GPU. The same API supports all of that; this example deliberately stays
+simple enough to read in a sitting. Frames are decoded by OpenImageIO to linear f32 — files that
 store display-encoded pixels, such as JPEG and PNG, are linearised on load —
 then exposure-adjusted, channel-isolated and sRGB-encoded for display with
 `eframe`/`egui`. The window carries playback controls with a frame scrubber,

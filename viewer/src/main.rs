@@ -1,4 +1,6 @@
-//! An image and image-sequence viewer built on the `oiio` crate.
+//! An image and image-sequence viewer built on the `oiio` crate — an
+//! example of the crate's use, not a review-tool product; the README
+//! states the scope.
 //!
 //! Frames decode to linear `f32` on a background thread through
 //! [`oiio::ImageInput`] and land in a small LRU cache, with the frames ahead

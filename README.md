@@ -287,9 +287,9 @@ cargo run --release --example oiiox -- -i shot.#.exr --colorconvert lin_srgb srg
 and `--diff`, which exits non-zero when images differ — usable directly
 in CI.
 
-**`oiio-viewer`**, an image and sequence review tool built on
-`egui`, lives in [`viewer/`](viewer/) as its own crate so the library
-keeps its dependency graph free of windowing:
+**`oiio-viewer`**, a small review-tool-shaped example built on `egui`,
+lives in [`viewer/`](viewer/) as its own crate so the library keeps its
+dependency graph free of windowing:
 
 ```bash
 cd viewer
@@ -311,9 +311,11 @@ selector, and an inspector panel shows the spec and every metadata
 attribute. Display-encoded sources — an ordinary JPEG next to a linear
 EXR — are linearised on load so the one display transform is right for
 both, and a file that fails to decode shows its error as a placeholder
-instead of taking the viewer down. See
-[viewer/README.md](viewer/README.md) for the key table and the design
-notes.
+instead of taking the viewer down. It is an example of the API, not a
+product — it favours readable code over playback throughput, and its
+README says exactly where that line is drawn. See
+[viewer/README.md](viewer/README.md) for the scope, the key table and
+the design notes.
 
 ## What "safe" means here
 
