@@ -16,10 +16,15 @@ library's dependency graph stays free of windowing crates.
 
 ## Running
 
+    cargo run --release                            # empty window; open from it
     cargo run --release -- image1.exr image2.exr   # explicit sequence
     cargo run --release -- path/to/directory       # the directory's sequence
     cargo run --release -- path/to/shot.#.exr      # one named sequence
     cargo run --release -- --check image.exr       # decode only, print WxHxC
+
+Sequences also open from inside the window: File → Open files/folder,
+`Ctrl+O`, or drop images — or a folder — onto it. A dropped or picked
+folder resolves exactly as a directory argument does.
 
 A directory argument resolves to one sequence, the way `oiiotool` thinks of
 them: image files of the dominant extension (EXR wins ties), then the
@@ -33,6 +38,7 @@ a folder with no numbering at all stays browsable whole.
 
 | Key           | Action                                     |
 |---------------|--------------------------------------------|
+| Ctrl+O        | open files                                 |
 | Space         | play / pause                               |
 | Right / Left  | next / previous frame (wraps)              |
 | Up / Down, S  | next / previous part of a multi-part file  |

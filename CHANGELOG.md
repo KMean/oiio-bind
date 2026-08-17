@@ -35,7 +35,10 @@ This fork's changes, newest first.
   `depth.####.exr` no longer plays concatenated — and a `#` pattern
   argument names a sequence directly, as it does in `oiiox`. When data and
   display windows differ, both are outlined: the display window solid, the
-  data window as a dashed bounding box.
+  data window as a dashed bounding box. Sequences open from inside the
+  window too — a File menu with native dialogs, `Ctrl+O`, and drag-and-drop
+  of files or a folder — and launching with no arguments gives an empty
+  window that says so.
 - `oiiox` runs sequences the way `oiiotool` does: a `#` (four digits) or
   `%0Nd` wildcard in an `-i` or `--o` path makes the chain execute once
   per frame, over the frames found on disk for the first wildcarded

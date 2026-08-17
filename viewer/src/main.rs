@@ -10,10 +10,11 @@
 //! file that fails to decode shows as a placeholder carrying the error text,
 //! and playback runs on past it.
 //!
-//! Pass one or more image files, or a single directory whose image files
-//! form the sequence. `--check <file>` decodes one file through the same
-//! path and prints its shape without opening a window, so the pipeline can
-//! be validated in headless environments.
+//! Pass one or more image files, a directory, or a `shot.#.exr` pattern —
+//! or launch with nothing and open a sequence from the File menu or by
+//! dropping files onto the window. `--check <file>` decodes one file
+//! through the same path and prints its shape without opening a window, so
+//! the pipeline can be validated in headless environments.
 
 mod app;
 mod decode;
@@ -32,19 +33,26 @@ const IMAGE_EXTENSIONS: &[&str] = &[
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
-    if arguments.is_empty() {
-        print_usage();
-        return ExitCode::from(2);
-    }
-    if arguments[0] == "--check" {
-        return run_check(&arguments[1..]);
+    match arguments.first().map(String::as_str) {
+        Some("--help" | "-h") => {
+            print_usage();
+            return ExitCode::SUCCESS;
+        }
+        Some("--check") => return run_check(&arguments[1..]),
+        _ => {}
     }
 
-    let paths = match resolve_paths(&arguments) {
-        Ok(paths) => paths,
-        Err(message) => {
-            eprintln!("oiio-viewer: {message}");
-            return ExitCode::FAILURE;
+    // No arguments opens an empty window; a sequence can then come from
+    // the File menu or from files dropped onto it.
+    let paths = if arguments.is_empty() {
+        Vec::new()
+    } else {
+        match resolve_paths(&arguments) {
+            Ok(paths) => paths,
+            Err(message) => {
+                eprintln!("oiio-viewer: {message}");
+                return ExitCode::FAILURE;
+            }
         }
     };
 
@@ -71,10 +79,13 @@ fn main() -> ExitCode {
 
 /// Print how to invoke the viewer and what the keys do.
 fn print_usage() {
-    eprintln!("usage: oiio-viewer <image> [<image>...]");
+    eprintln!("usage: oiio-viewer [<image>...]");
     eprintln!("       oiio-viewer <directory>");
     eprintln!("       oiio-viewer <pattern>          e.g. shot.#.exr");
     eprintln!("       oiio-viewer --check <image>");
+    eprintln!();
+    eprintln!("With no arguments the window opens empty; use File > Open,");
+    eprintln!("Ctrl+O, or drop files onto the window.");
     eprintln!();
     eprintln!("keys:  Space        play/pause");
     eprintln!("       Right/Left   next/previous frame (wraps around)");

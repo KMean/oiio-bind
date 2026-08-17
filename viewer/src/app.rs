@@ -104,6 +104,7 @@ struct DisplayKey {
 /// One frame's worth of pressed shortcut keys, read in a single pass.
 struct KeyIntents {
     quit: bool,
+    open: bool,
     toggle_play: bool,
     step_forward: bool,
     step_back: bool,
@@ -119,8 +120,11 @@ struct KeyIntents {
 
 /// The viewer state driven by [`eframe::App::ui`].
 pub struct ViewerApp {
-    /// The sequence in display order. Never empty.
+    /// The sequence in display order; empty until one is opened, and the
+    /// window says so instead of showing pixels.
     paths: Vec<PathBuf>,
+    /// What the last failed open attempt said, shown until the next one.
+    notice: Option<String>,
     /// Index of the frame being shown.
     index: usize,
     /// Which subimage (EXR part) of the current file is shown.
@@ -181,6 +185,7 @@ impl ViewerApp {
             decode::spawn_decoder(cc.egui_ctx.clone(), Arc::clone(&shared_generation));
         Self {
             paths,
+            notice: None,
             index: 0,
             subimage: 0,
             exposure_stops: 0.0,
@@ -317,13 +322,90 @@ impl ViewerApp {
 
     /// Request every wanted frame that is neither cached nor in flight.
     fn schedule_decodes(&mut self) {
+        if self.paths.is_empty() {
+            return;
+        }
         for (index, subimage) in self.wanted_keys() {
             self.request_decode(index, subimage);
         }
     }
 
+    /// Replace the sequence with a freshly opened one and reset the view to
+    /// its start. Display settings — exposure, channel view, the inspector —
+    /// survive the switch; everything tied to the old files does not.
+    fn set_sequence(&mut self, paths: Vec<PathBuf>) {
+        if paths.is_empty() {
+            return;
+        }
+        self.paths = paths;
+        self.notice = None;
+        self.index = 0;
+        self.subimage = 0;
+        self.playing = false;
+        self.next_frame_due = None;
+        self.step_direction = 1;
+        self.fit = true;
+        self.pan = egui::Vec2::ZERO;
+        self.cache.clear();
+        self.pending.clear();
+        self.bump_generation();
+        self.uploaded = None;
+    }
+
+    /// Ask for image files through the native dialog and open them as the
+    /// sequence. The dialog blocks the interface, as modal pickers do.
+    fn open_files_dialog(&mut self) {
+        let picked = rfd::FileDialog::new()
+            .add_filter("images", crate::IMAGE_EXTENSIONS)
+            .set_title("Open images")
+            .pick_files();
+        if let Some(mut files) = picked {
+            files.sort_by(|a, b| crate::natural_order(a, b));
+            self.set_sequence(files);
+        }
+    }
+
+    /// Ask for a directory and open its sequence — dominant extension, then
+    /// dominant name pattern, exactly as a directory argument resolves.
+    fn open_folder_dialog(&mut self) {
+        if let Some(folder) = rfd::FileDialog::new()
+            .set_title("Open a sequence")
+            .pick_folder()
+        {
+            match crate::collect_sequence(&folder) {
+                Ok(paths) => self.set_sequence(paths),
+                Err(message) => self.notice = Some(message),
+            }
+        }
+    }
+
+    /// Open whatever was dropped onto the window: one directory stands for
+    /// its sequence, anything else is taken as the files themselves.
+    fn open_dropped(&mut self, dropped: Vec<PathBuf>) {
+        if let [only] = dropped.as_slice() {
+            if only.is_dir() {
+                match crate::collect_sequence(only) {
+                    Ok(paths) => self.set_sequence(paths),
+                    Err(message) => self.notice = Some(message),
+                }
+                return;
+            }
+        }
+        let mut files = dropped;
+        files.retain(|path| path.is_file());
+        if files.is_empty() {
+            self.notice = Some("nothing dropped was an image file".to_owned());
+            return;
+        }
+        files.sort_by(|a, b| crate::natural_order(a, b));
+        self.set_sequence(files);
+    }
+
     /// Move `delta` frames through the sequence, wrapping at both ends.
     fn step(&mut self, delta: isize) {
+        if self.paths.is_empty() {
+            return;
+        }
         let length = self.paths.len() as isize;
         self.index = (self.index as isize + delta).rem_euclid(length) as usize;
         // A new file starts at its first part; part choice is per-file.
@@ -395,6 +477,7 @@ impl ViewerApp {
         }
         let keys = ctx.input(|input| KeyIntents {
             quit: input.key_pressed(egui::Key::Escape) || input.key_pressed(egui::Key::Q),
+            open: input.modifiers.command && input.key_pressed(egui::Key::O),
             toggle_play: input.key_pressed(egui::Key::Space),
             step_forward: input.key_pressed(egui::Key::ArrowRight),
             step_back: input.key_pressed(egui::Key::ArrowLeft),
@@ -412,6 +495,9 @@ impl ViewerApp {
         });
         if keys.quit {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        if keys.open {
+            self.open_files_dialog();
         }
         if keys.toggle_play {
             self.toggle_play();
@@ -525,10 +611,35 @@ impl ViewerApp {
         self.uploaded = Some(display);
     }
 
+    /// The menu bar: opening sequences and quitting.
+    fn menu_panel(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::top("menu").show(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button("File", |ui| {
+                    if ui.button("Open files…\tCtrl+O").clicked() {
+                        ui.close();
+                        self.open_files_dialog();
+                    }
+                    if ui.button("Open folder…").clicked() {
+                        ui.close();
+                        self.open_folder_dialog();
+                    }
+                    ui.separator();
+                    if ui.button("Quit\tEsc").clicked() {
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+            });
+        });
+    }
+
     /// The transport bar: play/pause and stepping, the frame scrubber, the
     /// playback rate and the inspector toggle.
     fn transport_panel(&mut self, ui: &mut egui::Ui) {
         let frame_count = self.paths.len();
+        if frame_count == 0 {
+            return;
+        }
         egui::Panel::bottom("transport").show(ui, |ui| {
             ui.horizontal(|ui| {
                 // Every button surrenders focus the way the sliders do: a
@@ -784,6 +895,20 @@ impl ViewerApp {
                 let (response, painter) =
                     ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());
                 let rect = response.rect;
+                if self.paths.is_empty() {
+                    let hint = match &self.notice {
+                        Some(notice) => notice.clone(),
+                        None => "File → Open, Ctrl+O, or drop images here".to_owned(),
+                    };
+                    painter.text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        hint,
+                        egui::FontId::proportional(16.0),
+                        egui::Color32::GRAY,
+                    );
+                    return;
+                }
                 // The cache lookup is split from the drawing so the view
                 // state can be mutated without fighting the borrow.
                 enum State {
@@ -915,6 +1040,9 @@ impl ViewerApp {
     /// The window title: name, position in the sequence, exposure, part info
     /// for multi-part files, and the load error if there is one.
     fn window_title(&self) -> String {
+        if self.paths.is_empty() {
+            return "oiio-viewer".to_owned();
+        }
         let current = &self.paths[self.index];
         let name = current
             .file_name()
@@ -969,8 +1097,20 @@ impl eframe::App for ViewerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.drain_replies();
+        let dropped: Vec<PathBuf> = ctx.input(|input| {
+            input
+                .raw
+                .dropped_files
+                .iter()
+                .map(|file| file.path().to_path_buf())
+                .collect()
+        });
+        if !dropped.is_empty() {
+            self.open_dropped(dropped);
+        }
         self.handle_keys(&ctx);
         self.advance_playback(&ctx);
+        self.menu_panel(ui);
         self.transport_panel(ui);
         self.inspector_panel(ui);
         // Requests reflect everything the keys and panels changed above.
