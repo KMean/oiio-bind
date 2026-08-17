@@ -40,6 +40,7 @@ a folder with no numbering at all stays browsable whole.
 |---------------|--------------------------------------------|
 | Ctrl+O        | open files                                 |
 | Space         | play / pause                               |
+| L             | next layer of a multichannel image         |
 | Right / Left  | next / previous frame (wraps)              |
 | Up / Down, S  | next / previous part of a multi-part file  |
 | + / - (= / _) | exposure up / down one stop                |
@@ -51,8 +52,15 @@ a folder with no numbering at all stays browsable whole.
 
 The bottom bar carries the same transport as buttons, a frame scrubber and
 the playback rate; the right panel holds exposure, channel isolation
-(RGB/R/G/B/A/Luma), the current frame's spec with a part selector, and the
-file's metadata table.
+(RGB/R/G/B/A/Luma), a layer dropdown for multichannel images, the current
+frame's spec with a part selector, and the file's metadata table.
+
+A Nuke-style multichannel EXR groups into layers by its channel names —
+`ID01.red` is the `red` of layer `ID01` — with components ordered by
+suffix, undotted depth (`Z`, `ZBack`) kept out of the colour slots, and a
+layer's own `alpha` respected. Single-channel layers show as grey, and
+switching layers reuses the decoded pixels, so it is as instant as
+exposure.
 
 ## Design
 

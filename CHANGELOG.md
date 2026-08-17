@@ -38,7 +38,11 @@ This fork's changes, newest first.
   data window as a dashed bounding box. Sequences open from inside the
   window too — a File menu with native dialogs, `Ctrl+O`, and drag-and-drop
   of files or a folder — and launching with no arguments gives an empty
-  window that says so.
+  window that says so. Multichannel images group into Nuke-style layers by
+  their channel names (`ID01.red` is `red` of layer `ID01`; suffixes order
+  the components; undotted `Z` stays out of the colour slots), picked from
+  a dropdown or cycled with `L`, remembered by name across frames and
+  parts, and switched without re-decoding.
 - `oiiox` runs sequences the way `oiiotool` does: a `#` (four digits) or
   `%0Nd` wildcard in an `-i` or `--o` path makes the chain execute once
   per frame, over the frames found on disk for the first wildcarded

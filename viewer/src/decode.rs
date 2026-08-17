@@ -38,11 +38,138 @@ pub struct Frame {
     pub pixels: Vec<f32>,
     /// The spec of the decoded subimage, kept for the inspector panels.
     pub spec: ImageSpec,
+    /// The image's layers: channels grouped by name prefix. Never empty.
+    pub layers: Vec<Layer>,
     /// How many subimages the file holds; EXR multi-part files have several.
     pub subimage_count: u32,
     /// One label per part: its recorded name, or its channel names when it
     /// has none.
     part_labels: Vec<String>,
+}
+
+/// One layer of a multichannel image: the channels sharing a name prefix,
+/// mapped to display slots by their suffix — `diffuse.red`, `N.x` and
+/// plain `R` all land in the first slot of their layers.
+pub struct Layer {
+    /// The shared prefix; the base layer of undotted channels is "rgba".
+    pub name: String,
+    /// Colour channel indices in display order: one shows as grey, two as
+    /// red and green, three or more as RGB.
+    pub color: Vec<usize>,
+    /// The layer's own alpha channel, if it has one.
+    pub alpha: Option<usize>,
+}
+
+/// Group an image's channels into display layers.
+///
+/// Nuke-style multichannel EXRs encode their layers in the channel names:
+/// `ID01.red` is the `red` component of layer `ID01`. Undotted channels
+/// form the base layer — except depth (`Z`, `ZBack`), which convention
+/// stores undotted beside RGBA yet nobody wants composited into blue.
+/// Components order by suffix (`red`, `green`, `blue`; `x`, `y`, `z`;
+/// `u`, `v`), unknown suffixes keep file order behind the known ones, and
+/// an `a`/`alpha` suffix becomes the layer's alpha rather than a colour.
+/// Channels the spec fails to name fall back into the base layer by
+/// position. The result is never empty for an image with channels.
+pub fn layers_of(names: &[String], channels: u32, spec_alpha: Option<u32>) -> Vec<Layer> {
+    /// Display rank of a component suffix; alpha is `None`.
+    fn rank(suffix: &str) -> Option<usize> {
+        match suffix {
+            "r" | "red" => Some(0),
+            "g" | "green" => Some(1),
+            "b" | "blue" => Some(2),
+            "x" => Some(3),
+            "y" => Some(4),
+            "z" => Some(5),
+            "u" => Some(6),
+            "v" => Some(7),
+            "a" | "alpha" => None,
+            _ => Some(8),
+        }
+    }
+
+    /// One channel of a dotted layer, waiting to be sorted into its slot.
+    struct Member {
+        rank: usize,
+        index: usize,
+        alpha: bool,
+    }
+
+    let mut base: Vec<usize> = Vec::new();
+    let mut named: Vec<(String, Vec<Member>)> = Vec::new();
+    for index in 0..channels as usize {
+        let full = names.get(index).map(String::as_str).unwrap_or("");
+        match full.rfind('.') {
+            None if full == "Z" || full == "ZBack" => {
+                named.push((
+                    full.to_owned(),
+                    vec![Member {
+                        rank: 0,
+                        index,
+                        alpha: false,
+                    }],
+                ));
+            }
+            None => base.push(index),
+            Some(dot) => {
+                let prefix = &full[..dot];
+                let suffix = full[dot + 1..].to_ascii_lowercase();
+                let (member_rank, alpha) = match rank(&suffix) {
+                    Some(rank) => (rank, false),
+                    None => (0, true),
+                };
+                let member = Member {
+                    rank: member_rank,
+                    index,
+                    alpha,
+                };
+                match named.iter_mut().find(|(name, _)| *name == prefix) {
+                    Some((_, members)) => members.push(member),
+                    None => named.push((prefix.to_owned(), vec![member])),
+                }
+            }
+        }
+    }
+
+    let mut layers = Vec::new();
+    if !base.is_empty() {
+        // The base layer's alpha is where the spec says, or the
+        // conventional position: the second of two channels, the fourth
+        // of four or more.
+        let spec_alpha = spec_alpha.map(|alpha| alpha as usize);
+        let alpha = spec_alpha
+            .filter(|alpha| base.contains(alpha))
+            .or(match base.len() {
+                2 => Some(base[1]),
+                4.. => Some(base[3]),
+                _ => None,
+            });
+        let color = base
+            .iter()
+            .copied()
+            .filter(|index| Some(*index) != alpha)
+            .collect();
+        layers.push(Layer {
+            name: "rgba".to_owned(),
+            color,
+            alpha,
+        });
+    }
+    for (name, mut members) in named {
+        // A stable sort keeps file order among equal ranks.
+        members.sort_by_key(|member| member.rank);
+        let alpha = members
+            .iter()
+            .find(|member| member.alpha)
+            .map(|member| member.index);
+        let color = members
+            .iter()
+            .filter(|member| !member.alpha)
+            .map(|member| member.index)
+            .collect();
+        layers.push(Layer { name, color, alpha });
+    }
+    layers
 }
 
 impl Frame {
@@ -193,12 +320,14 @@ pub fn load_frame(path: &Path, subimage: u32) -> Result<Frame, String> {
         }
     }
 
+    let layers = layers_of(spec.channel_names(), channels, spec.alpha_channel());
     Ok(Frame {
         width,
         height,
         channels,
         pixels,
         spec,
+        layers,
         subimage_count,
         part_labels,
     })
@@ -328,6 +457,67 @@ mod tests {
         // float files default to linear.
         assert!(is_display_encoded("", true));
         assert!(!is_display_encoded("", false));
+    }
+
+    /// Channels group into layers the way Nuke reads them: undotted RGBA
+    /// as the base, dotted prefixes as their own layers with components
+    /// ordered by suffix, and undotted depth on its own.
+    #[test]
+    fn layer_grouping() {
+        let names =
+            |list: &[&str]| -> Vec<String> { list.iter().map(|name| (*name).to_owned()).collect() };
+
+        // A Nuke-style multichannel EXR: beauty plus an AOV plus depth.
+        let layers = layers_of(
+            &names(&[
+                "R",
+                "G",
+                "B",
+                "A",
+                "ID01.red",
+                "ID01.green",
+                "ID01.blue",
+                "depth.Z",
+            ]),
+            8,
+            Some(3),
+        );
+        assert_eq!(layers.len(), 3);
+        assert_eq!(layers[0].name, "rgba");
+        assert_eq!(layers[0].color, vec![0, 1, 2]);
+        assert_eq!(layers[0].alpha, Some(3));
+        assert_eq!(layers[1].name, "ID01");
+        assert_eq!(layers[1].color, vec![4, 5, 6]);
+        assert_eq!(layers[1].alpha, None);
+        assert_eq!(layers[2].name, "depth");
+        assert_eq!(layers[2].color, vec![7]);
+
+        // Suffixes order components regardless of file order.
+        let normals = layers_of(&names(&["N.z", "N.x", "N.y"]), 3, None);
+        assert_eq!(normals[0].color, vec![1, 2, 0]);
+
+        // Undotted depth beside RGB stays out of the colour slots.
+        let with_z = layers_of(&names(&["R", "G", "B", "Z"]), 4, None);
+        assert_eq!(with_z[0].name, "rgba");
+        assert_eq!(with_z[0].color, vec![0, 1, 2]);
+        assert_eq!(with_z[0].alpha, None);
+        assert_eq!(with_z[1].name, "Z");
+        assert_eq!(with_z[1].color, vec![3]);
+
+        // A layer's own alpha comes from its suffix.
+        let matte = layers_of(&names(&["fg.R", "fg.G", "fg.B", "fg.A"]), 4, None);
+        assert_eq!(matte[0].color, vec![0, 1, 2]);
+        assert_eq!(matte[0].alpha, Some(3));
+
+        // Grey plus alpha keeps its conventional reading.
+        let grey = layers_of(&names(&["Y", "A"]), 2, Some(1));
+        assert_eq!(grey[0].color, vec![0]);
+        assert_eq!(grey[0].alpha, Some(1));
+
+        // Nameless channels still display positionally.
+        let unnamed = layers_of(&[], 4, None);
+        assert_eq!(unnamed[0].color, vec![0, 1, 2]);
+        assert_eq!(unnamed[0].alpha, Some(3));
     }
 
     /// The transfer pair round-trips and squashes NaN to black.

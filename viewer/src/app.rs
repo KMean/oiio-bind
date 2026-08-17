@@ -99,6 +99,7 @@ struct DisplayKey {
     revision: u64,
     exposure_bits: u32,
     view: ChannelView,
+    layer: usize,
 }
 
 /// One frame's worth of pressed shortcut keys, read in a single pass.
@@ -110,6 +111,7 @@ struct KeyIntents {
     step_back: bool,
     part_next: bool,
     part_previous: bool,
+    layer_next: bool,
     exposure_up: bool,
     exposure_down: bool,
     exposure_reset: bool,
@@ -133,6 +135,10 @@ pub struct ViewerApp {
     exposure_stops: f32,
     /// Which channels reach the screen.
     channel_view: ChannelView,
+    /// The chosen layer of a multichannel image, remembered by name so the
+    /// choice follows the user across frames and parts; `None` is the
+    /// first layer.
+    layer_name: Option<String>,
     /// Whether playback is running.
     playing: bool,
     /// Playback rate in frames per second.
@@ -190,6 +196,7 @@ impl ViewerApp {
             subimage: 0,
             exposure_stops: 0.0,
             channel_view: ChannelView::Rgb,
+            layer_name: None,
             playing: false,
             fps: 24.0,
             next_frame_due: None,
@@ -341,6 +348,7 @@ impl ViewerApp {
         self.notice = None;
         self.index = 0;
         self.subimage = 0;
+        self.layer_name = None;
         self.playing = false;
         self.next_frame_due = None;
         self.step_direction = 1;
@@ -428,6 +436,34 @@ impl ViewerApp {
         self.next_frame_due = None;
     }
 
+    /// The decoded frame on screen, if its decode has landed and succeeded.
+    fn current_frame(&self) -> Option<&Frame> {
+        self.cache
+            .get(&(self.index, self.subimage))
+            .and_then(|entry| entry.result.as_ref().ok())
+    }
+
+    /// Which of `layers` the remembered layer name picks: the match, or
+    /// the first layer when nothing is remembered or the name is gone —
+    /// a sequence can change layer sets mid-flight.
+    fn resolve_layer(&self, layers: &[decode::Layer]) -> usize {
+        self.layer_name
+            .as_deref()
+            .and_then(|wanted| layers.iter().position(|layer| layer.name == wanted))
+            .unwrap_or(0)
+    }
+
+    /// Remember the next layer of the current frame, wrapping around.
+    fn cycle_layer(&mut self) {
+        let Some(frame) = self.current_frame() else {
+            return;
+        };
+        if frame.layers.len() > 1 {
+            let next = (self.resolve_layer(&frame.layers) + 1) % frame.layers.len();
+            self.layer_name = Some(frame.layers[next].name.clone());
+        }
+    }
+
     /// Show a neighbouring subimage of a multi-part file, wrapping around.
     /// The part count comes from the current entry, or from any decoded
     /// part of the same file when the current one failed — navigation must
@@ -483,6 +519,7 @@ impl ViewerApp {
             step_back: input.key_pressed(egui::Key::ArrowLeft),
             part_next: input.key_pressed(egui::Key::S) || input.key_pressed(egui::Key::ArrowUp),
             part_previous: input.key_pressed(egui::Key::ArrowDown),
+            layer_next: input.key_pressed(egui::Key::L),
             // Plus shares a key with equals, so both spellings work without
             // the shift key mattering; modifiers are ignored, so underscore
             // reaches the minus arm the same way.
@@ -513,6 +550,9 @@ impl ViewerApp {
         }
         if keys.part_previous {
             self.cycle_part(-1);
+        }
+        if keys.layer_next {
+            self.cycle_layer();
         }
         if keys.exposure_up {
             self.exposure_stops = (self.exposure_stops + 1.0).min(10.0);
@@ -589,10 +629,16 @@ impl ViewerApp {
         let Ok(frame) = &entry.result else {
             return;
         };
+        let layer = self
+            .layer_name
+            .as_deref()
+            .and_then(|wanted| frame.layers.iter().position(|layer| layer.name == wanted))
+            .unwrap_or(0);
         let display = DisplayKey {
             revision: entry.revision,
             exposure_bits: self.exposure_stops.to_bits(),
             view: self.channel_view,
+            layer,
         };
         if self.uploaded == Some(display) {
             return;
@@ -603,6 +649,7 @@ impl ViewerApp {
             self.exposure_stops.exp2(),
             self.channel_view,
             max_side,
+            &frame.layers[layer],
         );
         match &mut self.texture {
             Some(texture) => texture.set(image, DISPLAY_TEXTURE),
@@ -739,6 +786,43 @@ impl ViewerApp {
                     .surrender_focus();
             }
         });
+        // The layer dropdown, for multichannel images whose channels group
+        // into more than one layer — a Nuke-style EXR carries its AOVs as
+        // `layer.channel` names, and each is a click away here. Switching
+        // re-uses the decoded pixels, so it is as instant as exposure.
+        let layers: Vec<(String, usize)> = self
+            .current_frame()
+            .map(|frame| {
+                frame
+                    .layers
+                    .iter()
+                    .map(|layer| {
+                        let count = layer.color.len() + usize::from(layer.alpha.is_some());
+                        (layer.name.clone(), count)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if layers.len() > 1 {
+            let resolved = self
+                .layer_name
+                .as_deref()
+                .and_then(|wanted| layers.iter().position(|(name, _)| name == wanted))
+                .unwrap_or(0);
+            let mut chosen = resolved;
+            ui.add_space(4.0);
+            ui.label(format!("Layer ({})", layers.len()));
+            egui::ComboBox::from_id_salt("layer")
+                .selected_text(format!("{} ({})", layers[chosen].0, layers[chosen].1))
+                .show_ui(ui, |ui| {
+                    for (index, (name, count)) in layers.iter().enumerate() {
+                        ui.selectable_value(&mut chosen, index, format!("{name} ({count})"));
+                    }
+                });
+            if chosen != resolved {
+                self.layer_name = Some(layers[chosen].0.clone());
+            }
+        }
     }
 
     /// The current frame's spec, with a part selector for multi-part files.
@@ -1080,6 +1164,13 @@ impl ViewerApp {
             }
             _ => {}
         }
+        // The base layer goes without saying; any other is named.
+        if let Some(frame) = self.current_frame() {
+            let layer = self.resolve_layer(&frame.layers);
+            if layer > 0 {
+                title.push_str(&format!(" [layer {}]", frame.layers[layer].name));
+            }
+        }
         title
     }
 
@@ -1122,7 +1213,8 @@ impl eframe::App for ViewerApp {
 }
 
 /// Apply the display transform — exposure gain, channel isolation, sRGB
-/// encode — to a linear frame, producing the image egui uploads.
+/// encode — to one layer of a linear frame, producing the image egui
+/// uploads.
 ///
 /// A frame larger than the GPU's texture limit is subsampled to fit rather
 /// than refused; it is drawn at its logical size regardless, so zoom and
@@ -1132,6 +1224,7 @@ fn build_display_image(
     gain: f32,
     view: ChannelView,
     max_side: usize,
+    layer: &decode::Layer,
 ) -> egui::ColorImage {
     let width = frame.width as usize;
     let height = frame.height as usize;
@@ -1139,26 +1232,21 @@ fn build_display_image(
     let step = width.max(height).div_ceil(max_side).max(1);
     let out_width = width.div_ceil(step);
     let out_height = height.div_ceil(step);
-    // Where alpha lives: where the spec says, or the conventional position —
-    // the second channel of a two-channel image, the fourth of four or more.
-    let alpha_index = frame
-        .spec
-        .alpha_channel()
-        .map(|alpha| alpha as usize)
-        .or(match channels {
-            2 => Some(1),
-            4.. => Some(3),
-            _ => None,
-        });
+    let alpha_index = layer.alpha;
     let mut rgb = Vec::with_capacity(out_width * out_height * 3);
     for y in (0..height).step_by(step) {
         for x in (0..width).step_by(step) {
             let texel = &frame.pixels[(y * width + x) * channels..][..channels];
-            // One channel is grey; with two, the second is alpha and the first
-            // is still grey.
-            let (r, g, b) = match channels {
-                1 | 2 => (texel[0], texel[0], texel[0]),
-                _ => (texel[0], texel[1], texel[2]),
+            // One colour channel shows as grey, two as red and green, three
+            // or more as RGB; a layer that is only an alpha shows that.
+            let (r, g, b) = match layer.color.as_slice() {
+                [] => {
+                    let alpha = alpha_index.map_or(0.0, |index| texel[index]);
+                    (alpha, alpha, alpha)
+                }
+                [only] => (texel[*only], texel[*only], texel[*only]),
+                [first, second] => (texel[*first], texel[*second], 0.0),
+                [first, second, third, ..] => (texel[*first], texel[*second], texel[*third]),
             };
             let encoded: [u8; 3] = match view {
                 ChannelView::Rgb => [
