@@ -287,9 +287,9 @@ cargo run --release --example oiiox -- -i shot.#.exr --colorconvert lin_srgb srg
 and `--diff`, which exits non-zero when images differ — usable directly
 in CI.
 
-**`oiio-viewer`**, a minimal image and sequence viewer, lives in
-[`viewer/`](viewer/) as its own crate so the library keeps its dependency
-graph free of windowing:
+**`oiio-viewer`**, an image and sequence review tool built on
+`egui`, lives in [`viewer/`](viewer/) as its own crate so the library
+keeps its dependency graph free of windowing:
 
 ```bash
 cd viewer
@@ -299,10 +299,19 @@ cd viewer
 cargo run --release -- path/to/shots/
 ```
 
-Open files or a directory as a sequence; arrow keys step frames, `+`/`-`
-change exposure by stops, `R` reloads, and a file that fails to decode
-shows its error in the title bar instead of taking the viewer down. See
-[viewer/README.md](viewer/README.md) for the details.
+Open files or a directory as a sequence and it plays: Space starts
+playback at an adjustable rate, a scrubber and the arrow keys move
+through frames, the scroll wheel zooms about the cursor and dragging
+pans. Frames decode on a background thread into a prefetching cache, so
+playback does not stall on I/O. An exposure slider works in stops,
+channels can be isolated (R/G/B/A/luma), multi-part EXR files get a part
+selector, and an inspector panel shows the spec and every metadata
+attribute. Display-encoded sources — an ordinary JPEG next to a linear
+EXR — are linearised on load so the one display transform is right for
+both, and a file that fails to decode shows its error as a placeholder
+instead of taking the viewer down. See
+[viewer/README.md](viewer/README.md) for the key table and the design
+notes.
 
 ## What "safe" means here
 

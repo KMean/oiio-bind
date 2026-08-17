@@ -4,6 +4,32 @@ This fork's changes, newest first.
 
 ## Unreleased
 
+- `oiio-viewer` grew from a minimal proof into a review tool, rebuilt on
+  `eframe`/`egui`: playback with a scrubber, an adjustable rate and a
+  background decode thread feeding a prefetching frame cache; cursor-centred
+  zoom and pan with fit and pixel-exact 1:1; an exposure slider in stops and
+  channel isolation (R/G/B/A/luma); a part selector for multi-part EXR
+  files; and an inspector panel with the spec and the full metadata table.
+  Everything the first viewer established carries over — one decode path
+  shared with `--check`, linearisation of display-encoded sources, the
+  dominant-extension sequence rule, and placeholders instead of crashes for
+  broken files. An adversarial review of the rebuild confirmed twelve
+  defects, all fixed before it shipped, the notable ones being: the decode
+  worker now skips requests made stale by a scrub or reload and serves the
+  newest request first instead of grinding through the whole backlog;
+  eviction protects the frames about to be re-requested, closing a
+  decode/evict/re-request livelock when a frame outgrows the cache budget;
+  colour spaces that name sRGB primaries but declare a linear response
+  (`lin_srgb`, "Linear Rec.709 (sRGB)") are no longer linearised a second
+  time; sequence frames order numerically rather than lexicographically, so
+  `frame2` precedes `frame10`; EXR data windows are framed inside their
+  display windows instead of being centred as if they were the whole image;
+  frames beyond the GPU's texture limit are subsampled instead of failing to
+  display; minification is linear so zoomed-out images do not alias; a
+  header claiming an absurd size becomes an error placeholder instead of an
+  aborting allocation, and a decoder panic is caught and reported the same
+  way; and keyboard shortcuts are gated on text editing specifically, not on
+  any widget holding focus.
 - `oiiox` runs sequences the way `oiiotool` does: a `#` (four digits) or
   `%0Nd` wildcard in an `-i` or `--o` path makes the chain execute once
   per frame, over the frames found on disk for the first wildcarded

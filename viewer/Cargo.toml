@@ -1,6 +1,6 @@
 [package]
 name = "oiio-viewer"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 publish = false
 
@@ -10,5 +10,4 @@ publish = false
 
 [dependencies]
 oiio = { path = ".." }
-winit = "0.30"
-softbuffer = "0.4"
+eframe = "0.36"
