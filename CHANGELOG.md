@@ -2,7 +2,14 @@
 
 This fork's changes, newest first.
 
-## Unreleased
+## 0.2.1 — 2026-08-17
+
+`oiio` alone moves to 0.2.1; `oiio-sys` stays at 0.2.0, and not a line of
+library code changed. This release refreshes what the package carries: the
+README (the crates.io page gains the "See it working" demo section, the
+scope note, and a dependency line that no longer says `0.1`) and the
+`oiiox` example's sequence support. The viewer items below live in the
+repository, not the package.
 
 - `oiio-viewer` grew from a minimal proof into a review tool, rebuilt on
   `eframe`/`egui`: playback with a scrubber, an adjustable rate and a

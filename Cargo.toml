@@ -1,6 +1,6 @@
 [package]
 name = "oiio"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 # The oldest toolchain CI actually builds and tests with. Older ones may well
 # work; they are simply not verified, and cargo reporting that plainly beats a

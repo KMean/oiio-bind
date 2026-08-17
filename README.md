@@ -27,7 +27,7 @@ Add the crate from crates.io:
 
 ```toml
 [dependencies]
-oiio = "0.1"
+oiio = "0.2"
 ```
 
 Read an image through a private, thread-safe cache:
