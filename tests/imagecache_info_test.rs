@@ -149,14 +149,23 @@ fn thumbnails_round_trip_through_targa() {
     stamp
         .pixel_at_into(4, 4, oiio::Wrap::Default, &mut got)
         .unwrap();
-    // The stamp comes back with red and blue exchanged: through 3.1.15,
-    // OpenImageIO's Targa writer dumps the thumbnail's RGB bytes raw while
-    // its reader decodes the stamp as the BGR the TGA format stores.
-    // 3.1.16 fixed the writer (#5236: BGR, bottom-up). Pinned as the
-    // 3.1.12/3.1.14 this crate builds and tests against behave, so linking
-    // a fixed OpenImageIO breaks this test loudly instead of silently
-    // changing written files.
-    for (channel, (value, wanted)) in got.iter().zip([0.0, 0.5, 1.0]).enumerate() {
+    // Through 3.1.15, OpenImageIO's Targa writer dumped the thumbnail's RGB
+    // bytes raw while its reader decoded the stamp as the BGR that the TGA
+    // format stores, so the stamp came back with red and blue exchanged.
+    // 3.1.16 fixed the writer (#5236: BGR, bottom-up) and the stamp now
+    // round-trips unchanged.
+    //
+    // Both behaviours are asserted rather than one being pinned, so this
+    // keeps testing the round trip on every supported OpenImageIO instead of
+    // failing on the ones that are correct. The written file differs between
+    // them, which is upstream's choice, not this crate's.
+    let swaps_thumbnail_channels = oiio_sys::imageio::openimageio_version() < 30_116;
+    let expected: [f32; 3] = if swaps_thumbnail_channels {
+        [0.0, 0.5, 1.0]
+    } else {
+        [1.0, 0.5, 0.0]
+    };
+    for (channel, (value, wanted)) in got.iter().zip(expected).enumerate() {
         assert!(
             (value - wanted).abs() < 2e-2,
             "stamp channel {channel}: {value} != {wanted}"
@@ -200,7 +209,9 @@ fn oversized_and_mismatched_thumbnails_are_refused() {
 
     // An oversized stamp: the TGA field is a single byte per dimension, and
     // through 3.1.15 OpenImageIO's downsizing clamps to 256 — one too many —
-    // so this would silently write a zero-dimension thumbnail.
+    // so this would silently write a zero-dimension thumbnail. 3.1.16 resizes
+    // to 255 itself; the refusal here is version-independent, so the
+    // assertion holds either way.
     let big_spec = ImageSpec::new(256, 256, 3, PixelFormat::U8).unwrap();
     let mut big = ImageBuf::new(&big_spec).unwrap();
     oiio::algo::fill(&mut big, &[0.5, 0.5, 0.5], None).unwrap();

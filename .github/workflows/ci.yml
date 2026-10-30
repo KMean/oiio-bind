@@ -56,17 +56,37 @@ jobs:
         run: cargo doc --workspace --no-deps --locked
 
   unix:
-    name: ${{ matrix.name }} / OIIO 3.1.14
+    name: ${{ matrix.name }} / OIIO ${{ matrix.oiio }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      # Both released OpenImageIO lines are supported, so both are tested.
+      # 3.1.14 predates the 3.1.16 Targa thumbnail fix (#5236) and 3.2.1.2
+      # follows it, so between them they exercise both branches of the
+      # version-dependent assertion in tests/imagecache_info_test.rs.
       matrix:
         include:
           - name: Linux x86_64
             os: ubuntu-24.04
+            oiio: '3.1.14'
+            oiio_exact: 3.1.14.1
+            env_file: environment.yml
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            oiio: '3.2.1'
+            oiio_exact: 3.2.1.2
+            env_file: environment-3.2.yml
           - name: macOS arm64
             os: macos-15
+            oiio: '3.1.14'
+            oiio_exact: 3.1.14.1
+            env_file: environment.yml
+          - name: macOS arm64
+            os: macos-15
+            oiio: '3.2.1'
+            oiio_exact: 3.2.1.2
+            env_file: environment-3.2.yml
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -81,7 +101,7 @@ jobs:
       - name: Install OpenImageIO
         uses: mamba-org/setup-micromamba@f457c30a868e4760d3a6fcea5f25dc655b8edf39 # v3
         with:
-          environment-file: .github/ci/environment.yml
+          environment-file: .github/ci/${{ matrix.env_file }}
           cache-environment: true
           cache-downloads: true
           generate-run-shell: true
@@ -89,7 +109,7 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: ${{ matrix.os }}-oiio-3.1.14
+          shared-key: ${{ matrix.os }}-oiio-${{ matrix.oiio }}
 
       - name: Configure OpenImageIO discovery
         shell: micromamba-shell {0}
@@ -107,14 +127,14 @@ jobs:
             export DYLD_LIBRARY_PATH="$CONDA_PREFIX/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
             export DYLD_FALLBACK_LIBRARY_PATH="$CONDA_PREFIX/lib${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
           fi
-          test "$(pkg-config --modversion OpenImageIO)" = "3.1.14.1"
+          test "$(pkg-config --modversion OpenImageIO)" = "${{ matrix.oiio_exact }}"
           cargo test --workspace --release --locked -- --nocapture
 
       # Debug assertions and overflow checks only exist in this profile, so
       # one platform runs it. Linux is the cheapest place to pay for the
       # second build.
       - name: Run debug tests
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.oiio == '3.1.14'
         shell: micromamba-shell {0}
         run: |
           export LD_LIBRARY_PATH="$CONDA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

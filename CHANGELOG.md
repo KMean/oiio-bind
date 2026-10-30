@@ -2,6 +2,63 @@
 
 This fork's changes, newest first.
 
+## Unreleased
+
+### OpenImageIO 3.2 is supported
+
+OpenImageIO 3.2 became a supported release on 2026-10-01 and is what
+`vcpkg install openimageio` now provides. The only compiled version gate is
+a 3.1.4 floor, so depending on this crate and building against 3.2 was never
+blocked. What was missing is that the README said 3.1.x only, and two tests
+rejected 3.2 — so 3.2 was neither documented as supported nor verifiable by
+running the suite. Both are now fixed, and the support is verified.
+
+- The runtime version assertion accepted only `30104..30200`, i.e. 3.1.x.
+  It now accepts 3.1.4 and newer through 3.2.x, keeping an explicit ceiling
+  so a future 3.3 is opted into rather than assumed. Note the integer it
+  checks is `10000*major + 100*minor + patch` and carries no TWEAK, so
+  3.1.18.0 and 3.1.18.1 are both 30118.
+- The Targa thumbnail round trip pinned the pre-3.1.16 behaviour, where the
+  writer dumped RGB bytes raw and the reader decoded BGR. 3.1.16 fixed the
+  writer (#5236), so that assertion failed on every OpenImageIO from 3.1.16
+  on, both lines. It now asserts whichever round trip the linked version
+  actually performs, so it keeps testing the behaviour instead of failing on
+  the versions that are correct.
+
+Verified by running the full suite against a locally built OpenImageIO
+3.2.2.0 release on Windows/MSVC: every test passes. CI gains a 3.2.1.2 job
+on Linux and macOS alongside the existing 3.1.14.1 one, which between them
+exercise both branches of the Targa assertion. The Windows job still builds
+against its pinned vcpkg baseline (3.1.12.0), so 3.2 on Windows is covered
+by the local run rather than by CI.
+
+A 3.1-built and a 3.2-built `oiio-sys` are not link-compatible, because
+OpenImageIO puts the minor version in an inline namespace. 3.2 does keep
+`v3_1` and `v3_0` as legacy namespaces and re-exports symbols forward from
+them, so the source-level surface is more stable than that implies.
+
+### The upstream span defects are fixed
+
+OpenImageIO PR #5531 (merged 2026-10-02, first released in 3.1.18.1 and
+3.2.1.1) fixed both `image_span` defects this crate works around: the
+`read_tiles` x/y transposition reported as issue #5400, and the
+`write_scanlines` data window origin rejection, which was never filed and
+was found upstream by auditing the family after reading #5400. Three more
+in that family were fixed at the same time.
+
+The explicit-stride paths are unchanged and stay. They are correct on every
+OpenImageIO version, including the many that predate the fix. Only the
+comments and `ROADMAP.md` changed, which had described the original — and
+since retracted — diagnosis that partial edge tiles were the trigger.
+
+### Documentation
+
+- `ROADMAP.md` no longer says the crates have never been published, and the
+  defect count tracks `contrib/upstream-issues.md` (nineteen found, two now
+  fixed upstream, seventeen outstanding, re-checked against 3.1.19.0,
+  3.2.2.0 and `main` on 2026-10-30).
+- The OpenImageIO documentation links no longer point at v3.1.12.0.
+
 ## 0.2.1 — 2026-08-17
 
 `oiio` alone moves to 0.2.1; `oiio-sys` stays at 0.2.0, and not a line of

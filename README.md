@@ -19,9 +19,17 @@ including first-class `ImageCache` support.
 
 ## Usage
 
-Building `oiio-sys` requires an OpenImageIO 3.1.4 or newer 3.1.x development installation,
-including the C++ headers and libraries. The bindings currently target the
-OpenImageIO 3.1 API.
+Building `oiio-sys` requires an OpenImageIO 3.1.4 or newer development
+installation, including the C++ headers and libraries. Both released lines
+are supported: **3.1.4 and newer 3.1.x, and 3.2.x**. The full test suite is
+run against both.
+
+OpenImageIO 3.2 was released on 2026-10-01 and is what `vcpkg install
+openimageio` currently provides. 3.1 is still maintained upstream in
+parallel, so either line is a reasonable choice. A 3.1-built and a 3.2-built
+`oiio-sys` are not interchangeable at link time — OpenImageIO puts the minor
+version in an inline namespace (`v3_1`, `v3_2`) — so build against whichever
+OpenImageIO you will run against.
 
 Add the crate from crates.io:
 
@@ -406,7 +414,7 @@ the process with it.
 ## Links
 
 - [source repository](https://github.com/KMean/oiio-bind)
-- [OpenImageIO 3.1 C++ documentation](https://openimageio.readthedocs.io/en/v3.1.12.0/)
+- [OpenImageIO C++ documentation](https://openimageio.readthedocs.io/en/latest/)
 
 - [oiio on crates.io](https://crates.io/crates/oiio) and
   [its API documentation on docs.rs](https://docs.rs/oiio)

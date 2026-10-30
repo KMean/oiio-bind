@@ -13,8 +13,10 @@ buffer, lifetime, and threading contracts. Applications should prefer `oiio`.
 
 ## Building
 
-The crate currently targets OpenImageIO 3.1.4 or newer 3.1.x and requires an installed
-OpenImageIO development package.
+The crate targets OpenImageIO 3.1.4 or newer 3.1.x, and 3.2.x, and requires
+an installed OpenImageIO development package. Build against the same
+OpenImageIO minor line you intend to run against: the library puts the minor
+version in an inline namespace, so 3.1 and 3.2 builds do not interchange.
 
 Discovery checks explicit configuration first. Set `OIIO_ROOT` for an install
 prefix containing `include/OpenImageIO` and `lib`, or set both
@@ -44,4 +46,4 @@ directory matches the Rust target architecture and MSVC ABI.
 - [source repository](https://github.com/KMean/oiio-bind)
 - [oiio-sys on crates.io](https://crates.io/crates/oiio-sys/latest)
 - [oiio-sys documentation](https://docs.rs/crate/oiio-sys/latest)
-- [OpenImageIO 3.1 C++ documentation](https://openimageio.readthedocs.io/en/v3.1.12.0/)
+- [OpenImageIO C++ documentation](https://openimageio.readthedocs.io/en/latest/)

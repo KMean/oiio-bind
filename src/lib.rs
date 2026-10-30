@@ -1,4 +1,4 @@
-//! Safe Rust bindings to OpenImageIO 3.1.
+//! Safe Rust bindings to OpenImageIO 3.1 and 3.2.
 //!
 //! Read and write every format OpenImageIO supports, in `u8`, `u16`,
 //! [`f16`](struct@f16) or `f32`. Dimensions, regions and buffer lengths are

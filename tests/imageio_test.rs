@@ -22,9 +22,16 @@ fn test_openimageio_version() {
         runtime_version >= build_version,
         "the OpenImageIO runtime must not be older than the build headers"
     );
+    // 3.1.4 is the floor the bounded pixel API needs (enforced at compile
+    // time in oiio-sys/src/ffi_pixel.h). The ceiling is the next minor line
+    // that has not been tested: support for a new OIIO minor is established
+    // deliberately rather than assumed, so 3.3 has to be opted into here.
+    //
+    // Note this integer carries no TWEAK — 3.1.18.0 and 3.1.18.1 are both
+    // 30118 — so it cannot distinguish tweak releases from one another.
     assert!(
-        (30_104..30_200).contains(&runtime_version),
-        "this oiio-bind baseline targets OpenImageIO 3.1.x, found {runtime_version}"
+        (30_104..30_300).contains(&runtime_version),
+        "this oiio-bind baseline targets OpenImageIO 3.1.4+ or 3.2.x, found {runtime_version}"
     );
 }
 

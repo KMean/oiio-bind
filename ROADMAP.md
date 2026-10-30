@@ -4,15 +4,32 @@ The goal is a production-quality, community-maintained Rust interface to
 OpenImageIO. The public `oiio` crate should be safe and idiomatic; C++ types,
 version differences, and ownership details stay inside `oiio-sys`.
 
-The current compatibility baseline is OpenImageIO 3.1.4 or newer 3.1.x. Its patch releases
-are expected to retain ABI compatibility, while support for a new OIIO minor
-line is established and tested deliberately. The baseline is compile-checked,
-not only declared: the `oiio-sys` shims — the crate's entire OIIO-facing
-surface — compile without error or warning against the v3.1.4.0-beta headers
-verbatim (checked 2026-08-14, MSVC, compile-only; the builds that also link
-and run use 3.1.12 locally and 3.1.14 in CI, which is where the one known
-behavioural difference between patch releases was found — see `mad` in
-`contrib/upstream-issues.md`).
+The compatibility baseline is OpenImageIO 3.1.4 or newer, across both
+released lines: **3.1.x and 3.2.x**. Support for a new OIIO minor line is
+established and tested deliberately rather than assumed, which is why the
+runtime check in `tests/imageio_test.rs` carries an explicit upper bound that
+3.3 will have to be opted into.
+
+The floor is compile-checked, not only declared: the `oiio-sys` shims — the
+crate's entire OIIO-facing surface — compile without error or warning against
+the v3.1.4.0-beta headers verbatim (checked 2026-08-14, MSVC, compile-only).
+
+The ceiling is run-checked: the full suite passes against a locally built
+**3.2.2.0** release (checked 2026-10-30, MSVC, via `OIIO_ROOT`), as well as
+against the 3.1.12 used locally and the 3.1.14 used in CI.
+
+Note that a 3.1-built and a 3.2-built `oiio-sys` are not link-compatible:
+OpenImageIO puts the minor version in an inline namespace (`v3_1`, `v3_2`).
+3.2 does keep `v3_1` and `v3_0` as legacy namespaces and re-exports a number
+of symbols forward from them, so the source-level surface is far more stable
+across the two than the namespace change alone suggests.
+
+Behaviour does differ between patch releases, and the tests account for it
+rather than pinning one: 3.1.16 fixed the Targa thumbnail writer (#5236) and
+3.1.18.1 fixed the `image_span` defects described below. One caution when
+writing such checks — `openimageio_version()` is
+`10000*major + 100*minor + patch` and carries no TWEAK, so 3.1.18.0 and
+3.1.18.1 are indistinguishable at 30118.
 
 ## 0. Modern OIIO baseline
 
@@ -129,34 +146,40 @@ behavioural difference between patch releases was found — see `mad` in
   at a different size, channel names kept" would simplify pre-allocating
   `resize` destinations.
 
-## Notes on the OpenImageIO 3.1 span API
+## Notes on the OpenImageIO span API
 
 The bounded pixel calls validate the caller's buffer against the image
 specification and then pass explicit strides, rather than using OpenImageIO's
-`image_span` overloads. Two behaviours motivate that, both measured with
+`image_span` overloads. Two defects motivated that, both measured with
 `contrib/span_tiled_read_repro.cpp` and
 `contrib/span_scanline_origin_repro.cpp` — standalone C++ programs using only
-public OpenImageIO API, so neither depends on this crate — and both reproduced
-identically on **3.1.12.0** and on **3.2.0.2dev** (`main`, August 2026):
+public OpenImageIO API, so neither depends on this crate.
 
-- `ImageInput::read_image` taking an `image_span` returns false, without
-  recording an error, whenever a tiled image's width or height is not an exact
-  multiple of the tile size. No exactly sized destination buffer can satisfy
-  it, so tiled images with partial edge tiles could not be read at all.
-  Reproduced at 40x32, 32x24 and 40x24 with 16px tiles; 32x32 and 16x16 read
-  fine, and the pointer overload reads every one of them correctly.
-- `ImageOutput::write_scanlines` taking an `image_span` rejects scanline ranges
-  expressed in image coordinates when the data window origin is non-zero,
+**Both are now fixed upstream**, by Larry Gritz in PR #5531 (commit
+`054d048`, merged 2026-10-02), first released in **3.1.18.1** and **3.2.1.1**:
+
+- `ImageInput::read_tiles` taking an `image_span` forwarded the x and y ranges
+  to the pointer overload in the wrong order and dropped `ystride` and
+  `zstride`, so a tiled read returned a different rectangle of the image.
+  Usually it returned true with wrong pixels; for some shapes it returned true
+  while leaving half the destination untouched; for others it returned false
+  with no error recorded. Reported as issue #5400; the first diagnosis blamed
+  partial edge tiles, which was wrong and was publicly retracted.
+- `ImageOutput::write_scanlines` taking an `image_span` validated the range
+  against `[0, height)` rather than `[y, y + height)`, so it rejected ranges
+  expressed in image coordinates when the data window origin was non-zero,
   reporting "Invalid scanline range 5-9" for rows 5..9 of a data window whose
-  origin is y=5. The pointer overload accepts the same range.
+  origin is y=5. This was never filed; the maintainer found it by auditing the
+  rest of the `image_span` family after reading #5400, along with three more
+  defects in that family that this crate never drafted.
 
 The explicit-stride overloads handle both cases correctly, and the safety
 argument is unchanged: `bounded_pixel_layout` still proves that the buffer holds
 exactly one contiguous value per channel, pixel, row, and slice before any
 pointer reaches C++. Both behaviours have regression tests.
 
-To check whether a newer OpenImageIO has fixed them, build the reproduction
-against it and run it; it exits non-zero when the two overloads disagree:
+The reproductions are kept, and still build and run. Against 3.1.18.1 or
+newer, or 3.2.1.1 or newer, both should now report no mismatches:
 
 ```
 cl /std:c++17 /EHsc /utf-8 /MD contrib/span_tiled_read_repro.cpp \
@@ -164,8 +187,11 @@ cl /std:c++17 /EHsc /utf-8 /MD contrib/span_tiled_read_repro.cpp \
    /link /LIBPATH:<oiio>/lib OpenImageIO.lib OpenImageIO_Util.lib
 ```
 
-If it reports no mismatches, the span overloads can be restored and the
-minimum supported version raised to whichever release fixed them.
+The explicit-stride paths nonetheless stay. They are correct on every
+OpenImageIO version, including the many that predate the fix, and switching to
+the `image_span` overloads would mean either raising the minimum supported
+version to 3.1.18.1 — cutting off every 3.1 release before it — or carrying
+both paths behind a version check for no behavioural gain.
 
 ## Later subsystems
 
@@ -270,17 +296,22 @@ The `ImageBufAlgo` surface this project set out to bind is now complete.
 
 ## Publishing
 
-Both crate names are free on crates.io; neither has ever been published. The
-first release is 0.1.0 for both, `oiio-sys` first. `contrib/publishing.md` has
-the checklist and what was verified.
+**Published.** `oiio-sys` 0.1.0 and `oiio` 0.1.1 went to crates.io on
+2026-08-15, `oiio-sys` first; the current releases are `oiio` 0.2.1 and
+`oiio-sys` 0.2.0. `contrib/publishing.md` has the checklist and what was
+verified.
 
 ## On binding OpenImageIO safely
 
-Binding this library turned up nine defects in it, six of which let safe Rust
-read or write out of bounds, crash, or silently corrupt an image.
-`contrib/upstream-issues.md` has all of them, each reproduced against the
-3.1.9 source and, where it matters, confirmed still present on 3.2. Six are
-guarded here rather than passed on, which is why a few operations refuse
+Binding this library turned up nineteen defects in it, many of which let safe
+Rust read or write out of bounds, crash, or silently corrupt an image.
+`contrib/upstream-issues.md` has all of them, each verified against upstream
+source and re-checked against 3.1.19.0, 3.2.2.0 and `main` on 2026-10-30.
+
+Two are now fixed upstream. Issue 1 was filed as #5400 and fixed in PR #5531,
+which also fixed issue 2 — never filed — plus three more in the same family
+that this crate never drafted. Seventeen remain, all still present. Several
+are guarded here rather than passed on, which is why a few operations refuse
 arguments OpenImageIO accepts:
 
 - `algo::max` refuses unequal channel counts and a narrower destination.
