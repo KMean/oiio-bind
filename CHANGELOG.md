@@ -29,7 +29,7 @@ Verified by running the full suite against a locally built OpenImageIO
 3.2.2.0 release on Windows/MSVC: every test passes. CI gains a 3.2.1.2 job
 on Linux and macOS alongside the existing 3.1.14.1 one, which between them
 exercise both branches of the Targa assertion. The Windows job still builds
-against its pinned vcpkg baseline (3.1.12.0), so 3.2 on Windows is covered
+against its pinned vcpkg baseline (3.1.14.0), so 3.2 on Windows is covered
 by the local run rather than by CI.
 
 A 3.1-built and a 3.2-built `oiio-sys` are not link-compatible, because
