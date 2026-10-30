@@ -3,8 +3,18 @@
 Nineteen issues from building Rust bindings against OpenImageIO 3.1/3.2, plus
 one open observation not yet settled enough to report.
 
-Issues 1 and 2 have self-contained reproductions, so a maintainer running one
-is never shown a second unrelated API behaviour:
+**Issues 1 and 2 are resolved upstream** (PR #5531, merged 2026-10-02, first
+released in 3.1.18.1 and 3.2.1.1). Issue 1 was filed as #5400; issue 2 was
+never filed and was fixed anyway, when the maintainer audited the rest of the
+`image_span` family after reading #5400. Both sections are kept as a record,
+collapsed, and neither needs filing. **Seventeen remain to decide on.**
+
+That outcome is the argument for filing the rest: one carefully verified
+report, with a public retraction when its first diagnosis proved wrong,
+produced a same-family audit, five fixes, a regression test and backports to
+two release lines.
+
+Issues 1 and 2 have self-contained reproductions, which still build and run:
 
 - `contrib/span_tiled_read_repro.cpp` — issue 1
 - `contrib/span_scanline_origin_repro.cpp` — issue 2
@@ -14,6 +24,7 @@ non-zero when two overloads of the same call disagree, given the same
 `ImageSpec` and the same buffer. The tiled repro checks only return values, so
 for issue 1 it understates the problem — issue 1 carries a separate table of
 measured pixel values; the scanline repro also compares read-back pixels.
+Against 3.1.18.1 or newer both should now pass.
 
 Issues 4–9, 11 and 12 were found by reading the source while binding it, and
 are stated as code review rather than as runnable reproductions. Where a
@@ -23,8 +34,9 @@ reproduction is cheap it is noted in the issue.
 ends with: "IF YOU ALREADY HAVE A CODE FIX: There is no need to file a
 separate issue, please just go straight to making a pull request." Issues 3,
 4, 5, 7, 8, 9 and 11 each name a one- or two-line fix, so they belong as pull
-requests, not issues. Issue 2 is genuinely a question about intended
-behaviour, so it is an issue. Issue 6 could be either.
+requests, not issues. Issue 6 could be either. (Issue 2 was previously listed
+here as the one genuine question about intended behaviour; it is now resolved
+upstream.)
 
 `CONTRIBUTING.md` asks for the version, platform, compiler, and a repro others
 can run. The `bug:` title prefix comes from the bug-report template's
@@ -56,7 +68,24 @@ question is unchanged across the whole 3.1 series.
 
 ---
 
-## Issue 1 — filed as #5400; the correcting follow-up was posted 2026-08-14 and the issue retitled
+## Issue 1 — RESOLVED UPSTREAM
+
+Filed as #5400; the correcting follow-up was posted 2026-08-14 and the issue
+retitled. **Fixed by Larry Gritz in PR #5531, commit `054d048`, merged
+2026-10-02.** The commit message adopts this diagnosis directly: "read_tiles
+(span version) swapped the x and y ranges when calling the pointer version,
+and dropped ystride and zstride". A regression test covering a non-square
+tile-range span read was added to `imageinout_test.cpp`.
+
+**First fixed releases: 3.1.18.1 and 3.2.1.1** (3.1.18.0 and 3.2.1.0 are still
+affected). Verified 2026-10-30 by reading the source at each tag.
+
+Nothing left to file. The text below is kept as the record of what was
+reported and how it was corrected.
+
+<details>
+<summary>Original report (resolved)</summary>
+
 
 **Title:** `bug: ImageInput::read_image() with an image_span transposes x and y for tiled images`
 
@@ -226,7 +255,31 @@ is always the one that runs.
 
 ---
 
-## Issue 2
+</details>
+
+## Issue 2 — RESOLVED UPSTREAM, never filed
+
+**Fixed by the same PR #5531 without ever being reported.** After #5400,
+lgritz audited the whole `image_span` family and found this independently:
+"ImageOutput::write_scanline and write_scanlines validated the scanline range
+against [0, height) instead of [y, y+height), so valid writes to an offset
+image were rejected." That is exactly the defect drafted below.
+
+The same PR also fixed three more in the family that were never drafted here:
+`read_image(span)` passing absolute data-window coordinates to
+`image_span::subspan`, which expects offsets relative to the span's start;
+`read_scanlines(span)` dropping ystride; and the span size checks in
+`read_scanlines`/`read_tiles` consulting `m_spec` rather than the spec of the
+requested subimage and miplevel.
+
+**First fixed releases: 3.1.18.1 and 3.2.1.1.** Verified 2026-10-30.
+
+Do not file. Kept as the record of a finding that a single good report
+resolved without being submitted.
+
+<details>
+<summary>Original draft (resolved)</summary>
+
 
 **Title:** `bug: ImageOutput::write_scanlines() with an image_span mishandles a non-zero data window origin`
 
@@ -298,6 +351,8 @@ in practice rather than something the standard guarantees; the out-of-bounds
 read is the reliable symptom.
 
 ---
+
+</details>
 
 ## Issue 3 — better as a pull request
 

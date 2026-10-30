@@ -749,11 +749,16 @@ imageinput_read_image_span(ImageInput& imageinput, int subimage, int miplevel,
     // was checked against those dimensions.
     //
     // The strides are then passed explicitly instead of through OpenImageIO's
-    // `image_span` overload. Measured against OpenImageIO 3.1.12, that
-    // overload returns false without recording an error when a tiled image's
-    // width or height is not an exact multiple of the tile size, which no
-    // exactly sized destination buffer can satisfy. The explicit-stride
-    // overload reads the same images correctly.
+    // `image_span` overload. That overload forwarded the x and y ranges to
+    // the pointer version in the wrong order and dropped ystride and zstride,
+    // so a tiled read returned a different rectangle of the image -- usually
+    // reporting success, and for some shapes leaving half the destination
+    // untouched. Reported as OpenImageIO issue #5400 and fixed upstream in
+    // PR #5531, first released in 3.1.18.1 and 3.2.1.1.
+    //
+    // The explicit-stride overload is correct on every version, including
+    // those predating the fix, so it stays until the crate's minimum rises
+    // above the affected range.
     return imageinput.read_image(subimage, miplevel, chbegin, chend, format,
                                  data.data(), layout.x_stride, layout.y_stride,
                                  layout.z_stride);
@@ -1122,10 +1127,13 @@ imageoutput_write_scanlines_span(ImageOutput& imageoutput, int ybegin, int yend,
         return false;
     }
 
-    // Measured against OpenImageIO 3.1.12, the `image_span` overload of
-    // write_scanlines rejects ranges expressed in image coordinates when the
-    // data window origin is non-zero ("Invalid scanline range"), so the
-    // explicit-stride overload is used here as well.
+    // The `image_span` overload of write_scanlines validated the range against
+    // [0, height) rather than [y, y + height), so it rejected ranges expressed
+    // in image coordinates whenever the data window origin was non-zero
+    // ("Invalid scanline range"). Fixed upstream in PR #5531 alongside the
+    // read_tiles transposition, first released in 3.1.18.1 and 3.2.1.1; the
+    // explicit-stride overload is used here because it is correct on every
+    // version.
     return imageoutput.write_scanlines(ybegin, yend, spec.z, format,
                                        data.data(), layout.x_stride,
                                        layout.y_stride);

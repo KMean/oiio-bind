@@ -1,10 +1,15 @@
-# Follow-up comment for OpenImageIO#5400
+# Follow-up comment for OpenImageIO#5400 — POSTED, AND THE BUG IS NOW FIXED
 
-Post as a comment on <https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5400>.
-It corrects two things the original report got wrong — it named the wrong
-trigger, and it said exact-multiple images were unaffected when they are not.
-Consider also editing the issue title to
-`bug: ImageInput::read_image() with an image_span transposes x and y for tiled images`.
+**Posted 2026-08-14** as comment 5292609883 on
+<https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5400>, and the
+issue was retitled at the same time. Nothing here is left to do.
+
+**Fixed upstream 2026-10-02** by Larry Gritz in PR #5531 (commit `054d048`),
+which adopted this diagnosis directly and also fixed four more bugs in the same
+`image_span` family — including draft issue 2, which was never filed. First
+released in **3.1.18.1** and **3.2.1.1**.
+
+Kept as the record of the correction. The text below is what was posted.
 
 ---
 
