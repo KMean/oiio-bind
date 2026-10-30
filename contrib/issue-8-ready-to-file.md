@@ -73,7 +73,9 @@ gated on both buffers having exactly four channels (`:3206-3208`), so it never
 carries an image that would reach this block.
 
 In practice condition 1 means most multi-AOV EXRs, so this affects a common
-case rather than an exotic one.
+case rather than an exotic one. The Evidence section below shows it on a
+stock OpenEXR test image whose depth, disparity, motion-vector and mask
+channels are all corrupted by a single `--colorconvert`.
 
 **This is not a guess about intent.** The block entered the file in PR #2987,
 "Clarify behavior of color conversion on image with > 4 channels", commit
@@ -148,7 +150,44 @@ conjunction above and not something else.
 
 **Evidence**
 
-The same thing through the shipped `oiiotool` 3.2.2.0, with no C++ at all:
+This is not only a synthetic case. Here it is on a real multi-AOV frame from
+the OpenEXR test images — `Beachball/singlepart.0001.exr`, 911x876, 20
+channels, half, with a non-zero data window origin. No C++ at all:
+
+```
+oiiotool singlepart.0001.exr --colorconvert ACEScg "sRGB - Display" \
+         --cut 1x1+1100+680 -d float -o conv.exr
+oiiotool --dumpdata conv.exr
+```
+
+Every one of the sixteen channels past the fourth comes back as
+`0.5 + 10 * original`, at pixel (1100, 680):
+
+| channel | original | after `--colorconvert` | `0.5 + 10 * original` |
+| --- | ---: | ---: | ---: |
+| `Z` | 9.000000 | 90.500000 | 90.500000 |
+| `disparityL.x` | 37.031250 | 370.812500 | 370.812500 |
+| `disparityL.y` | 0.000040 | 0.500401 | 0.500401 |
+| `disparityR.x` | -37.000000 | -369.500000 | -369.500000 |
+| `disparityR.y` | -0.000053 | 0.499473 | 0.499473 |
+| `forward.left.u` | 43.375000 | 434.250000 | 434.250000 |
+| `forward.left.v` | -41.718750 | -416.687500 | -416.687500 |
+| `forward.right.u` | 43.375000 | 434.250000 | 434.250000 |
+| `forward.right.v` | -41.750000 | -417.000000 | -417.000000 |
+| `left.R` | 0.000000 | 0.500000 | 0.500000 |
+| `left.G` | 0.000000 | 0.500000 | 0.500000 |
+| `left.B` | 0.500000 | 5.500000 | 5.500000 |
+| `left.A` | 1.000000 | 10.500000 | 10.500000 |
+| `left.Z` | 9.007812 | 90.578125 | 90.578125 |
+| `whitebarmask.left.mask` | 0.000000 | 0.500000 | 0.500000 |
+| `whitebarmask.right.mask` | 0.700195 | 7.501953 | 7.501953 |
+
+Sixteen of sixteen, and the same at every other pixel I checked. A depth of
+9 becomes 90.5, an alpha of 1 becomes 10.5, and the second eye of the stereo
+pair — carried in `left.R`/`left.G`/`left.B` — is scaled along with
+everything else, because those channels are past the fourth too.
+
+The same thing on a synthetic file, for a minimal case:
 
 ```
 // six.exr :    2 x    1, 6 channel, float openexr
