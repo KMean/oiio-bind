@@ -7,7 +7,10 @@ one open observation not yet settled enough to report.
 released in 3.1.18.1 and 3.2.1.1). Issue 1 was filed as #5400; issue 2 was
 never filed and was fixed anyway, when the maintainer audited the rest of the
 `image_span` family after reading #5400. Both sections are kept as a record,
-collapsed, and neither needs filing. **Seventeen remain to decide on.**
+collapsed, and neither needs filing.
+
+**Issue 8 was filed as #5638** on 2026-10-30, as an issue with the one-line
+fix stated and a pull request offered. **Sixteen remain to decide on.**
 
 That outcome is the argument for filing the rest: one carefully verified
 report, with a public retraction when its first diagnosis proved wrong,
@@ -33,10 +36,12 @@ reproduction is cheap it is noted in the issue.
 **Issues or pull requests.** The repository's `.github/ISSUE_TEMPLATE/bug_report.md`
 ends with: "IF YOU ALREADY HAVE A CODE FIX: There is no need to file a
 separate issue, please just go straight to making a pull request." Issues 3,
-4, 5, 7, 8, 9 and 11 each name a one- or two-line fix, so they belong as pull
-requests, not issues. Issue 6 could be either. (Issue 2 was previously listed
-here as the one genuine question about intended behaviour; it is now resolved
-upstream.)
+4, 5, 7, 8, 9 and 11 each name a one- or two-line fix, so on that reading they
+belong as pull requests. A pull request needs a signed CLA, which is not in
+place, so issue 8 went up as an issue with the fix stated and the patch
+offered in closing; the rest can take the same route until the CLA is settled.
+Issue 6 could be either. (Issue 2 was previously listed here as the one
+genuine question about intended behaviour; it is now resolved upstream.)
 
 `CONTRIBUTING.md` asks for the version, platform, compiler, and a repro others
 can run. The `bug:` title prefix comes from the bug-report template's
@@ -626,14 +631,15 @@ path — it also falls back to `simplePixelHashSHA1` whenever
 
 Found while binding these for Rust; the binding does not expose `blocksize`.
 
-## Issue 8 — the colour engine corrupts channels past the fourth
+## Issue 8 — FILED as #5638 — the colour engine corrupts channels past the fourth
 
-**Prepared for filing: see `contrib/issue-8-ready-to-file.md`**, which is this
-issue rewritten to the bug-report template, with line numbers refreshed
-against `main` (1ff2c7bc2), v3.2.2.0 and v3.1.19.0, and **reproduced on a
-3.2.2.0 release** (2026-10-30) rather than on 3.1.9. Reproduction:
-`contrib/colorconvert_leftover_repro.cpp`. The notes below are the original
-working text.
+**Filed 2026-10-30 as
+<https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5638>.** The
+filed text is `contrib/issue-8-ready-to-file.md`: this issue rewritten to the
+bug-report template, with line numbers refreshed against `main` (1ff2c7bc2),
+v3.2.2.0 and v3.1.19.0, and **reproduced on a 3.2.2.0 release** rather than on
+3.1.9. Reproduction: `contrib/colorconvert_leftover_repro.cpp`. The notes
+below are the original working text.
 
 **Title:** `colorconvert` and friends write `0.5 + 10 * src` into channels 4 and
 above instead of copying them

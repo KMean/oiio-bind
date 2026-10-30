@@ -57,8 +57,7 @@ report(const char* label, const ImageBuf& buf, int nchannels)
 int
 main()
 {
-    // Headers we compiled against, and the library we actually linked, so the
-    // report cannot be accused of measuring the wrong build.
+    // Headers compiled against, and the library actually linked
     std::printf("compiled against OIIO %s; linked lib reports \"%s\" (%d)\n",
                 OIIO_VERSION_STRING,
                 std::string(get_string_attribute("version")).c_str(),

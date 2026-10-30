@@ -1,18 +1,21 @@
-# Issue 8 — ready to file
+# Issue 8 — FILED
 
-Verified against current `main` (1ff2c7bc2), v3.2.2.0 and v3.1.19.0, and
-reproduced on a locally built 3.2.2.0 release, on 2026-10-30.
+**Filed 2026-10-30 as
+<https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5638>.**
 
-GitHub does not accept `.cpp` attachments, so the reproduction is inlined
-below in a collapsed block. Paste the whole thing from the `**Title:**`
-line down.
+What follows is the filed text, synced from the live issue, so it carries the
+wording changes made in the GitHub form. Verified against current `main`
+(1ff2c7bc2), v3.2.2.0 and v3.1.19.0, and reproduced on a locally built 3.2.2.0
+release.
 
-**A note on issues versus pull requests.** The bug template says to go
+Filed as an issue rather than as a pull request: the bug template says to go
 straight to a pull request when you already have the fix, and the fix here is
-one line. A pull request to this project needs a signed CLA, which is not in
-place. Filing as an issue, with the fix stated and a pull request offered, is
-the honest version of that. Delete the closing offer if the CLA is settled and
-this goes up as a pull request instead.
+one line, but a pull request to this project needs a signed CLA, which is not
+in place. The closing paragraph offers the patch instead.
+
+The reproduction is inlined in a collapsed block because GitHub does not
+accept `.cpp` attachments. The standalone source is
+`contrib/colorconvert_leftover_repro.cpp`, kept identical to the inlined copy.
 
 ---
 
@@ -153,7 +156,7 @@ conjunction above and not something else.
 **Evidence**
 
 This is not only a synthetic case. Here it is on a real multi-AOV frame from
-the OpenEXR test images — `Beachball/singlepart.0001.exr`, 911x876, 20
+the OpenEXR test images `Beachball/singlepart.0001.exr`, 911x876, 20
 channels, half, with a non-zero data window origin. No C++ at all:
 
 ```
@@ -186,7 +189,7 @@ Every one of the sixteen channels past the fourth comes back as
 
 Sixteen of sixteen, and the same at every other pixel I checked. A depth of
 9 becomes 90.5, an alpha of 1 becomes 10.5, and the second eye of the stereo
-pair — carried in `left.R`/`left.G`/`left.B` — is scaled along with
+pair carried in `left.R`/`left.G`/`left.B` is scaled along with
 everything else, because those channels are past the fourth too.
 
 The same thing on a synthetic file, for a minimal case:
@@ -224,7 +227,7 @@ channels from the source after each colour call and has a regression test that
 fails without the repair.
 
 I am happy to open a pull request for the one-line change if that is more
-useful than an issue — it would need me to sort out a CLA first, so say the
+useful than an issue, it would need me to sort out a CLA first, so say the
 word if you would rather have the patch than the report.
 
 ---
@@ -292,8 +295,7 @@ report(const char* label, const ImageBuf& buf, int nchannels)
 int
 main()
 {
-    // Headers we compiled against, and the library we actually linked, so the
-    // report cannot be accused of measuring the wrong build.
+    // Headers compiled against, and the library actually linked
     std::printf("compiled against OIIO %s; linked lib reports \"%s\" (%d)\n",
                 OIIO_VERSION_STRING,
                 std::string(get_string_attribute("version")).c_str(),
