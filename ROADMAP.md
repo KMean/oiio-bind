@@ -310,9 +310,11 @@ source and re-checked against 3.1.19.0, 3.2.2.0 and `main` on 2026-10-30.
 
 Two are now fixed upstream. Issue 1 was filed as #5400 and fixed in PR #5531,
 which also fixed issue 2 — never filed — plus three more in the same family
-that this crate never drafted. Seventeen remain, all still present. Several
-are guarded here rather than passed on, which is why a few operations refuse
-arguments OpenImageIO accepts:
+that this crate never drafted. Seventeen remain, all still present. One of
+them — the colour engine writing `0.5 + 10 * src` into channels past the
+fourth instead of copying them — is now filed as #5638, leaving sixteen still
+to decide on. Several are guarded here rather than passed on, which is why a
+few operations refuse arguments OpenImageIO accepts:
 
 - `algo::max` refuses unequal channel counts and a narrower destination.
 - `algo::constant_color` and `algo::nonzero_region` refuse a region that

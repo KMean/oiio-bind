@@ -56,7 +56,10 @@ since retracted — diagnosis that partial edge tiles were the trigger.
 - `ROADMAP.md` no longer says the crates have never been published, and the
   defect count tracks `contrib/upstream-issues.md` (nineteen found, two now
   fixed upstream, seventeen outstanding, re-checked against 3.1.19.0,
-  3.2.2.0 and `main` on 2026-10-30).
+  3.2.2.0 and `main` on 2026-10-30). One of the seventeen — the colour engine
+  writing `0.5 + 10 * src` into channels past the fourth — has since been
+  filed as
+  [OpenImageIO#5638](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5638).
 - The OpenImageIO documentation links no longer point at v3.1.12.0.
 
 ## 0.2.1 — 2026-08-17
