@@ -628,6 +628,13 @@ Found while binding these for Rust; the binding does not expose `blocksize`.
 
 ## Issue 8 — the colour engine corrupts channels past the fourth
 
+**Prepared for filing: see `contrib/issue-8-ready-to-file.md`**, which is this
+issue rewritten to the bug-report template, with line numbers refreshed
+against `main` (1ff2c7bc2), v3.2.2.0 and v3.1.19.0, and **reproduced on a
+3.2.2.0 release** (2026-10-30) rather than on 3.1.9. Reproduction:
+`contrib/colorconvert_leftover_repro.cpp`. The notes below are the original
+working text.
+
 **Title:** `colorconvert` and friends write `0.5 + 10 * src` into channels 4 and
 above instead of copying them
 
