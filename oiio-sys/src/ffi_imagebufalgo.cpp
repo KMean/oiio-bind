@@ -120,17 +120,28 @@ reject_deep(const ImageBuf& src, const char* operation, rust::String& error)
 // Refuse two image sources that disagree on how many channels they have.
 //
 // `mad` builds its destination from the union of its sources, so the wider
-// one decides the channel count, and the trailing channels are the ones only
-// the wider source has. `IBAprep` allocates that destination with
-// `InitializePixels::No` -- nothing in OpenImageIO passes
-// `IBAprep_FILL_ZERO_ALLOC` -- so anything the kernel does not go on to write
-// is uninitialised heap returned to the caller with a success return. The
-// lines meant to clear those trailing channels hold on 3.1.12, where every
-// mismatched pair this was tried against came back fully written, and did not
-// on the 3.1.14 builds CI uses: property testing caught a one-against-two and
-// a six-against-three there, each with exactly the channels beyond the
-// narrower source left holding heap. Rather than depend on which OpenImageIO
-// is linked, the shape is refused; `channels` is the operation for lining two
+// one decides the channel count, and the kernels then run that destination
+// range over every operand: all four of them (`imagebufalgo_mad.cpp:77-78`,
+// `:97-98`, `:115-116`, `:133-134` on v3.1.14.1) step
+// `r[ch] = a[ch] * b[ch] + c[ch]` out to `roi.chend` without consulting any
+// operand's own channel count. `ImageBuf::ConstIterator::operator[]` does not
+// bounds-check either -- it indexes a proxy built over the raw pixel pointer
+// (`imagebuf.h:2017`) -- so for a channel the narrower source does not have,
+// the read runs past that source's pixel and the destination receives a real
+// multiply-add over whatever it reached, under a success return.
+//
+// Nothing zeroes those channels first. IBAprep's "clear the extra channels"
+// block is gated on `roi.chend < dst->nchannels()` (`imagebufalgo.cpp:274`,
+// `:299` on 3.2.2.0), and `mad` calls IBAprep with no prepflags
+// (`imagebufalgo_mad.cpp:185`), so `roi.chend` is still equal to the
+// destination's channel count when the gate is tested and the block never
+// runs. That holds on every 3.1.x and 3.2.x source checked; it is not a
+// difference between versions.
+//
+// Property testing caught it on CI, as a one-against-two and a
+// six-against-three. The shape is refused because the result is not defined
+// by anything in OpenImageIO, rather than by what happens to sit in memory
+// past the narrower source; `channels` is the operation for lining two
 // images up first.
 bool
 refuse_channel_mismatch(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
@@ -209,12 +220,12 @@ refuse_mixed_deep(ImageBuf& dst, const ImageBuf& src, const char* operation)
 // warp_ sizes its per-pixel scratch buffer from the destination and then has
 // filtered_sample fill it from the source, so a destination with fewer
 // channels is written past the end of a stack allocation. rotate and an exact
-// fit both reach the same kernel. The wider direction is unsound too, in the
-// quieter way the mad and copy refusals document: IBAprep clamps the written
-// range to the narrower side and, on the 3.1.14 CI builds, the channels only
-// the destination has come back holding whatever the allocation held, under a
-// success return. A pre-allocated destination must match the source's channel
-// count in both directions.
+// fit both reach the same kernel. The wider direction is refused as well, on
+// the narrower ground that this family was never traced channel by channel
+// the way mad and copy were: what these operations leave in the channels only
+// the destination has is not established here, and a destination that matches
+// its source needs no answer. A pre-allocated destination must match the
+// source's channel count in both directions.
 bool
 refuse_narrow_destination(ImageBuf& dst, const ImageBuf& src,
                           const char* operation)
@@ -717,14 +728,25 @@ imagebufalgo_copy(ImageBuf& dst, const ImageBuf& src, TypeDesc convert,
         return false;
     if (refuse_mixed_deep(dst, src, "copy"))
         return false;
-    // A destination that is already allocated keeps its own shape: OpenImageIO
-    // clamps the copied range against it rather than resizing it, and what the
-    // clamp excludes is returned as it lies. Property testing on the 3.1.14 CI
-    // builds caught a one-channel source copied into a pre-allocated
-    // five-channel destination whose window did not even overlap the source's:
-    // success, with a channel the copy never wrote holding inf — the same
-    // IBAprep uninitialised-destination class as mad. Refuse the shapes the
-    // copy cannot cover, rather than depend on which OpenImageIO is linked.
+    // A destination that is already allocated keeps its own shape, and the
+    // clamp that looks like it protects the extra channels does not. `copy`
+    // runs `roi.chend = std::min(roi.chend, src.nchannels())`
+    // (`imagebufalgo_copy.cpp:196` on v3.1.14.1) against the ROI it was
+    // handed, but a default ROI has `chend` 0 and is undefined, so that is a
+    // no-op; IBAprep's initialized-destination branch then replaces the ROI
+    // wholesale with the destination's own pixel window
+    // (`imagebufalgo.cpp:110-112`). `copy_` goes on to run `d[c] = s[c]` over
+    // that full range with no guard against the source's channel count
+    // (`imagebufalgo_copy.cpp:145-146`) -- where `paste_`, a hundred lines
+    // above it in the same file, does guard, with
+    // `c < src_nchans ? s[c] : D(0)` (`:46`). So the destination's extra channels are written from an
+    // unchecked read past the source's pixel: the same unbounded
+    // `ConstIterator::operator[]` that makes mad unsafe, reached by a
+    // different route. Property testing caught it on CI as a one-channel
+    // source copied into a pre-allocated five-channel destination whose
+    // window did not even overlap the source's: success, with inf in a
+    // channel the source does not have. Refuse the shapes the copy cannot
+    // cover.
     if (dst.initialized() && !dst.deep()) {
         if (dst.nchannels() != src.nchannels()) {
             dst.errorfmt("copy: the destination is allocated with {} channels "
@@ -1469,9 +1491,13 @@ imagebufalgo_channel_sum(ImageBuf& dst, const ImageBuf& src,
                      weights.size(), src.nchannels());
         return false;
     }
-    // The result is one channel. A pre-allocated destination with more keeps
-    // its shape, and the channels past the first are the mad/copy class:
-    // returned as allocated under a success return on the 3.1.14 CI builds.
+    // The result is one channel. A pre-allocated destination with a different
+    // count carries its own hazard: `channel_sum` clamps the ROI to the
+    // source's channels (`imagebufalgo_pixelmath.cpp:530` on v3.1.14.1) but
+    // pads the weights to the *destination's*
+    // (`IBA_FIX_PERCHAN_LEN(weights, dst.nchannels(), ...)`, `:537`), while
+    // the kernel indexes `weights[c]` across the source's range (`:513-514`).
+    // A source wider than the destination reads past that padded buffer.
     if (dst.initialized() && !dst.deep() && dst.nchannels() != 1) {
         dst.errorfmt("channel_sum: the result has one channel and the "
                      "destination is allocated with {}; use an empty "

@@ -2,7 +2,12 @@
 
 This fork's changes, newest first.
 
-## Unreleased
+## 0.2.2 — 2026-10-31
+
+`oiio` moves to 0.2.2 and `oiio-sys` to 0.2.1. No library behaviour changes:
+this release documents OpenImageIO 3.2 as supported, makes the suite run
+against it, and corrects a set of source comments that explained the
+`IBAprep`-family refusals with the wrong cause.
 
 ### OpenImageIO 3.2 is supported
 
@@ -50,6 +55,52 @@ The explicit-stride paths are unchanged and stay. They are correct on every
 OpenImageIO version, including the many that predate the fix. Only the
 comments and `ROADMAP.md` changed, which had described the original — and
 since retracted — diagnosis that partial edge tiles were the trigger.
+
+### The IBAprep-family refusals were documented with the wrong cause
+
+No behaviour changes, and every refusal stands. Seven comments in
+`oiio-sys/src/ffi_imagebufalgo.cpp` and `tests/soundness_test.rs` explained
+why `mad`, `copy`, `warp` and `channel_sum` refuse mismatched channel counts,
+and the explanation was wrong in two ways. Each refusal is now justified from
+the OpenImageIO source rather than from an observation.
+
+They said the behaviour held on OpenImageIO 3.1.12 and not on the 3.1.14
+builds CI uses, and that refusing the shape avoided depending "on which
+OpenImageIO is linked". There is no such version difference.
+`imagebufalgo.cpp`, `imagebufalgo_mad.cpp`, `imagebufalgo_copy.cpp`,
+`imagebufalgo_xform.cpp`, `imagebufalgo_channels.cpp` and `imagebuf.cpp` are
+byte-identical across v3.1.12.0, v3.1.14.0 and v3.1.14.1, compared by blob
+hash, and the relevant code is unchanged at v3.2.2.0.
+
+They also said the bad values were uninitialised destination memory the
+kernel never wrote. They are not. The kernels write every destination channel
+in the ROI; the bad value is a real computation over a read past the
+*narrower source*, because `ImageBuf::ConstIterator::operator[]` does not
+bounds-check against that source's channel count (`imagebuf.h:2017`). The
+Windows sighting lands where that predicts and not where an unwritten channel
+would: element 47 of an 8x7x2 destination is the last pixel of the narrower
+source's data window, the one place the read leaves its allocation. An
+unwritten channel would have failed at the first element.
+
+`mad`, `copy` and `channel_sum` each reach it by a different route, and
+`copy`'s is the sharpest — its clamp to `src.nchannels()` is a no-op for a
+default ROI, `IBAprep` then replaces that ROI with the destination's own
+window, and `copy_` indexes the source across it with no guard, where
+`paste_` in the same file does guard. All three routes are written up as the
+open observation in `contrib/upstream-issues.md`.
+
+Two claims are withdrawn. The guess that a Highway SIMD path skipped a
+clearing step is wrong: there is no Highway code in OpenImageIO 3.1.x at all,
+it arrives in 3.2. And the 0.2.0 entry below, describing the `copy` sighting
+as "the second operation in the `IBAprep` uninitialised-destination class",
+misnames the class; it is the same unchecked read reached by another route.
+That entry is left as written, since it records what was believed then.
+
+`contrib/publishing.md` carried a related error, now corrected in place: that
+quiet CI runs evidence the class being exhausted. They cannot. The refusals
+make those shapes return `Err` before the property test inspects anything,
+and the test checks plausibility rather than correctness in any case, so an
+over-read that lands on real neighbouring data passes silently.
 
 ### Documentation
 

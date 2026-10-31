@@ -1,11 +1,56 @@
 # Publishing to crates.io
 
-**Done: both crates were published at 0.1.0 on 2026-08-15.** The checklist
-below is kept for the next release; the "Afterwards" items were applied the
-same day (README updated, `v0.1.0` tagged).
+**Done: both crates were published at 0.1.0 on 2026-08-15**, then `oiio`
+0.1.1, both at 0.2.0, and `oiio` 0.2.1. The checklist further down is the
+0.1.0 one, kept for its reasoning; the current release is below.
 
 Remember that publishing is irreversible: a published version can be yanked,
 but never replaced or deleted.
+
+## Ready to publish: `oiio` 0.2.2 and `oiio-sys` 0.2.1
+
+Prepared 2026-10-31. Both crates have packaged changes since their last
+publish, so both move: `oiio-sys` 0.2.0 -> 0.2.1 (README, and the comments in
+`ffi_imageio.cpp` and `ffi_imagebufalgo.cpp`), `oiio` 0.2.1 -> 0.2.2 (README,
+ROADMAP, `src/lib.rs`, the two version-aware tests, CI). No library behaviour
+changed. `CHANGELOG.md` has the entry.
+
+This release is what makes 3.2 support visible to anyone arriving from
+crates.io: the published 0.2.1 page still says 3.1.x only. Nothing was ever
+blocked for them -- the only compiled gate is a 3.1.4 floor -- but the
+packaged README and the two tests said otherwise.
+
+Gates, all run on 2026-10-31 at these versions:
+
+- [x] `cargo fmt --all --check`
+- [x] `cargo clippy --workspace --all-targets -- -D warnings`
+- [x] `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`
+- [x] `DOCS_RS=1 cargo doc --workspace --no-deps` -- the one that proves
+      docs.rs can build without linking OpenImageIO
+- [x] `cargo test --workspace --all-targets`: 376 pass, against the vcpkg
+      3.1.12.0 on this machine
+- [x] `cargo package -p oiio-sys`: packages **and verifies**, 38 files,
+      82.2 KiB compressed, compiling from its own directory
+- [x] The README already says 3.1.4+ and 3.2.x. This is the 0.1.0 lesson
+      applied: the crates.io page renders the packaged README immutably, so
+      it has to be right *before* the publish, not after.
+- [ ] `cargo package -p oiio` cannot verify until `oiio-sys` 0.2.1 is on the
+      index, because the dependency is pinned by version as well as path.
+      Expected, not a fault -- see **Order** below.
+
+Then, in order:
+
+```bash
+cargo publish -p oiio-sys
+```
+
+Wait for the index, then:
+
+```bash
+cargo publish -p oiio
+```
+
+Then tag `v0.2.2` and push the tag.
 
 ## Order
 
@@ -73,3 +118,14 @@ re-rolls the property tests against the 3.1.14 builds this machine cannot
 reproduce, so quiet runs are the evidence that the IBAprep
 uninitialised-destination class is exhausted. The known members are refused
 by construction as of this date.
+
+**Correction, 2026-10-31.** The reasoning in that last sentence does not
+hold, and should not be reused for a future release. Two faults. The class
+was misdiagnosed: it is not uninitialised destination memory but an unchecked
+read past a narrower *source*, traced in `upstream-issues.md` under the open
+observation. And quiet runs cannot evidence exhaustion, because the binding
+now refuses those shapes and `check_result` returns early on `Err`, so the
+property test never reaches them — and its criterion is plausibility
+(`is_finite() && abs() < 1e30`), not correctness, so an over-read landing on
+real neighbouring data passes silently either way. The refusals stand; the
+argument for them is the source, not the quiet runs.

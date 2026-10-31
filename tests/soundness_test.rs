@@ -953,11 +953,14 @@ fn guard_arithmetic_cannot_be_overflowed_or_divided_by_zero() {
 
 /// `copy` into a pre-allocated destination it cannot cover.
 ///
-/// Property testing on the 3.1.14 CI builds caught a one-channel 2x7 source
-/// copied into a 10x6, five-channel F16 destination at 100000,100000:
-/// success, with `inf` in a channel the copy never wrote — the same IBAprep
-/// uninitialised-destination class as `mad`, surfaced on macOS. The shapes
-/// the copy cannot cover are refused.
+/// Property testing caught a one-channel 2x7 source copied into a 10x6,
+/// five-channel F16 destination at 100000,100000: success, with `inf` in a
+/// channel the source does not have, surfaced on macOS. `copy`'s clamp to
+/// `src.nchannels()` is a no-op for a default ROI, and IBAprep then replaces
+/// that ROI with the destination's own window, so `copy_` writes the extra
+/// channels from an unchecked read past the source's pixel -- the same
+/// unbounded `ConstIterator::operator[]` as `mad`, reached by a different
+/// route. The shapes the copy cannot cover are refused.
 #[test]
 fn copy_refuses_a_destination_it_cannot_cover() {
     let source = flat(2, 7, 1);
@@ -983,8 +986,9 @@ fn copy_refuses_a_destination_it_cannot_cover() {
 
     // The rest of the family the property test probes with mismatched
     // destinations refuses the wider shape too, not only the narrower one
-    // that smashed a stack buffer: on the 3.1.14 CI builds the channels only
-    // the destination has come back as allocated, under a success return.
+    // that smashed a stack buffer. What these operations leave in the channels
+    // only the destination has was never traced the way `mad` and `copy`
+    // were, and a destination matching its source needs no answer.
     let mut wide = ImageBuf::new(&ImageSpec::new(4, 4, 5, PixelFormat::F32).unwrap()).unwrap();
     let identity = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
     assert!(algo::warp(
@@ -1010,15 +1014,20 @@ fn copy_refuses_a_destination_it_cannot_cover() {
 
 /// `mad` with two image sources of different channel counts.
 ///
-/// The destination is sized from the wider source, and `IBAprep` allocates it
-/// with `InitializePixels::No` -- nothing in OpenImageIO passes
-/// `IBAprep_FILL_ZERO_ALLOC` -- so any channel the kernel does not write is
-/// uninitialised heap handed back with a success return. The lines meant to
-/// clear the trailing channels hold on the 3.1.12 this was developed against
-/// and did not on the 3.1.14 CI builds: property testing found a one-against-two
-/// and a six-against-three there, each leaving exactly the channels beyond the
-/// narrower source holding heap. The shape is refused rather than made to
-/// depend on which OpenImageIO is linked.
+/// The destination is sized from the wider source, and `mad`'s kernels then
+/// run that channel range over every operand without consulting each one's
+/// own count, through a `ConstIterator::operator[]` that does not bounds-check
+/// (`imagebufalgo_mad.cpp:77-78` and its three twins, `imagebuf.h:2017`, on
+/// v3.1.14.1). The channels only the wider source has are therefore written
+/// from a read past the narrower source's pixel, under a success return.
+///
+/// IBAprep's "clear the extra channels" block cannot help: it is gated on
+/// `roi.chend < dst->nchannels()` (`imagebufalgo.cpp:274`) and `mad` passes
+/// no prepflags (`imagebufalgo_mad.cpp:185`), so the gate is false and the
+/// block never runs -- on every 3.1.x and 3.2.x source checked, not only on
+/// the builds CI uses. Property testing found a one-against-two and a
+/// six-against-three on CI. The shape is refused because the result is not
+/// defined by anything in OpenImageIO.
 #[test]
 fn mad_refuses_sources_that_disagree_on_channel_count() {
     let narrow = ImageBuf::new(&ImageSpec::new(5, 10, 3, PixelFormat::F32).unwrap()).unwrap();

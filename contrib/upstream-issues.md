@@ -1252,71 +1252,93 @@ for the deadlock.
 
 ---
 
-## Open — `IBAprep` allocates the destination uninitialised, and something on 3.1.14 does not fill it
+## Open — kernels index a narrower source past its channel count, and nothing bounds-checks
 
-Not yet reproduced locally. Recorded because a property test found it on CI and
-the mechanism is only half established.
+Reproduced on CI three times. The mechanism was established by reading the
+source on 2026-10-31; the platform divergence is still unexplained.
 
-`ImageBufAlgo::IBAprep` allocates a destination the caller left empty with
+**The mechanism.** `ImageBuf::ConstIterator::operator[]` does no bounds check
+against the source's channel count — it builds a proxy over the raw pixel
+pointer and indexes it (`imagebuf.h:2017` at v3.1.14.1). So whenever a kernel
+iterates the *destination's* channel range over a *narrower* source, it reads
+past that source's pixel: the next pixel's data, or past the end of the
+allocation at the last pixel of the data window. The operation returns success
+with a real computation over whatever it reached.
 
-```cpp
-dst->reset(spec, (prepflags & IBAprep_FILL_ZERO_ALLOC)
-                     ? InitializePixels::Yes
-                     : InitializePixels::No);
-```
+Three operations get there by three different routes.
 
-`imagebufalgo.cpp:258`. Nothing in the tree passes `IBAprep_FILL_ZERO_ALLOC`,
-so every operation that allocates its own destination starts from uninitialised
-heap, and anything it does not go on to write is returned to the caller as
-image data with a success return.
+**`mad`** calls `IBAprep` with no prepflags (`imagebufalgo_mad.cpp:185`), so
+`roi.chend` stays the union of the operands' channel counts, which is also
+`spec.nchannels`. All four kernels then run `r[ch] = a[ch] * b[ch] + c[ch]`
+out to `roi.chend` over every operand (`:77-78`, `:97-98`, `:115-116`,
+`:133-134`). IBAprep's "clear the extra channels" block cannot compensate: it
+is gated on `roi.chend < dst->nchannels()` (`imagebufalgo.cpp:274`), which is
+false here, so for this shape it is dead code.
 
-The lines immediately after it are meant to close that for the channel axis:
-when `IBAprep_CLAMP_MUTUAL_NCHANNELS` clamps the written range to the narrower
-source, the range from there to `dst->nchannels()` is zeroed. On 3.1.12 that
-holds — `mad` with a one-channel and a two-channel source produces a
-two-channel destination and both channels come back written.
+**`copy`** clamps `roi.chend` to `src.nchannels()`
+(`imagebufalgo_copy.cpp:196`) — but against the *incoming* ROI. A default ROI
+has `chend` 0 and is undefined, so the clamp is a no-op, and IBAprep's
+initialized-destination branch then replaces the ROI wholesale with the
+destination's own pixel window (`imagebufalgo.cpp:110-112`). `copy_` runs
+`d[c] = s[c]` across that range with no guard (`:145-146`). `paste_`, a
+hundred lines above it in the same file, *does* guard, with
+`c < src_nchans ? s[c] : D(0)` (`:46`). `copy` also discards IBAprep's return
+value (`:207`) where `crop` checks it (`:259`).
 
-On the OpenImageIO 3.1.14 that CI builds against, it does not. `tests/property_test.rs`
-reported:
+**`channel_sum`** clamps the ROI to the source's channels
+(`imagebufalgo_pixelmath.cpp:530`) but pads the weights to the *destination's*
+(`IBA_FIX_PERCHAN_LEN(weights, dst.nchannels(), ...)`, `:537`), while the
+kernel indexes `weights[c]` across the source's range (`:513-514`). A source
+wider than the destination reads past that padded stack buffer.
 
-```
-mad reported success over the whole image but left 2.28e32 at element 47,
-which it never wrote.
-  a = 8x3, 1 channel, F16, origin 5,7
-  b = 8x7, 2 channels, U16, origin 5,7
-  mad(dst, a, Image(b), Constant([0.5])), whole image
-```
+**This is not a version difference.** Every file involved is byte-identical
+across v3.1.12.0, v3.1.14.0 and v3.1.14.1 (compared by blob hash, 2026-10-31),
+and the same code stands at v3.2.2.0 (`imagebufalgo_mad.cpp:193`,
+`imagebufalgo.cpp:299`, `imagebufalgo_copy.cpp:146`). An earlier version of
+this note guessed at a Highway SIMD path skipping the clear. There is no
+Highway code anywhere in 3.1.x — it first appears in 3.2 — and that guess is
+withdrawn, along with the claim that the clearing is version-dependent.
 
-Element 47 of an 8x7x2 buffer is x=7, y=2, channel 1 — exactly the channel the
-clamp excludes and the clear is supposed to cover.
+**Observed, on CI:**
 
-What is established: the allocation is uninitialised, nothing requests
-otherwise, and the clearing that compensates is version-dependent enough that
-one build of 3.1.14 did not do it. What is not: whether 3.1.14 differs here,
-whether the Highway SIMD path (`mad_impl_hwy`, enabled by `OIIO_USE_HWY`) skips
-the clear, or whether the clear itself has a condition that this shape misses.
+| build | call | first implausible element reported |
+| --- | --- | --- |
+| Windows, 3.1.14 | `mad(8x3 1ch F16, 8x7 2ch U16)` into 8x7x2 | element 47 = pixel 23, channel 1, absolute (12,9) — the last pixel of a's data window, where `a[1]` leaves a's buffer |
+| Linux debug, 3.1.14 | `mad(5x10 6ch U8, 10x5 3ch F16)` | not recorded element-wise |
+| macOS, 3.1.14 | `copy(1ch 2x7 at origin into 10x6 5ch F16 at 100000,100000)` | `inf` in channel 4 |
 
-Property testing has now hit the class three times, on different platforms,
-different operations and different shapes. Twice through `mad` with two image
-sources of unequal channel counts, with the channels beyond the narrower
-source left holding heap; then through `copy` on macOS/3.1.14 — a one-channel
-2x7 source at the origin copied into a pre-allocated 10x6 five-channel F16
-destination at 100000,100000 returned success with `inf` in channel 4 of the
-first pixel, memory the copy never wrote.
+The Windows case is the strongest evidence: element 47 is exactly where the
+over-read leaves the allocation. An unwritten destination channel would have
+failed at the first element instead.
 
-| build | a | b | destination | unwritten |
-| --- | --- | --- | --- | --- |
-| Windows, 3.1.14 | 8x3, 1 channel, F16 | 8x7, 2 channels, U16 | 8x7x2 | channel 1 |
-| Linux debug, 3.1.14 | 5x10, 6 channels, U8 | 10x5, 3 channels, F16 | 6 channels | channels 3 and up |
+**Still open.**
 
-Neither reproduces against 3.1.12: every mismatched pair tried there — 1 vs 2,
-2 vs 1, 6 vs 3, 3 vs 6, 4 vs 1 — came back with every channel written.
+- Why it surfaced on the CI builds and not locally. The read is in the source
+  on every tag, so what varies is only whether the bytes it reaches happen to
+  be implausible. The local attempt was five hand-written same-dimension F32
+  pairs, each exposing one at-risk pixel, and `proptest` draws fresh shapes
+  every run with no failure persistence, so "not reproduced" is consistent
+  with simply never having drawn a qualifying shape.
+- The macOS `inf` specifically. Reading past the last channel *outside* the
+  source's data window lands in `m_blackpixel`, which is zero-filled and sized
+  `round_to_multiple(pixel_bytes, OIIO_SIMD_MAX_SIZE_BYTES)`
+  (`imagebuf.cpp:436-438`); that predicts 0.0, not `inf`. The run's source
+  pixel format was not recorded.
+- Whether the over-read can fault rather than merely return garbage. It is
+  undefined behaviour and no sanitizer has been run.
+- With an *explicit* ROI, `imagebufalgo.cpp:153` clamps `roi.chend` to
+  `A->nchannels()`, which would both make the clear fire and stop the kernel
+  reading out of range — implying explicit-ROI and `ROI::All` behave
+  differently inside one build. Untested.
 
-This binding now refuses two image sources that disagree on channel count in
-`mad`, so it does not depend on which OpenImageIO is linked. That closes it for
-users of the crate but not upstream.
+**A caution about the evidence.** `tests/property_test.rs` checks plausibility,
+not correctness: `value.is_finite() && value.abs() < 1.0e30` (`:29`, `:155`).
+Where the over-read lands on real neighbouring pixel data it yields a finite,
+plausible, *wrong* result the test cannot see. Quiet runs are therefore not
+evidence that the class is exhausted — and less so now that the binding
+refuses these shapes and `check_result` returns early on `Err`.
 
-Worth settling before it is reported, because the general shape — an operation
-that reports success while handing back heap it never wrote — is not specific
-to `mad`, and `IBAprep`'s `InitializePixels::No` is what makes it reachable at
-all.
+The binding refuses all three shapes, so this is closed for users of the crate
+but not upstream. It is better characterised than several of the drafts above
+and is a candidate for filing: the `copy_`-versus-`paste_` asymmetry sits in
+one file and carries its own counter-example.
