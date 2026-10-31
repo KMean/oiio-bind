@@ -10,7 +10,11 @@ never filed and was fixed anyway, when the maintainer audited the rest of the
 collapsed, and neither needs filing.
 
 **Issue 8 was filed as #5638** on 2026-10-30, as an issue with the one-line
-fix stated and a pull request offered. **Sixteen remain to decide on.**
+fix stated and a pull request offered. **A third party has since opened
+[PR #5640](https://github.com/AcademySoftwareFoundation/OpenImageIO/pull/5640)
+against it** (RafatH0ssain, 2026-10-31), applying exactly that one-line fix
+with a regression test. Verified sound here on 2026-11-01; not yet reviewed
+or merged upstream. **Sixteen remain to decide on.**
 
 That outcome is the argument for filing the rest: one carefully verified
 report, with a public retraction when its first diagnosis proved wrong,
@@ -640,6 +644,49 @@ bug-report template, with line numbers refreshed against `main` (1ff2c7bc2),
 v3.2.2.0 and v3.1.19.0, and **reproduced on a 3.2.2.0 release** rather than on
 3.1.9. Reproduction: `contrib/colorconvert_leftover_repro.cpp`. The notes
 below are the original working text.
+
+**PR #5640, opened 2026-10-31 by RafatH0ssain, fixes it.** Checked against
+`main` (1ff2c7bc2) on 2026-11-01 and it is sound: the defect is still present
+at that commit, `r[c] = a[c]` is what the comment two lines above already
+describes, and the added testsuite case reproduces precisely. Running the
+PR's own command on an unfixed 3.2.2.0 gives
+`6chan: 0.735358,0.735358,0.735358,1,3,8`, where `3` and `8` are
+`0.5 + 10 * 0.25` and `0.5 + 10 * 0.75`, so the expected line the PR adds to
+both ref files is right to the last digit. Two things that looked like faults
+in it are not: the new case is ungated while the equivalent existing one is
+gated on `ociover >= 2.2`, which is dead weight because the build requires
+OCIO 2.3 or newer (`externalpackages.cmake:175-178`); and the identical
+expected line in `out.txt` and `out-ocio2.3.txt` is correct, because
+`lin_srgb` and `sRGB` are OIIO's own canonical names, identified by
+numerically probing the config against reference colours
+(`color_ocio.cpp:817-834`, `:857-876`), not by the config-alias lookup that
+makes the neighbouring `srgb_tx` lines differ between those two files.
+
+**What the PR does not fix, and what it leaves behind.** The defect reported
+in #5638 is the arithmetic. The `a[c]` in that line is a separate defect:
+the read is unbounded. `colorconvert` calls `IBAprep(roi, &dst, &src)` with
+no flags (`:3189`), so no `IBAprep_CLAMP_MUTUAL_NCHANNELS`; with an
+initialized destination IBAprep takes `roi` from the destination alone and
+never consults the source's channel count; and
+`channelsToCopy = std::min(4, roi.nchannels())` (`:3028`) is bounded by 4 and
+by the destination, never by the source. Both of the kernel's channel loops
+then run the destination's range over the source. Reproduced by
+`contrib/colorconvert_unguarded_source_repro.cpp`: a 2-channel source into a
+pre-allocated 6-channel destination returns success and writes values read
+from the *following* pixels, and past the allocation at the end of the
+buffer. Identical on 3.2.2.0 and on the vcpkg 3.1.12.0, so both release
+lines. This is the same family as the `copy()` draft
+(`contrib/issue-copy-unguarded-ready-to-file.md`) and has the same house-style
+remedy available: `paste` guards the same shape of loop with
+`c < src_nchans ? s[c] : D(0)`.
+
+Not reachable through `oiiotool`, whose `--colorconvert` always builds a
+destination sized to the source. It needs a caller that pre-allocates a wider
+destination, which the C++ API takes and the Python bindings expose as well
+(`py_imagebufalgo.cpp:3135` for `colorconvert`, `:3152` for
+`colormatrixtransform`, both with a `dst` out-parameter). The Python path is
+read from the binding source, not executed -- this machine's OpenImageIO
+builds carry no Python module.
 
 **Title:** `colorconvert` and friends write `0.5 + 10 * src` into channels 4 and
 above instead of copying them
