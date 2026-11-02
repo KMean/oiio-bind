@@ -13,11 +13,24 @@ permissions:
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   # Cancel superseded runs on a pull request, where only the tip matters and
-  # the branch will be tested again on merge. Never on a push to main, where
-  # each commit's result is the only record that commit will ever get: a
+  # the branch will be tested again on merge. Never on a push to main, where a
   # second push minutes after the first used to kill a run that had already
-  # done most of its work, and the cancelled run reports as a failed one, so
-  # the loss looked like a fault instead of an interruption.
+  # done most of its work, taking its cache save with it, and the cancelled run
+  # reports as a failed one, so the loss looked like a fault.
+  #
+  # This does NOT give every commit on main a run of its own, and the earlier
+  # version of this comment claimed it did. A group admits one running job set
+  # and one pending one, so a third push evicts the pending one even with
+  # cancel-in-progress false: 28cd225 and 4fdd73d were both cancelled that way
+  # on 2026-11-02, each two seconds after the next push arrived, while the run
+  # ahead of them kept going. That is the intended trade and not the old bug.
+  # An evicted run has done no work and saved no cache, so nothing is wasted,
+  # and the tip run covers every commit it carries. What is lost is only the
+  # ability to blame one commit rather than the batch.
+  #
+  # The signature is worth knowing, because it looks like the macOS runner
+  # queue giving up: both report cancelled with ZERO jobs created. Read the
+  # timestamps instead. An eviction lands within seconds of the next push.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
