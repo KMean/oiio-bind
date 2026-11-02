@@ -105,6 +105,54 @@ The `enum_names!` macro's generated API renders correctly on docs.rs:
 `name`, `NAMES`, `Display` and `FromStr` all appear, and the `concat!` doc
 strings resolved into real prose rather than leaking.
 
+## 5. The guards were almost entirely untested, and one of them I broke
+
+**The most important thing found tonight**, and it took three passes to get
+right.
+
+The crate's value is roughly a dozen refusals standing between a caller and
+arguments OpenImageIO accepts and then reads or writes out of bounds for. I
+mutation-tested them: delete each guard, run the suite, see if anything
+fails.
+
+**Of eleven guard helpers, exactly one was pinned by any test.** Deleting
+`refuse_deep`, `refuse_empty_region` (41 call sites), `refuse_distant_pair`,
+`refuse_mixed_deep`, `refuse_wide_destination` and the rest left all 423
+tests green. Any of them could have been removed in a refactor and CI would
+not have noticed.
+
+Then I proved that, the hard way. Commit `d7a83fd` shipped a **disabled**
+`refuse_mixed_deep` to `main`, because the mutation sweep was running in the
+background and `git add -A` for an unrelated CI commit picked the file up
+mid-mutation. It sat on `main` for about twenty minutes. Nothing caught it,
+because the guard it disabled had no test, which is exactly what the sweep
+was measuring. Restored in `0988030`.
+
+My first attempt at tests was also wrong. Nine passed, but on checking, only
+four failed when their guard was removed: the rest asserted `.is_err()` or a
+substring like "deep", which OpenImageIO's own error satisfies equally well.
+A test that passes with the guard gone does not pin anything.
+
+Each test now asserts the guard's own wording, and **each has been verified
+by deleting its guard and confirming the test fails**. All ten.
+
+Two of those results are worth knowing on their own:
+
+| guard | what happens without it |
+|---|---|
+| `refuse_deep` | **segfault** transposing a deep image |
+| `refuse_distant_pair` | **crash**, integer divide by zero |
+
+Those are not politeness. They are the only thing between a caller and a
+dead process, and until tonight nothing tested them.
+
+A methodology note, because it wasted time and produced two confusing false
+results: cargo does not reliably relink the test binary when a mutated C++
+file is restored to its original contents. Mutate-then-test is safe, since
+the mutation forces a rebuild. Restore-then-test needs
+`cargo clean -p oiio-sys`.
+
+433 tests pass.
 ## Still open
 
 - **The binomial defect is unreported upstream.** The best candidate for the
