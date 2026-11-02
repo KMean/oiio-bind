@@ -1,26 +1,11 @@
 # Security
 
-<!--
-  ONE DECISION IS OUTSTANDING: the reporting channel below. This repository
-  currently has issues, discussions and GitHub's private vulnerability
-  reporting all disabled, so there is no way for anyone to reach the
-  maintainer about a soundness hole. Pick one and replace the marked line:
-
-    1. Enable private vulnerability reporting
-       (Settings -> Security -> "Private vulnerability reporting"). Free,
-       keeps the report private until it is fixed, and is what GitHub's own
-       "Report a vulnerability" button uses. This is the usual choice.
-    2. Enable issues, and say that a report should be filed as one. Public
-       from the moment it is written, which is a poor fit for a soundness
-       hole in a published crate.
-    3. Publish an email address. Simple, and permanent: it cannot be taken
-       back once it is in a tagged release.
--->
-
 ## Reporting a vulnerability
 
-<!-- REPLACE THIS LINE once the channel above is chosen. -->
-_No reporting channel is configured yet. See the comment in this file._
+Use the **Report a vulnerability** button on the repository's
+[Security tab](https://github.com/KMean/oiio-bind/security/advisories/new).
+That opens a private advisory, visible only to you and the maintainer
+until there is a fix.
 
 Please report privately rather than opening something public, and allow time
 for a fix before disclosing. A report is welcome even if you are not sure the
