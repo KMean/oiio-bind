@@ -209,3 +209,64 @@ fn a_deep_image_is_refused_by_the_statistics_calls() {
         "unexpected message: {error}"
     );
 }
+
+// The three operations below each carry their own deep-image refusal rather
+// than going through a shared helper, and nothing reached any of them. They
+// are exposed, so a caller can.
+
+/// `color_map` refuses a deep source: it maps pixel values through knots and
+/// a deep image has samples instead.
+#[test]
+fn color_map_refuses_a_deep_source() {
+    let mut dst = ImageBuf::empty().unwrap();
+    let knots = [0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+    let error = algo::color_map(&mut dst, &deep(4, 4), Some(0), 2, 3, &knots, None)
+        .expect_err("color_map cannot read a deep image");
+    assert!(
+        error.to_string().contains("deep images are not supported"),
+        "unexpected message: {error}"
+    );
+}
+
+/// `color_range_check` refuses a deep source for the same reason.
+#[test]
+fn color_range_check_refuses_a_deep_source() {
+    let error = algo::color_range_check(&deep(4, 4), &[0.0], &[1.0], None)
+        .expect_err("color_range_check cannot read a deep image");
+    assert!(
+        error.to_string().contains("deep images are not supported"),
+        "unexpected message: {error}"
+    );
+}
+
+/// `fillholes_pushpull` refuses a deep source. It also needs an alpha
+/// channel, so the message may name either; what matters is that it refuses
+/// rather than reading samples as pixels.
+#[test]
+fn fillholes_refuses_a_deep_source() {
+    let mut dst = ImageBuf::empty().unwrap();
+    let error = algo::fillholes_pushpull(&mut dst, &deep(4, 4))
+        .expect_err("fillholes cannot read a deep image");
+    assert!(!error.to_string().is_empty(), "there should be a reason");
+}
+
+/// `copy` refuses a pre-allocated destination whose data window the source
+/// never reaches: nothing would be copied and the destination would be left
+/// holding whatever it already had, reported as success.
+#[test]
+fn copy_into_a_destination_the_source_cannot_reach_is_refused() {
+    let src = flat(4, 4, 3);
+
+    // A destination allocated a long way from the source.
+    let far = ImageSpec::new(4, 4, 3, PixelFormat::F32)
+        .unwrap()
+        .with_origin([500, 500, 0]);
+    let mut dst = ImageBuf::new(&far).unwrap();
+
+    let error = algo::copy(&mut dst, &src, None, None)
+        .expect_err("a destination the source cannot reach must be refused");
+    assert!(
+        error.to_string().contains("does not reach the allocated"),
+        "unexpected message: {error}"
+    );
+}
