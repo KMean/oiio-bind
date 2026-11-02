@@ -314,7 +314,11 @@ jobs:
           environment-file: .github/ci/environment-3.2.yml
           cache-environment: true
           cache-downloads: true
-          generate-run-shell: true
+          # The micromamba-shell wrapper the Unix jobs use is
+          # documented as macOS and Linux only, so Windows gets the
+          # environment through an initialised login shell instead.
+          generate-run-shell: false
+          init-shell: bash
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -324,7 +328,7 @@ jobs:
       # A conda environment on Windows puts headers, import libraries and
       # DLLs under Library/, not directly under the prefix.
       - name: Point the build at the conda prefix
-        shell: micromamba-shell {0}
+        shell: bash -el {0}
         run: |
           echo "OIIO_INCLUDE_DIR=$CONDA_PREFIX/Library/include" >> "$GITHUB_ENV"
           echo "OIIO_LIBRARY_DIR=$CONDA_PREFIX/Library/lib" >> "$GITHUB_ENV"
@@ -333,5 +337,5 @@ jobs:
           ls "$CONDA_PREFIX/Library/lib" | grep -i openimageio
 
       - name: Run optimized tests
-        shell: micromamba-shell {0}
+        shell: bash -el {0}
         run: cargo test --workspace --release --locked -- --nocapture
