@@ -74,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if spec.is_deep() {
         let deep = input.read_deep_image()?;
         let mut samples = 0u64;
-        let mut deepest = 0usize;
+        let mut deepest = 0u32;
         for y in origin[1]..origin[1] + height as i32 {
             for x in origin[0]..origin[0] + width as i32 {
                 let count = deep.sample_count(x, y)?;

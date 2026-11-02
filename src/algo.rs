@@ -79,8 +79,8 @@ fn region_in(roi: Option<Roi>, dst: &ImageBuf) -> Result<sys::imageio::ROI> {
     if let Some(roi) = roi {
         let channels = roi.channels();
         let available = dst.channel_count();
-        if dst.is_initialized() && available >= 0 {
-            if channels.start >= available.unsigned_abs() {
+        if dst.is_initialized() {
+            if channels.start >= available {
                 return Err(Error::InvalidRoi(format!(
                     "the region starts at channel {} and the destination has {available}",
                     channels.start
@@ -481,6 +481,7 @@ pub enum TextAlignY {
 
 /// How [`render_text`] should draw.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct TextOptions<'a> {
     /// Height in pixels. Must be at least one.
     pub size: u32,
@@ -981,6 +982,7 @@ pub fn complex_to_polar(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) ->
 /// **on**: colour is divided by alpha before the transform and multiplied back
 /// after, which is what a premultiplied image needs.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct OcioOptions<'a> {
     /// Divide colour by alpha before transforming and multiply back after.
     ///
@@ -1181,6 +1183,7 @@ pub fn ocio_named_transform(
 /// that names fewer channels still reports every channel; those it did not
 /// visit have a [`finite_count`](Self::finite_count) of zero.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct PixelStats {
     /// The smallest finite value seen.
     pub min: Vec<f32>,
@@ -1475,6 +1478,7 @@ pub fn reorient(dst: &mut ImageBuf, src: &ImageBuf) -> Result<()> {
 /// How [`warp`], [`rotate`] and [`st_warp`] should resample, and what to do at
 /// the edges.
 #[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
 pub struct WarpOptions<'a> {
     /// The reconstruction filter's name. `None` means `lanczos3`.
     pub filter: Option<&'a str>,
@@ -1844,6 +1848,7 @@ pub fn max(dst: &mut ImageBuf, a: &ImageBuf, b: Operand<'_>, roi: Option<Roi>) -
 /// default, which is the value named below rather than zero; too few values
 /// repeats the last one.
 #[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
 pub struct ContrastRemap<'a> {
     /// The input level that becomes [`min`](Self::min). Default 0.
     pub black: &'a [f32],
@@ -2881,6 +2886,7 @@ pub fn compare_with_relative(
 /// signal-to-noise values — returning the shared type would present real
 /// zeroes that mean "not measured".
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub struct YeeComparison {
     /// Pixels predicted to be visibly different.
     pub failures: u64,
@@ -2971,7 +2977,7 @@ pub fn color_count(
     roi: Option<Roi>,
 ) -> Result<Vec<u64>> {
     const OPERATION: &str = "color_count";
-    let channels = usize::try_from(src.channel_count().max(0)).expect("i32 fits usize");
+    let channels = src.channel_count() as usize;
     if channels == 0 {
         return Err(Error::operation(
             OPERATION,
@@ -3039,3 +3045,178 @@ enum_names!("mosaic pattern", MosaicPattern {
     Bayer => "bayer",
     XTrans => "xtrans",
 });
+
+impl<'a> TextOptions<'a> {
+    // `#[non_exhaustive]` means a caller outside this crate cannot write
+    // `TextOptions { .. }` or use functional update, so these are how a field
+    // is changed. They also make the configuration read the same way as
+    // `ImageSpec` and `config::Limits`, rather than being a third style.
+
+    /// The same text options with the point size changed.
+    #[must_use]
+    pub fn with_size(mut self, size: u32) -> Self {
+        self.size = size;
+        self
+    }
+
+    /// The same text options with the font name or path changed.
+    #[must_use]
+    pub fn with_font(mut self, font: &'a str) -> Self {
+        self.font = font;
+        self
+    }
+
+    /// The same text options with the colour, one value per channel changed.
+    #[must_use]
+    pub fn with_color(mut self, color: &'a [f32]) -> Self {
+        self.color = color;
+        self
+    }
+
+    /// The same text options with the horizontal alignment changed.
+    #[must_use]
+    pub fn with_align_x(mut self, align_x: TextAlignX) -> Self {
+        self.align_x = align_x;
+        self
+    }
+
+    /// The same text options with the vertical alignment changed.
+    #[must_use]
+    pub fn with_align_y(mut self, align_y: TextAlignY) -> Self {
+        self.align_y = align_y;
+        self
+    }
+
+    /// The same text options with the drop-shadow size in pixels changed.
+    #[must_use]
+    pub fn with_shadow(mut self, shadow: u32) -> Self {
+        self.shadow = shadow;
+        self
+    }
+}
+
+impl<'a> OcioOptions<'a> {
+    // `#[non_exhaustive]` means a caller outside this crate cannot write
+    // `OcioOptions { .. }` or use functional update, so these are how a field
+    // is changed. They also make the configuration read the same way as
+    // `ImageSpec` and `config::Limits`, rather than being a third style.
+
+    /// The same OCIO options with whether to unpremultiply before converting changed.
+    #[must_use]
+    pub fn with_unpremult(mut self, unpremult: bool) -> Self {
+        self.unpremult = unpremult;
+        self
+    }
+
+    /// The same OCIO options with whether to apply the transform backwards changed.
+    #[must_use]
+    pub fn with_inverse(mut self, inverse: bool) -> Self {
+        self.inverse = inverse;
+        self
+    }
+
+    /// The same OCIO options with the OCIO context key changed.
+    #[must_use]
+    pub fn with_context_key(mut self, context_key: &'a str) -> Self {
+        self.context_key = context_key;
+        self
+    }
+
+    /// The same OCIO options with the OCIO context value changed.
+    #[must_use]
+    pub fn with_context_value(mut self, context_value: &'a str) -> Self {
+        self.context_value = context_value;
+        self
+    }
+}
+
+impl<'a> WarpOptions<'a> {
+    // `#[non_exhaustive]` means a caller outside this crate cannot write
+    // `WarpOptions { .. }` or use functional update, so these are how a field
+    // is changed. They also make the configuration read the same way as
+    // `ImageSpec` and `config::Limits`, rather than being a third style.
+
+    /// The same warp options with the reconstruction filter changed.
+    #[must_use]
+    pub fn with_filter(mut self, filter: Option<&'a str>) -> Self {
+        self.filter = filter;
+        self
+    }
+
+    /// The same warp options with the filter width changed.
+    #[must_use]
+    pub fn with_filter_width(mut self, filter_width: Option<f32>) -> Self {
+        self.filter_width = filter_width;
+        self
+    }
+
+    /// The same warp options with the wrap mode changed.
+    #[must_use]
+    pub fn with_wrap(mut self, wrap: Option<&'a str>) -> Self {
+        self.wrap = wrap;
+        self
+    }
+
+    /// The same warp options with whether to clamp at the edges changed.
+    #[must_use]
+    pub fn with_edge_clamp(mut self, edge_clamp: bool) -> Self {
+        self.edge_clamp = edge_clamp;
+        self
+    }
+
+    /// The same warp options with whether to recompute the destination region changed.
+    #[must_use]
+    pub fn with_recompute_region(mut self, recompute_region: bool) -> Self {
+        self.recompute_region = recompute_region;
+        self
+    }
+}
+
+impl<'a> ContrastRemap<'a> {
+    // `#[non_exhaustive]` means a caller outside this crate cannot write
+    // `ContrastRemap { .. }` or use functional update, so these are how a field
+    // is changed. They also make the configuration read the same way as
+    // `ImageSpec` and `config::Limits`, rather than being a third style.
+
+    /// The same contrast remap with the input black point changed.
+    #[must_use]
+    pub fn with_black(mut self, black: &'a [f32]) -> Self {
+        self.black = black;
+        self
+    }
+
+    /// The same contrast remap with the input white point changed.
+    #[must_use]
+    pub fn with_white(mut self, white: &'a [f32]) -> Self {
+        self.white = white;
+        self
+    }
+
+    /// The same contrast remap with the output minimum changed.
+    #[must_use]
+    pub fn with_min(mut self, min: &'a [f32]) -> Self {
+        self.min = min;
+        self
+    }
+
+    /// The same contrast remap with the output maximum changed.
+    #[must_use]
+    pub fn with_max(mut self, max: &'a [f32]) -> Self {
+        self.max = max;
+        self
+    }
+
+    /// The same contrast remap with the sigmoid contrast changed.
+    #[must_use]
+    pub fn with_sigmoid_contrast(mut self, sigmoid_contrast: &'a [f32]) -> Self {
+        self.sigmoid_contrast = sigmoid_contrast;
+        self
+    }
+
+    /// The same contrast remap with the sigmoid threshold changed.
+    #[must_use]
+    pub fn with_sigmoid_threshold(mut self, sigmoid_threshold: &'a [f32]) -> Self {
+        self.sigmoid_threshold = sigmoid_threshold;
+        self
+    }
+}

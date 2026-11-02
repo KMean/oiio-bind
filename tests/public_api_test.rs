@@ -24,7 +24,7 @@ fn _names_borrowed_types(
     tile: &TileGuard<'_>,
     deep: &DeepImage,
     state: &Perthread<'_>,
-) -> (String, PixelFormat, usize) {
+) -> (String, PixelFormat, u32) {
     let _ = format!("{state:?}");
     (handle.filename(), tile.format(), deep.channel_count())
 }
@@ -113,23 +113,18 @@ fn a_dependent_can_use_the_whole_surface() -> Result<()> {
         &image,
         0.0,
         Some([0.0, 0.0]),
-        &WarpOptions {
-            recompute_region: true,
-            ..WarpOptions::default()
-        },
+        &WarpOptions::default().with_recompute_region(true),
         None,
     )?;
     algo::warp(
         &mut turned,
         &image,
         &[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-        &WarpOptions {
-            filter: Some("box"),
-            filter_width: Some(1.0),
-            wrap: Some("clamp"),
-            edge_clamp: true,
-            ..WarpOptions::default()
-        },
+        &WarpOptions::default()
+            .with_filter(Some("box"))
+            .with_filter_width(Some(1.0))
+            .with_wrap(Some("clamp"))
+            .with_edge_clamp(true),
         None,
     )?;
 
@@ -185,12 +180,10 @@ fn a_dependent_can_use_the_whole_surface() -> Result<()> {
     algo::render_box(&mut drawn, [1, 1], [5, 5], &[1.0], true, None)?;
 
     // Text needs a font this build may not have, so only the shape is named.
-    let text = TextOptions {
-        size: 12,
-        align_x: TextAlignX::Center,
-        align_y: TextAlignY::Top,
-        ..TextOptions::default()
-    };
+    let text = TextOptions::default()
+        .with_size(12)
+        .with_align_x(TextAlignX::Center)
+        .with_align_y(TextAlignY::Top);
     let _ = algo::render_text(&mut drawn, [4, 4], "hi", &text, None);
     let _ = algo::text_size("hi", 12, "");
 
@@ -311,13 +304,11 @@ fn a_dependent_can_make_and_look_up_a_texture() -> Result<()> {
     let textures = TextureSystem::new()?;
     assert_eq!(textures.resolution(&texture)?, [32, 32]);
 
-    let options = TextureOptions {
-        mip_mode: MipMode::Trilinear,
-        interpolation: InterpolationMode::Bilinear,
-        s_wrap: WrapMode::Clamp,
-        t_wrap: WrapMode::Clamp,
-        ..TextureOptions::default()
-    };
+    let options = TextureOptions::default()
+        .with_mip_mode(MipMode::Trilinear)
+        .with_interpolation(InterpolationMode::Bilinear)
+        .with_s_wrap(WrapMode::Clamp)
+        .with_t_wrap(WrapMode::Clamp);
     let mut rgb = [0.0_f32; 3];
     textures.texture(
         &texture,

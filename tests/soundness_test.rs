@@ -801,7 +801,7 @@ fn a_deep_sample_count_too_large_is_an_error_not_an_abort() {
         .as_deep();
 
     let mut deep = DeepImage::new(&spec).unwrap();
-    deep.set_sample_count(0, 0, i32::MAX as usize).unwrap();
+    deep.set_sample_count(0, 0, i32::MAX as u32).unwrap();
     assert!(
         deep.set_value(0, 0, 0, 0, 1.0).is_err(),
         "a petabyte of deep samples should be an error, not an abort"

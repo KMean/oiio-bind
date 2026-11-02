@@ -103,8 +103,12 @@ impl Roi {
     }
 
     /// Number of channels the region covers.
-    pub fn channel_count(&self) -> usize {
-        difference(self.channel_begin, self.channel_end)
+    ///
+    /// `u32` to match every other `channel_count` in the crate. Use
+    /// [`Roi::element_count`] for a slice length, which is `usize` because
+    /// that is what it is for.
+    pub fn channel_count(&self) -> u32 {
+        difference(self.channel_begin, self.channel_end) as u32
     }
 
     /// The smallest region containing both, on every axis.
@@ -165,7 +169,7 @@ impl Roi {
             self.width(),
             self.height(),
             self.depth(),
-            self.channel_count(),
+            self.channel_count() as usize,
         ]
         .into_iter()
         .try_fold(1usize, |total, dimension| {

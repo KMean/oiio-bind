@@ -1108,7 +1108,7 @@ impl ImageOutput {
                 deep.dimensions()
             )));
         }
-        if deep.channel_count() != self.spec.channel_count() as usize {
+        if deep.channel_count() != self.spec.channel_count() {
             return Err(Error::InvalidImageSpec(format!(
                 "the deep image has {} channels but the writer expects {}",
                 deep.channel_count(),
@@ -1264,7 +1264,7 @@ impl ImageOutput {
                 ),
             ));
         }
-        if deep.channel_count() != self.spec.channel_count() as usize {
+        if deep.channel_count() != self.spec.channel_count() {
             return Err(Error::operation(
                 operation,
                 format!(

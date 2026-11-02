@@ -2,6 +2,78 @@
 
 This fork's changes, newest first.
 
+## 0.3.0 — 2026-11-02
+
+`oiio` moves to 0.3.0; `oiio-sys` is unchanged at 0.3.0. A breaking release
+that makes the API say the same thing the same way twice, and closes the
+option structs before anyone depends on their fields.
+
+### One type for one concept
+
+`channel_count` returned three different types depending on which object you
+asked: `i32` on `ImageBuf`, `u32` on `ImageSpec`, `usize` on `Roi` and
+`DeepImage`. A loop over channels needed a different cast per object. It is
+`u32` everywhere now, which is what the ten channel *parameters* in the API
+already took.
+
+The same confusion ran through `DeepImage`, whose channel and sample indices
+were `usize` while the identical concepts on `ImageBuf` were `u32`:
+`value`, `value_uint`, `samples`, `set_value`, `set_value_uint`,
+`sample_count`, `set_sample_count`, `z_channel`, `z_back_channel` and
+`alpha_channel` all move to `u32`.
+
+`element_count` stays `Result<usize>`, because that one is a slice length.
+
+Migrating is mostly deleting casts. `spec.channel_count() as usize` becomes
+`spec.channel_count()`. Where a channel index is used to index a slice, the
+cast moves to the point of indexing, which is where it belongs.
+
+### The option structs are `#[non_exhaustive]`, and have builders
+
+`TextureOptions` had twelve public fields and no `#[non_exhaustive]`, so
+adding a thirteenth would have broken every downstream struct literal. The
+same was true of `TextOptions`, `OcioOptions`, `WarpOptions` and
+`ContrastRemap`, and of the result structs `PixelStats`, `YeeComparison`,
+`UdimInventory` and `Derivatives`.
+
+All nine are now `#[non_exhaustive]`. That forbids `Struct { .. }` and
+`..Default::default()` from outside the crate, so the five option structs
+gained 33 `with_*` methods:
+
+```rust,ignore
+// before
+let options = TextOptions { size: 24, ..TextOptions::default() };
+// after
+let options = TextOptions::default().with_size(24);
+```
+
+That is shorter than what it replaces, and it settles the configuration
+style question: everything configurable now reads the way `ImageSpec` and
+`config::Limits` already did, rather than there being three styles.
+
+The point of the attribute is that the next field is additive. Anisotropy
+and conservative filtering are missing from `TextureOptions` and need new
+C++ shims; with this release they can arrive in a 0.3.x.
+
+### What did not change, and why
+
+An audit suggested five `algo` functions had kept C++ spelling. Checked,
+and they had not: `fft`, `ifft`, `absdiff`, `premult`, `unpremult`,
+`st_warp`, `laplacian`, `deepen` and `nonzero_region` are domain terms,
+correctly snake_case. Renaming public functions is the most disruptive
+change available and there was no case for it.
+
+### A note on the semver gate
+
+CI gained `cargo-semver-checks` this release. It caught the
+`#[non_exhaustive]` change in this batch. It did **not** catch the
+`channel_count` return types: of its 261 lints the return-type ones only
+cover `-> T` becoming `-> ()`, so a change from one concrete type to another
+passes silently. The gate is a floor, not a proof.
+
+### Tests
+
+400 to 413.
 ## 0.2.3 — 2026-11-02
 
 `oiio` moves to 0.2.3 and `oiio-sys` to 0.3.0. The theme is that the crate

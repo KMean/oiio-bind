@@ -27,11 +27,9 @@ fn positional(width: u32, height: u32) -> ImageBuf {
 /// A box filter one pixel wide, so a test can assert exact pixel values
 /// rather than whatever a wide filter blended in.
 fn box_filter() -> WarpOptions<'static> {
-    WarpOptions {
-        filter: Some("box"),
-        filter_width: Some(1.0),
-        ..WarpOptions::default()
-    }
+    WarpOptions::default()
+        .with_filter(Some("box"))
+        .with_filter_width(Some(1.0))
 }
 
 fn value(image: &ImageBuf, x: i32, y: i32) -> f32 {
@@ -209,12 +207,10 @@ fn rotating_by_a_quarter_turn_goes_the_same_way_as_rotate_90() {
         &source,
         std::f32::consts::FRAC_PI_2,
         None,
-        &WarpOptions {
-            filter: Some("box"),
-            filter_width: Some(1.0),
-            recompute_region: true,
-            ..WarpOptions::default()
-        },
+        &WarpOptions::default()
+            .with_filter(Some("box"))
+            .with_filter_width(Some(1.0))
+            .with_recompute_region(true),
         None,
     )
     .unwrap();
@@ -261,11 +257,9 @@ fn rotating_by_pi_matches_rotate_180() {
         &source,
         PI,
         None,
-        &WarpOptions {
-            filter: Some("box"),
-            filter_width: Some(1.0),
-            ..WarpOptions::default()
-        },
+        &WarpOptions::default()
+            .with_filter(Some("box"))
+            .with_filter_width(Some(1.0)),
         None,
     )
     .unwrap();
@@ -362,10 +356,7 @@ fn warp_honours_the_wrap_mode() {
             &mut result,
             &source,
             &shift,
-            &WarpOptions {
-                wrap: Some(wrap),
-                ..box_filter()
-            },
+            &box_filter().with_wrap(Some(wrap)),
             None,
         )
         .unwrap();

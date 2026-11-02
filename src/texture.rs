@@ -454,6 +454,7 @@ pub fn make_texture_from_buffer(
 
 /// How one lookup should be filtered.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct TextureOptions {
     /// First channel of the texture to read.
     pub first_channel: u32,
@@ -700,6 +701,7 @@ impl std::fmt::Debug for TextureHandle<'_> {
 
 /// The concrete files of a UDIM set; see [`TextureSystem::inventory_udim`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct UdimInventory {
     /// One entry per grid cell, `None` where the set has no tile — UDIM
     /// sets may be sparse.
@@ -733,6 +735,7 @@ impl UdimInventory {
 /// has these from its own differentials; for simpler uses,
 /// [`Derivatives::uniform`] describes a square footprint.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[non_exhaustive]
 pub struct Derivatives {
     /// Change in s per pixel across the screen's x axis.
     pub dsdx: f32,
@@ -1192,3 +1195,94 @@ enum_names!("texture mode", TextureMode {
     LightProbe => "light_probe",
     BumpWithSlopes => "bump_with_slopes",
 });
+
+impl TextureOptions {
+    // `#[non_exhaustive]` means a caller outside this crate cannot write
+    // `TextureOptions { .. }` or use functional update, so these are how a field
+    // is changed. They also make the configuration read the same way as
+    // `ImageSpec` and `config::Limits`, rather than being a third style.
+
+    /// The same texture options with the first channel to look up changed.
+    #[must_use]
+    pub fn with_first_channel(mut self, first_channel: u32) -> Self {
+        self.first_channel = first_channel;
+        self
+    }
+
+    /// The same texture options with the subimage to read changed.
+    #[must_use]
+    pub fn with_subimage(mut self, subimage: u32) -> Self {
+        self.subimage = subimage;
+        self
+    }
+
+    /// The same texture options with the wrap mode across s changed.
+    #[must_use]
+    pub fn with_s_wrap(mut self, s_wrap: WrapMode) -> Self {
+        self.s_wrap = s_wrap;
+        self
+    }
+
+    /// The same texture options with the wrap mode across t changed.
+    #[must_use]
+    pub fn with_t_wrap(mut self, t_wrap: WrapMode) -> Self {
+        self.t_wrap = t_wrap;
+        self
+    }
+
+    /// The same texture options with how mip levels are chosen changed.
+    #[must_use]
+    pub fn with_mip_mode(mut self, mip_mode: MipMode) -> Self {
+        self.mip_mode = mip_mode;
+        self
+    }
+
+    /// The same texture options with how samples are interpolated changed.
+    #[must_use]
+    pub fn with_interpolation(mut self, interpolation: InterpolationMode) -> Self {
+        self.interpolation = interpolation;
+        self
+    }
+
+    /// The same texture options with the blur across s changed.
+    #[must_use]
+    pub fn with_s_blur(mut self, s_blur: f32) -> Self {
+        self.s_blur = s_blur;
+        self
+    }
+
+    /// The same texture options with the blur across t changed.
+    #[must_use]
+    pub fn with_t_blur(mut self, t_blur: f32) -> Self {
+        self.t_blur = t_blur;
+        self
+    }
+
+    /// The same texture options with the filter width across s changed.
+    #[must_use]
+    pub fn with_s_width(mut self, s_width: f32) -> Self {
+        self.s_width = s_width;
+        self
+    }
+
+    /// The same texture options with the filter width across t changed.
+    #[must_use]
+    pub fn with_t_width(mut self, t_width: f32) -> Self {
+        self.t_width = t_width;
+        self
+    }
+
+    /// The same texture options with the value for channels the texture does not have changed.
+    #[must_use]
+    pub fn with_fill(mut self, fill: f32) -> Self {
+        self.fill = fill;
+        self
+    }
+
+    /// The same texture options with the colour returned for a missing texture changed.
+    #[must_use]
+    pub fn with_missing_color(mut self, missing_color: Option<Vec<f32>>) -> Self {
+        self.missing_color = missing_color;
+        self
+    }
+}

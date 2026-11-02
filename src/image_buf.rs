@@ -439,8 +439,13 @@ impl ImageBuf {
     }
 
     /// Number of channels per pixel.
-    pub fn channel_count(&self) -> i32 {
-        sys::imagebuf::imagebuf_nchannels(self.inner())
+    ///
+    /// `u32` to match every other `channel_count` in the crate, and the
+    /// channel indices the API takes. OpenImageIO reports an `int`; a
+    /// negative one would mean an uninitialized buffer, which reads as zero
+    /// channels here.
+    pub fn channel_count(&self) -> u32 {
+        sys::imagebuf::imagebuf_nchannels(self.inner()).max(0) as u32
     }
 
     /// Borrow the buffer's own pixel memory, without copying it.
@@ -1004,7 +1009,7 @@ impl ImageBuf {
         sample: u32,
     ) -> Result<(i32, i32)> {
         self.require_deep(operation)?;
-        let channels = self.channel_count().max(0) as u32;
+        let channels = self.channel_count();
         if channel >= channels {
             return Err(Error::operation(
                 operation,

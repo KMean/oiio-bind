@@ -193,11 +193,9 @@ fn blur_changes_what_a_lookup_returns() {
     let texel = 1.0 / resolution[0] as f32;
 
     let line = |blur: f32| -> Vec<f32> {
-        let options = TextureOptions {
-            s_blur: blur,
-            t_blur: blur,
-            ..TextureOptions::default()
-        };
+        let options = TextureOptions::default()
+            .with_s_blur(blur)
+            .with_t_blur(blur);
         (0..64)
             .map(|step| {
                 let s = 0.25 + step as f32 * texel * 4.0;
@@ -247,10 +245,7 @@ fn mip_mode_changes_the_result() {
 
     // A wide filter, so the mip pyramid is genuinely in play.
     let sample = |mip_mode: MipMode| -> f32 {
-        let options = TextureOptions {
-            mip_mode,
-            ..TextureOptions::default()
-        };
+        let options = TextureOptions::default().with_mip_mode(mip_mode);
         let mut value = [0.0_f32; 1];
         textures
             .texture(
@@ -303,21 +298,17 @@ fn options_change_the_result() {
 
     // Outside the unit square, wrapping decides the answer. Black must give
     // zero where clamping gives an edge value.
-    let mut black = TextureOptions {
-        s_wrap: WrapMode::Black,
-        t_wrap: WrapMode::Black,
-        ..TextureOptions::default()
-    };
+    let mut black = TextureOptions::default()
+        .with_s_wrap(WrapMode::Black)
+        .with_t_wrap(WrapMode::Black);
     black.interpolation = InterpolationMode::Closest;
     black.mip_mode = MipMode::None;
 
-    let clamp = TextureOptions {
-        s_wrap: WrapMode::Clamp,
-        t_wrap: WrapMode::Clamp,
-        interpolation: InterpolationMode::Closest,
-        mip_mode: MipMode::None,
-        ..TextureOptions::default()
-    };
+    let clamp = TextureOptions::default()
+        .with_s_wrap(WrapMode::Clamp)
+        .with_t_wrap(WrapMode::Clamp)
+        .with_interpolation(InterpolationMode::Closest)
+        .with_mip_mode(MipMode::None);
 
     let outside = 1.5_f32;
     let black_value = sample(&black, outside);
@@ -329,11 +320,9 @@ fn options_change_the_result() {
     );
 
     // fill supplies channels the texture does not have.
-    let filled = TextureOptions {
-        first_channel: 0,
-        fill: 0.75,
-        ..TextureOptions::default()
-    };
+    let filled = TextureOptions::default()
+        .with_first_channel(0)
+        .with_fill(0.75);
     let mut many = [0.0_f32; 8];
     textures
         .texture(
@@ -474,10 +463,7 @@ fn a_lookup_is_bounded_by_what_the_texture_has() {
     // A subimage the file does not have. One is already past the end of an
     // ordinary .tx; cube faces are the legitimate use of the field.
     for subimage in [1_u32, 2, 1_000_000] {
-        let options = TextureOptions {
-            subimage,
-            ..TextureOptions::default()
-        };
+        let options = TextureOptions::default().with_subimage(subimage);
         let error = textures
             .texture(&path, &options, 0.5, 0.5, derivatives, &mut rgb)
             .expect_err("this texture has one subimage");
@@ -486,10 +472,7 @@ fn a_lookup_is_bounded_by_what_the_texture_has() {
 
     // A first channel at or past the end.
     for first_channel in [3_u32, 4, 64, 1_000_000] {
-        let options = TextureOptions {
-            first_channel,
-            ..TextureOptions::default()
-        };
+        let options = TextureOptions::default().with_first_channel(first_channel);
         let error = textures
             .texture(&path, &options, 0.5, 0.5, derivatives, &mut rgb)
             .expect_err("this texture has three channels");
@@ -500,10 +483,7 @@ fn a_lookup_is_bounded_by_what_the_texture_has() {
     // option at all: this is the default options and a long slice. It stays
     // legal, because the extra channels are documented to take the fill value,
     // but the channels that do not exist must not come from the tile.
-    let filled = TextureOptions {
-        fill: 0.75,
-        ..TextureOptions::default()
-    };
+    let filled = TextureOptions::default().with_fill(0.75);
     let mut many = vec![-1.0_f32; 100_000];
     textures
         .texture(&path, &filled, 0.5, 0.5, derivatives, &mut many)
@@ -543,10 +523,7 @@ fn missing_color_answers_for_lost_textures() {
     let textures = TextureSystem::new().unwrap();
     let derivatives = Derivatives::uniform(1.0 / 64.0);
 
-    let options = TextureOptions {
-        missing_color: Some(vec![0.25, 0.5, 0.75]),
-        ..TextureOptions::default()
-    };
+    let options = TextureOptions::default().with_missing_color(Some(vec![0.25, 0.5, 0.75]));
 
     // A file that was never made: the missing color, reported as success.
     let lost = scratch.file("never-made.tx");
@@ -570,10 +547,7 @@ fn missing_color_answers_for_lost_textures() {
     assert!(rgb.iter().all(|v| v.is_finite()));
 
     // One value for a three-channel lookup cannot cover the result.
-    let short = TextureOptions {
-        missing_color: Some(vec![1.0]),
-        ..TextureOptions::default()
-    };
+    let short = TextureOptions::default().with_missing_color(Some(vec![1.0]));
     let error = textures
         .texture(&lost, &short, 0.5, 0.5, derivatives, &mut rgb)
         .unwrap_err();
@@ -670,10 +644,7 @@ fn missing_color_covers_corrupt_files_but_not_declined_probes() {
     std::fs::write(&corrupt, b"garbage that is not a texture").unwrap();
 
     let textures = TextureSystem::new().unwrap();
-    let options = TextureOptions {
-        missing_color: Some(vec![0.1, 0.2, 0.3]),
-        ..TextureOptions::default()
-    };
+    let options = TextureOptions::default().with_missing_color(Some(vec![0.1, 0.2, 0.3]));
     let mut rgb = [0.0_f32; 3];
     textures
         .texture(
@@ -725,10 +696,7 @@ fn handle_lookups_match_by_name_lookups() {
 
     // The same bounds the by-name path refuses, refused through the handle.
     let mut rgb = [0.0_f32; 3];
-    let bad_subimage = TextureOptions {
-        subimage: 5,
-        ..TextureOptions::default()
-    };
+    let bad_subimage = TextureOptions::default().with_subimage(5);
     let error = handle
         .texture(&bad_subimage, 0.5, 0.5, derivatives, &mut rgb)
         .unwrap_err();
@@ -736,10 +704,7 @@ fn handle_lookups_match_by_name_lookups() {
         error.to_string().contains("subimage"),
         "unexpected error: {error}"
     );
-    let bad_channel = TextureOptions {
-        first_channel: 99,
-        ..TextureOptions::default()
-    };
+    let bad_channel = TextureOptions::default().with_first_channel(99);
     let error = handle
         .texture(&bad_channel, 0.5, 0.5, derivatives, &mut rgb)
         .unwrap_err();
@@ -798,10 +763,7 @@ fn handles_resolve_udim_patterns() {
     assert!(handle
         .texture(&options, 7.5, 3.5, derivatives, &mut rgb)
         .is_err());
-    let with_missing = TextureOptions {
-        missing_color: Some(vec![0.2, 0.4, 0.6]),
-        ..TextureOptions::default()
-    };
+    let with_missing = TextureOptions::default().with_missing_color(Some(vec![0.2, 0.4, 0.6]));
     handle
         .texture(&with_missing, 7.5, 3.5, derivatives, &mut rgb)
         .unwrap();
@@ -826,10 +788,7 @@ fn missing_fills_are_exact_and_malformed_patterns_are_errors() {
     // Six distinct missing-color values through a six-channel lookup of a
     // file that was never made: every value lands, none repeat.
     let color = vec![0.1_f32, 0.2, 0.3, 0.4, 0.5, 0.6];
-    let options = TextureOptions {
-        missing_color: Some(color.clone()),
-        ..TextureOptions::default()
-    };
+    let options = TextureOptions::default().with_missing_color(Some(color.clone()));
     let mut wide = [0.0_f32; 6];
     textures
         .texture(

@@ -62,7 +62,7 @@ fn reads_a_deep_image_and_its_samples() {
     }
 
     assert_eq!(deep.dimensions(), spec.dimensions());
-    assert_eq!(deep.channel_count(), spec.channel_count() as usize);
+    assert_eq!(deep.channel_count(), spec.channel_count());
     assert_eq!(
         deep.pixel_count(),
         u64::from(spec.dimensions()[0]) * u64::from(spec.dimensions()[1])
@@ -72,13 +72,13 @@ fn reads_a_deep_image_and_its_samples() {
     let depth = deep
         .z_channel()
         .expect("a deep image from a renderer should have Z");
-    assert_eq!(deep.channels()[depth].name(), "Z");
+    assert_eq!(deep.channels()[depth as usize].name(), "Z");
 
     // Walk the image for a pixel that actually has samples, then read them.
     let origin = deep.origin();
     let [width, height, _] = deep.dimensions();
     let mut total_samples = 0u64;
-    let mut deepest = 0usize;
+    let mut deepest = 0u32;
     let mut sampled: Option<(i32, i32)> = None;
 
     for y in origin[1]..origin[1] + height as i32 {
@@ -100,7 +100,7 @@ fn reads_a_deep_image_and_its_samples() {
 
     let (x, y) = sampled.expect("some pixel should hold samples");
     let depths = deep.samples(x, y, depth).unwrap();
-    assert_eq!(depths.len(), deepest);
+    assert_eq!(depths.len() as u32, deepest);
     assert!(
         depths.iter().all(|value| value.is_finite()),
         "depths should be finite, got {depths:?}"
@@ -199,8 +199,8 @@ fn round_trips_a_deep_image_written_from_scratch() {
 
     // A pixel at (x, y) gets (x % 3) samples, so the image is sparse in the
     // way a real deep render is, with empty pixels among populated ones.
-    let sample_count = |x: i32| (x % 3) as usize;
-    let expected = |x: i32, y: i32, channel: usize, sample: usize| -> f32 {
+    let sample_count = |x: i32| (x % 3) as u32;
+    let expected = |x: i32, y: i32, channel: u32, sample: u32| -> f32 {
         (x as f32) + (y as f32) * 0.5 + (channel as f32) * 0.25 + (sample as f32) * 0.125
     };
 
@@ -431,8 +431,8 @@ fn streams_deep_scanline_bands_and_reads_them_back() {
         .unwrap()
         .as_deep();
 
-    let sample_count = |x: i32, y: i32| ((x + y) % 3) as usize;
-    let expected = |x: i32, y: i32, channel: usize, sample: usize| -> f32 {
+    let sample_count = |x: i32, y: i32| ((x + y) % 3) as u32;
+    let expected = |x: i32, y: i32, channel: u32, sample: u32| -> f32 {
         (x as f32) + (y as f32) * 0.5 + (channel as f32) * 0.25 + (sample as f32) * 0.125
     };
 
@@ -529,8 +529,8 @@ fn streams_deep_tile_blocks_and_reads_them_back() {
         .unwrap()
         .as_deep();
 
-    let sample_count = |x: i32, y: i32| ((x + y) % 3) as usize;
-    let expected = |x: i32, y: i32, channel: usize, sample: usize| -> f32 {
+    let sample_count = |x: i32, y: i32| ((x + y) % 3) as u32;
+    let expected = |x: i32, y: i32, channel: u32, sample: u32| -> f32 {
         (x as f32) - (y as f32) * 0.5 + (channel as f32) * 0.25 + (sample as f32) * 0.125
     };
 

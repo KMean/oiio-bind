@@ -262,10 +262,7 @@ fn text_with_nothing_to_draw_is_refused() {
 #[test]
 fn a_font_size_of_zero_is_refused() {
     let mut image = canvas(64, 32, 1);
-    let options = TextOptions {
-        size: 0,
-        ..TextOptions::default()
-    };
+    let options = TextOptions::default().with_size(0);
     assert!(algo::render_text(&mut image, [4, 20], "hello", &options, None).is_err());
     assert!(algo::text_size("hello", 0, "").is_err());
 }
@@ -275,14 +272,12 @@ fn a_font_size_of_zero_is_refused() {
 #[test]
 fn text_is_drawn_or_the_reason_is_reported() {
     let mut image = canvas(128, 48, 1);
-    let options = TextOptions {
-        size: 24,
-        color: &[1.0],
-        align_x: TextAlignX::Center,
-        align_y: TextAlignY::Center,
-        shadow: 0,
-        ..TextOptions::default()
-    };
+    let options = TextOptions::default()
+        .with_size(24)
+        .with_color(&[1.0])
+        .with_align_x(TextAlignX::Center)
+        .with_align_y(TextAlignY::Center)
+        .with_shadow(0);
 
     match algo::render_text(&mut image, [64, 24], "Ag", &options, None) {
         Ok(()) => {
@@ -322,10 +317,7 @@ fn text_is_drawn_or_the_reason_is_reported() {
 #[test]
 fn a_font_that_does_not_exist_is_reported() {
     let mut image = canvas(64, 32, 1);
-    let options = TextOptions {
-        font: "no-such-font-anywhere.ttf",
-        ..TextOptions::default()
-    };
+    let options = TextOptions::default().with_font("no-such-font-anywhere.ttf");
     let outcome = algo::render_text(&mut image, [4, 20], "hello", &options, None);
     assert!(outcome.is_err(), "an unfindable font should be an error");
     println!("missing font reported as: {}", outcome.unwrap_err());

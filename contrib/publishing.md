@@ -58,6 +58,22 @@ Then tag `v0.2.3` and push the tag.
 **If `cargo publish` returns 403**, the token has expired. Run `cargo login`
 and paste a new one from crates.io with the `publish-update` scope covering
 both crates. Never paste a token into a chat.
+## What the semver gate does not catch
+
+`cargo-semver-checks` runs in CI as of 2026-11-02 and is a floor, not a
+proof. Measured against the 0.3.0 batch: it caught the `#[non_exhaustive]`
+additions, and it did NOT catch `channel_count` changing from `i32` and
+`usize` to `u32`.
+
+Of its 261 lints at v0.51.0, the return-type ones are
+`inherent_method_now_returns_unit`, `function_now_returns_unit` and the
+`*_return_value_added` family: they cover `-> T` becoming `-> ()` and the
+reverse, and nothing else. **A return type changing from one concrete type
+to another passes silently.** So does a parameter type changing, as opposed
+to the parameter count, which `function_parameter_count_changed` does catch.
+
+Read the diff for signature changes. The gate is good at structural breaks:
+items removed, arity changed, a struct closed, a trait impl dropped.
 ## Order
 
 `oiio-sys` first, then `oiio`. The safe crate depends on the sys crate by

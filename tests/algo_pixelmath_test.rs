@@ -317,11 +317,7 @@ fn contrast_remap_rescales_levels() {
     algo::contrast_remap(
         &mut result,
         &source,
-        &ContrastRemap {
-            min: &[0.25],
-            max: &[0.75],
-            ..ContrastRemap::default()
-        },
+        &ContrastRemap::default().with_min(&[0.25]).with_max(&[0.75]),
         None,
     )
     .unwrap();
@@ -333,11 +329,9 @@ fn contrast_remap_rescales_levels() {
     algo::contrast_remap(
         &mut result,
         &source,
-        &ContrastRemap {
-            black: &[0.25],
-            white: &[0.75],
-            ..ContrastRemap::default()
-        },
+        &ContrastRemap::default()
+            .with_black(&[0.25])
+            .with_white(&[0.75]),
         None,
     )
     .unwrap();

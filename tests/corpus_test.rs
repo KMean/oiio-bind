@@ -397,7 +397,7 @@ fn reads_the_openexr_test_images() {
             // Now they are read, and counted only if that works.
             match input.read_deep_image() {
                 Ok(image) => {
-                    assert_eq!(image.channel_count(), spec.channel_count() as usize);
+                    assert_eq!(image.channel_count(), spec.channel_count());
                     deep += 1;
                 }
                 Err(error) => failures.push(format!("{}: deep read: {error}", path.display())),

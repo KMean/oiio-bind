@@ -157,7 +157,7 @@ impl DeepImage {
     /// written, so a total too large for the machine is reported there — or
     /// here, once the image's samples are already allocated and this call has
     /// to grow them.
-    pub fn set_sample_count(&mut self, x: i32, y: i32, count: usize) -> Result<()> {
+    pub fn set_sample_count(&mut self, x: i32, y: i32, count: u32) -> Result<()> {
         let pixel = self.pixel_index(x, y)?;
         let count = i32::try_from(count)
             .map_err(|_| Error::InvalidRoi("sample count exceeds i32::MAX".to_owned()))?;
@@ -177,8 +177,8 @@ impl DeepImage {
         &mut self,
         x: i32,
         y: i32,
-        channel: usize,
-        sample: usize,
+        channel: u32,
+        sample: u32,
         value: f32,
     ) -> Result<()> {
         let (pixel, channel, sample) = self.address(x, y, channel, sample)?;
@@ -201,8 +201,8 @@ impl DeepImage {
         &mut self,
         x: i32,
         y: i32,
-        channel: usize,
-        sample: usize,
+        channel: u32,
+        sample: u32,
         value: u32,
     ) -> Result<()> {
         let (pixel, channel, sample) = self.address(x, y, channel, sample)?;
@@ -424,8 +424,11 @@ impl DeepImage {
     }
 
     /// Number of channels per sample.
-    pub fn channel_count(&self) -> usize {
-        self.channels.len()
+    ///
+    /// `u32` to match every other `channel_count` in the crate, and the
+    /// channel indices the API takes.
+    pub fn channel_count(&self) -> u32 {
+        self.channels.len() as u32
     }
 
     /// Total number of pixels, each of which holds its own sample list.
@@ -434,31 +437,31 @@ impl DeepImage {
     }
 
     /// Index of the depth channel, conventionally `Z`.
-    pub fn z_channel(&self) -> Option<usize> {
+    pub fn z_channel(&self) -> Option<u32> {
         self.channel_index(sys::deepdata::deepdata_z_channel(self.inner()))
     }
 
     /// Index of the far-depth channel, conventionally `Zback`.
-    pub fn z_back_channel(&self) -> Option<usize> {
+    pub fn z_back_channel(&self) -> Option<u32> {
         self.channel_index(sys::deepdata::deepdata_z_back_channel(self.inner()))
     }
 
     /// Index of the alpha channel.
-    pub fn alpha_channel(&self) -> Option<usize> {
+    pub fn alpha_channel(&self) -> Option<u32> {
         self.channel_index(sys::deepdata::deepdata_a_channel(self.inner()))
     }
 
     /// How many samples the pixel at `(x, y)` holds, which may be zero.
-    pub fn sample_count(&self, x: i32, y: i32) -> Result<usize> {
+    pub fn sample_count(&self, x: i32, y: i32) -> Result<u32> {
         let pixel = self.pixel_index(x, y)?;
-        Ok(sys::deepdata::deepdata_samples(self.inner(), pixel).max(0) as usize)
+        Ok(sys::deepdata::deepdata_samples(self.inner(), pixel).max(0) as u32)
     }
 
     /// One sample's value, converted to `f32`.
     ///
     /// Use [`DeepImage::value_uint`] for channels whose format is an
     /// unsigned integer, where converting would lose the top bits.
-    pub fn value(&self, x: i32, y: i32, channel: usize, sample: usize) -> Result<f32> {
+    pub fn value(&self, x: i32, y: i32, channel: u32, sample: u32) -> Result<f32> {
         let (pixel, channel, sample) = self.address(x, y, channel, sample)?;
         Ok(sys::deepdata::deepdata_deep_value(
             self.inner(),
@@ -469,7 +472,7 @@ impl DeepImage {
     }
 
     /// One sample's value as an unsigned integer.
-    pub fn value_uint(&self, x: i32, y: i32, channel: usize, sample: usize) -> Result<u32> {
+    pub fn value_uint(&self, x: i32, y: i32, channel: u32, sample: u32) -> Result<u32> {
         let (pixel, channel, sample) = self.address(x, y, channel, sample)?;
         Ok(sys::deepdata::deepdata_deep_value_uint(
             self.inner(),
@@ -480,16 +483,16 @@ impl DeepImage {
     }
 
     /// Every sample of one channel at `(x, y)`, in depth order as stored.
-    pub fn samples(&self, x: i32, y: i32, channel: usize) -> Result<Vec<f32>> {
+    pub fn samples(&self, x: i32, y: i32, channel: u32) -> Result<Vec<f32>> {
         let count = self.sample_count(x, y)?;
         (0..count)
             .map(|sample| self.value(x, y, channel, sample))
             .collect()
     }
 
-    fn channel_index(&self, index: i32) -> Option<usize> {
-        let index = usize::try_from(index).ok()?;
-        (index < self.channels.len()).then_some(index)
+    fn channel_index(&self, index: i32) -> Option<u32> {
+        let index = u32::try_from(index).ok()?;
+        ((index as usize) < self.channels.len()).then_some(index)
     }
 
     /// Map an image coordinate onto the linear pixel index OpenImageIO uses.
@@ -514,15 +517,15 @@ impl DeepImage {
         Ok(row * i64::from(self.dimensions[0]) + column)
     }
 
-    fn address(&self, x: i32, y: i32, channel: usize, sample: usize) -> Result<(i64, i32, i32)> {
+    fn address(&self, x: i32, y: i32, channel: u32, sample: u32) -> Result<(i64, i32, i32)> {
         let pixel = self.pixel_index(x, y)?;
-        if channel >= self.channels.len() {
+        if channel as usize >= self.channels.len() {
             return Err(Error::InvalidRoi(format!(
                 "channel {channel} is outside the image's {} channels",
                 self.channels.len()
             )));
         }
-        let count = sys::deepdata::deepdata_samples(self.inner(), pixel).max(0) as usize;
+        let count = sys::deepdata::deepdata_samples(self.inner(), pixel).max(0) as u32;
         if sample >= count {
             return Err(Error::InvalidRoi(format!(
                 "sample {sample} is outside the {count} samples at ({x}, {y})"
