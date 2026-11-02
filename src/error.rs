@@ -114,6 +114,21 @@ pub enum Error {
         /// The type the tile actually holds.
         actual: crate::PixelFormat,
     },
+
+    /// A string did not name any value of the expected type.
+    ///
+    /// Returned by the [`FromStr`](std::str::FromStr) implementations, which
+    /// exist so a value can come from a command line or a configuration file
+    /// rather than being hand-matched by the caller.
+    #[error("{input:?} is not a known {kind}; expected one of: {expected}")]
+    UnknownName {
+        /// What kind of value was being parsed, such as `pixel format`.
+        kind: &'static str,
+        /// The string that did not match.
+        input: String,
+        /// Every name that would have been accepted, comma separated.
+        expected: String,
+    },
 }
 
 impl Error {

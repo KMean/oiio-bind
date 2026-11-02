@@ -68,6 +68,51 @@
 
 use oiio_sys as sys;
 
+/// Give a fieldless enum one table of names, and derive everything from it.
+///
+/// `name` is the single source of truth: [`Display`](std::fmt::Display)
+/// prints it and [`FromStr`](std::str::FromStr) parses it, case
+/// insensitively, so a value can come from a command line or a
+/// configuration file. The names are OpenImageIO's own wherever OpenImageIO
+/// has one, so a string written for `oiiotool` means the same thing here.
+macro_rules! enum_names {
+    ($kind:literal, $name:ident { $($variant:ident => $text:literal),+ $(,)? }) => {
+        impl $name {
+            #[doc = concat!("The name this ", $kind, " is known by.")]
+            #[must_use]
+            pub const fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $text,)+
+                }
+            }
+
+            #[doc = concat!("Every name a ", $kind, " can be parsed from or printed as.")]
+            pub const NAMES: &'static [&'static str] = &[$($text),+];
+        }
+
+        impl ::std::fmt::Display for $name {
+            fn fmt(&self, formatter: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                formatter.write_str(self.name())
+            }
+        }
+
+        impl ::std::str::FromStr for $name {
+            type Err = $crate::Error;
+
+            fn from_str(text: &str) -> ::std::result::Result<Self, Self::Err> {
+                $(if text.eq_ignore_ascii_case($text) {
+                    return Ok(Self::$variant);
+                })+
+                Err($crate::Error::UnknownName {
+                    kind: $kind,
+                    input: text.to_owned(),
+                    expected: Self::NAMES.join(", "),
+                })
+            }
+        }
+    };
+}
+
 pub mod algo;
 pub mod config;
 

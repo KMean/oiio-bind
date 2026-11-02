@@ -53,24 +53,6 @@ impl PixelFormat {
         matches!(self, Self::U8 | Self::U16 | Self::F16 | Self::F32)
     }
 
-    /// The OpenImageIO name for this format, such as `"half"` or `"uint16"`.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::U8 => "uint8",
-            Self::I8 => "int8",
-            Self::U16 => "uint16",
-            Self::I16 => "int16",
-            Self::U32 => "uint32",
-            Self::I32 => "int32",
-            Self::U64 => "uint64",
-            Self::I64 => "int64",
-            Self::F16 => "half",
-            Self::F32 => "float",
-            Self::F64 => "double",
-            Self::Other => "unknown",
-        }
-    }
-
     pub(crate) fn base_type(self) -> BaseType {
         match self {
             Self::U8 => BaseType::UInt8,
@@ -116,12 +98,6 @@ impl PixelFormat {
             b if b == BaseType::Float64 as u8 => Self::F64,
             _ => Self::Other,
         }
-    }
-}
-
-impl std::fmt::Display for PixelFormat {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.name())
     }
 }
 
@@ -185,3 +161,18 @@ mod tests {
         }
     }
 }
+
+enum_names!("pixel format", PixelFormat {
+    U8 => "uint8",
+    I8 => "int8",
+    U16 => "uint16",
+    I16 => "int16",
+    U32 => "uint32",
+    I32 => "int32",
+    U64 => "uint64",
+    I64 => "int64",
+    F16 => "half",
+    F32 => "float",
+    F64 => "double",
+    Other => "unknown",
+});

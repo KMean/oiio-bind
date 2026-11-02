@@ -1079,12 +1079,14 @@ pub struct ImageCacheBuilder {
 
 impl ImageCacheBuilder {
     /// Set the approximate memory budget for the internal tile cache, in MB.
+    #[must_use]
     pub fn max_memory_mb(mut self, megabytes: f32) -> Self {
         self.max_memory_mb = Some(megabytes);
         self
     }
 
     /// Set the approximate maximum number of simultaneously open files.
+    #[must_use]
     pub fn max_open_files(mut self, count: u32) -> Self {
         self.max_open_files = Some(count);
         self
@@ -1092,6 +1094,7 @@ impl ImageCacheBuilder {
 
     /// Configure virtual tile dimensions for scanline images. Zero disables
     /// virtual tiling.
+    #[must_use]
     pub fn autotile(mut self, size: u32) -> Self {
         self.autotile = Some(size);
         self
@@ -1099,6 +1102,7 @@ impl ImageCacheBuilder {
 
     /// Preserve unassociated-alpha input instead of automatically associating
     /// its color channels during reads.
+    #[must_use]
     pub fn unassociated_alpha(mut self, enabled: bool) -> Self {
         self.unassociated_alpha = Some(enabled);
         self

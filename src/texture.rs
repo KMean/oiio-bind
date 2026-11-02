@@ -38,17 +38,6 @@ impl WrapMode {
             Self::Mirror => 4,
         }
     }
-
-    /// The OpenImageIO name for this mode, as a texture file records it.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Default => "default",
-            Self::Black => "black",
-            Self::Clamp => "clamp",
-            Self::Periodic => "periodic",
-            Self::Mirror => "mirror",
-        }
-    }
 }
 
 /// How mip levels are chosen.
@@ -182,24 +171,28 @@ impl TextureConfig {
     /// request for any integer format into `half`. Neither is an error, and
     /// neither is reported, so read the written file's specification back if
     /// the format matters.
+    #[must_use]
     pub fn with_format(mut self, format: PixelFormat) -> Self {
         self.format = Some(format);
         self
     }
 
     /// Tile dimensions. OpenImageIO's default is 64x64x1.
+    #[must_use]
     pub fn with_tile_size(mut self, dimensions: [u32; 3]) -> Self {
         self.tile = Some(dimensions);
         self
     }
 
     /// The compression the output format should use. Default: `"zip"`.
+    #[must_use]
     pub fn with_compression(self, compression: &str) -> Self {
         self.with_attribute("compression", compression)
     }
 
     /// The wrap modes to record in the texture, which a lookup that asks for
     /// [`WrapMode::Default`] will then use. Default: black in both directions.
+    #[must_use]
     pub fn with_wrap_modes(self, s_wrap: WrapMode, t_wrap: WrapMode) -> Self {
         let modes = format!("{},{}", s_wrap.name(), t_wrap.name());
         self.with_attribute("wrapmodes", modes)
@@ -207,6 +200,7 @@ impl TextureConfig {
 
     /// The filter to resample with when building mip levels, such as
     /// `"lanczos3"` or `"box"`. Unset, OpenImageIO resamples bilinearly.
+    #[must_use]
     pub fn with_filter(self, filter_name: &str) -> Self {
         self.with_attribute("maketx:filtername", filter_name)
     }
@@ -216,35 +210,41 @@ impl TextureConfig {
     /// A texture without one still reads, but every lookup pays for
     /// filtering the full resolution, which is the cost the pyramid exists to
     /// avoid.
+    #[must_use]
     pub fn with_mipmap(self, enabled: bool) -> Self {
         self.with_attribute("maketx:nomipmap", i32::from(!enabled))
     }
 
     /// Whether to resize up to a power of two first. Default: false.
+    #[must_use]
     pub fn with_resize_to_power_of_two(self, enabled: bool) -> Self {
         self.with_attribute("maketx:resize", i32::from(enabled))
     }
 
     /// Whether to shrink an image that is entirely one colour down to a tiny
     /// one. Default: false.
+    #[must_use]
     pub fn with_constant_color_detect(self, enabled: bool) -> Self {
         self.with_attribute("maketx:constant_color_detect", i32::from(enabled))
     }
 
     /// Whether to collapse an RGB image whose channels are equal everywhere
     /// to a single channel. Default: false.
+    #[must_use]
     pub fn with_monochrome_detect(self, enabled: bool) -> Self {
         self.with_attribute("maketx:monochrome_detect", i32::from(enabled))
     }
 
     /// Whether to drop an alpha channel that is 1.0 in every pixel.
     /// Default: false.
+    #[must_use]
     pub fn with_opaque_detect(self, enabled: bool) -> Self {
         self.with_attribute("maketx:opaque_detect", i32::from(enabled))
     }
 
     /// Whether to divide colour by alpha before converting colour space and
     /// multiply it back after. Default: false.
+    #[must_use]
     pub fn with_unpremult(self, enabled: bool) -> Self {
         self.with_attribute("maketx:unpremult", i32::from(enabled))
     }
@@ -253,6 +253,7 @@ impl TextureConfig {
     ///
     /// The names are the ones the active OpenColorIO configuration defines;
     /// [`ColorConfig`](crate::ColorConfig) reports them.
+    #[must_use]
     pub fn with_color_conversion(self, from_space: &str, to_space: &str) -> Self {
         self.with_attribute("maketx:incolorspace", from_space)
             .with_attribute("maketx:outcolorspace", to_space)
@@ -265,6 +266,7 @@ impl TextureConfig {
     /// `ImageBufAlgo::channels`, which builds the default channel order with
     /// `alloca`, so the count is four bytes of stack each and an unbounded one
     /// overflows the stack rather than failing.
+    #[must_use]
     pub fn with_channel_count(self, channels: u32) -> Self {
         let channels = i32::try_from(channels.min(Self::MAX_CHANNELS)).unwrap_or(i32::MAX);
         self.with_attribute("maketx:nchannels", channels)
@@ -277,6 +279,7 @@ impl TextureConfig {
 
     /// Sharpen by this contrast metric when building mip levels.
     /// Default: 0.0, meaning no sharpening.
+    #[must_use]
     pub fn with_sharpen(self, amount: f32) -> Self {
         self.with_attribute("maketx:sharpen", amount)
     }
@@ -284,11 +287,13 @@ impl TextureConfig {
     /// Whether to compress and expand the range around each resize, which
     /// reduces the ringing a filter with negative lobes causes on high dynamic
     /// range images. Default: false.
+    #[must_use]
     pub fn with_highlight_compensation(self, enabled: bool) -> Self {
         self.with_attribute("maketx:highlightcomp", i32::from(enabled))
     }
 
     /// Whether a NaN anywhere in the input is an error. Default: false.
+    #[must_use]
     pub fn with_nan_check(self, enabled: bool) -> Self {
         self.with_attribute("maketx:checknan", i32::from(enabled))
     }
@@ -1156,3 +1161,34 @@ impl std::fmt::Debug for TextureSystem {
             .finish_non_exhaustive()
     }
 }
+
+enum_names!("wrap mode", WrapMode {
+    Default => "default",
+    Black => "black",
+    Clamp => "clamp",
+    Periodic => "periodic",
+    Mirror => "mirror",
+});
+
+enum_names!("mip mode", MipMode {
+    Default => "default",
+    None => "none",
+    OneLevel => "one_level",
+    Trilinear => "trilinear",
+    Anisotropic => "anisotropic",
+});
+
+enum_names!("interpolation mode", InterpolationMode {
+    Closest => "closest",
+    Bilinear => "bilinear",
+    Bicubic => "bicubic",
+    SmartBicubic => "smart_bicubic",
+});
+
+enum_names!("texture mode", TextureMode {
+    Texture => "texture",
+    Shadow => "shadow",
+    LatLongEnvironment => "latlong_environment",
+    LightProbe => "light_probe",
+    BumpWithSlopes => "bump_with_slopes",
+});

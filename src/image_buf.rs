@@ -1494,3 +1494,18 @@ fn level_index(index: u32) -> Result<i32> {
     i32::try_from(index)
         .map_err(|_| Error::InvalidImageSpec("image level index exceeds i32::MAX".to_owned()))
 }
+
+enum_names!("wrap mode", Wrap {
+    Default => "default",
+    Black => "black",
+    Clamp => "clamp",
+    Periodic => "periodic",
+    Mirror => "mirror",
+});
+
+enum_names!("storage kind", Storage {
+    Uninitialized => "uninitialized",
+    Local => "local",
+    App => "app",
+    Cache => "cache",
+});

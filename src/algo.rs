@@ -2116,16 +2116,6 @@ pub enum FitMode {
     Height,
 }
 
-impl FitMode {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Letterbox => "letterbox",
-            Self::Width => "width",
-            Self::Height => "height",
-        }
-    }
-}
-
 /// Where one output channel's values come from in [`channels`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ChannelSource {
@@ -2632,15 +2622,6 @@ pub enum MosaicPattern {
     XTrans,
 }
 
-impl MosaicPattern {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Bayer => "bayer",
-            Self::XTrans => "xtrans",
-        }
-    }
-}
-
 /// Decode a one-channel camera mosaic into a three-channel colour image.
 ///
 /// `layout` names the filter arrangement, `"RGGB"` and its rotations for
@@ -3027,3 +3008,34 @@ pub fn color_count(
         Err(Error::operation(OPERATION, message))
     }
 }
+
+enum_names!("horizontal text alignment", TextAlignX {
+    Left => "left",
+    Right => "right",
+    Center => "center",
+});
+
+enum_names!("vertical text alignment", TextAlignY {
+    Baseline => "baseline",
+    Top => "top",
+    Bottom => "bottom",
+    Center => "center",
+});
+
+enum_names!("fit mode", FitMode {
+    Letterbox => "letterbox",
+    Width => "width",
+    Height => "height",
+});
+
+enum_names!("non-finite fix", NonFiniteFix {
+    None => "none",
+    Black => "black",
+    Box3 => "box3",
+    Error => "error",
+});
+
+enum_names!("mosaic pattern", MosaicPattern {
+    Bayer => "bayer",
+    XTrans => "xtrans",
+});

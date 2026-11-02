@@ -62,6 +62,7 @@ impl ImageSpec {
     /// This also clears any per-channel formats, mirroring OpenImageIO's own
     /// `set_format`, so the two fields cannot silently disagree; set the
     /// overall format first and the per-channel list after.
+    #[must_use]
     pub fn with_format(mut self, format: PixelFormat) -> Self {
         self.format = format;
         self.channel_formats = None;
@@ -101,6 +102,7 @@ impl ImageSpec {
     /// was — which is how overscan is expressed, and also how the two end up
     /// disagreeing if that was not the intent. Use
     /// [`with_full_window`](Self::with_full_window) to move both.
+    #[must_use]
     pub fn with_origin(mut self, origin: [i32; 3]) -> Self {
         [self.x, self.y, self.z] = origin;
         self
@@ -183,6 +185,7 @@ impl ImageSpec {
     /// and read with
     /// [`ImageInput::read_deep_image`](crate::ImageInput::read_deep_image);
     /// the contiguous pixel calls refuse it.
+    #[must_use]
     pub fn as_deep(mut self) -> Self {
         self.deep = true;
         self
