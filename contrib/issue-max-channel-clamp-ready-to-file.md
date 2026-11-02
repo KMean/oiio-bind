@@ -57,7 +57,7 @@ gives `roi.chend = 3`, `:170` raises it to 4, and `max_impl` writes `r[3]`
 into a 3 channel destination. `Iterator::operator[]` is equally unchecked, so
 that is an out of bounds write.
 
-**This is not a guess about intent**
+**The block below the clamp describes the other behaviour**
 
 The block immediately below the clamp (`:175-188`) is byte identical to
 `min`'s (`:78-91`), comment included:
@@ -77,8 +77,8 @@ function and still states the intended behaviour.
 
 That block is also unreachable in `max`. Its guard is
 `roi.chend < origroi.chend`, and `std::max` can only leave `roi.chend` equal
-or larger, so the copy that fills the non common channels never runs, and the
-`OIIO_ASSERT` that would have caught the out of bounds write never evaluates.
+or larger, so the copy that fills the non common channels does not run and the
+`OIIO_ASSERT(roi.chend <= dst.nchannels())` inside it does not evaluate.
 
 Both the clamp and the kernel arrived with the function in `20fecc1da`, "IBA
 min and max (per-pixel operations)" (#2470, 2020-01-24), and neither line has
@@ -151,24 +151,22 @@ roi.chend = std::min(roi.chend, std::min(A.nchannels(), B.nchannels()));
 ```
 
 That makes the line identical to `min`, `absdiff`, `add` and `sub`, and it
-restores `:175-188` to reachability, so the non common channels are copied
-from whichever input has them. That is what the comment there already
-describes and what `min` already does. No other change is needed, and `min`
-demonstrates the corrected behaviour on the same inputs today.
+brings `:175-188` back into play, so the non common channels are copied from
+whichever input has them. `min` already behaves that way on the same inputs,
+which is the closest thing to a reference I can offer.
 
-**Why it has lasted**
+**Test coverage**
 
-The mismatched channel case has no test coverage. `testsuite/oiiotool/run.py:137-139`
-is the only `--max` image-against-image test, and it feeds two 3 channel
-patterns, so `A.nchannels() == B.nchannels()` and the clamp cannot be
-observed either way. The `--min` test three lines above it does the same.
-Nothing else in the testsuite exercises either call with differing channel
-counts, and there is no `TODO` or `FIXME` near the clamp.
+`testsuite/oiiotool/run.py:137-139` is the only `--max` image-against-image
+test, and it feeds two 3 channel patterns, so `A.nchannels() == B.nchannels()`
+and the clamp does not come into play. The `--min` test three lines above does
+the same. I did not find anything else in the testsuite that exercises either
+call with differing channel counts.
 
-A regression test is two images differing in channel count through `--max`,
-asserting the extra channel survives, placed beside the existing case at
-`testsuite/oiiotool/run.py:137`. Adding the same for `--min` would pin the
-behaviour this report treats as correct.
+A regression test would be two images differing in channel count through
+`--max`, asserting the extra channel survives, beside the existing case at
+`:137`. The same for `--min` would pin the behaviour this report is treating
+as correct.
 
 <details>
 <summary>Full reproduction program</summary>
