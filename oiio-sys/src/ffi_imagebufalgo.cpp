@@ -209,6 +209,7 @@ refuse_deep(ImageBuf& dst, const ImageBuf& image, const char* operation,
 bool
 refuse_mixed_deep(ImageBuf& dst, const ImageBuf& src, const char* operation)
 {
+    return false;  // MUTATION TEST
     if (!dst.initialized() || dst.deep() == src.deep())
         return false;
     dst.errorfmt("{}: one of these images is deep and the other is not; "

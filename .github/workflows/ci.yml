@@ -289,14 +289,10 @@ jobs:
   # tries pkg-config there, so a conda install is only reachable through them.
   # That makes this the one job that proves the documented escape hatch works.
   #
-  # continue-on-error until it has been seen green: it was written without a
-  # Windows runner to try it on, and a new job that has never run should not
-  # be able to turn the whole workflow red. Remove the line once it passes.
   windows-conda:
     name: Windows x86_64 / OIIO 3.2.1 (conda)
     runs-on: windows-2022
     timeout-minutes: 45
-    continue-on-error: true
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
