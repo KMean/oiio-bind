@@ -349,6 +349,15 @@ and `ImageHandle` are `Send + Sync`, as are `TextureSystem` and
 `TextureHandle`; `Perthread` is deliberately neither, because OpenImageIO
 states that one "should NEVER be shared between running threads".
 
+**Pixels can be borrowed rather than copied.** `ImageBuf::pixels` and
+`pixels_mut` hand back a slice into the buffer's own memory, so a frame can
+go to another Rust library without a copy. The slice borrows the buffer, and
+every method that could reallocate takes `&mut self`, so the compiler refuses
+to let one outlive the pixels it points at. They return an error rather than
+a slice when the pixels are not the buffer's to lend: a deep image, an unread
+or cache-backed buffer, a type that is not the one stored, or rows that are
+not contiguous. `get_pixels_into` still copies, and still converts.
+
 The image values, `ImageBuf`, `ImageInput`, `ImageOutput`, `DeepImage` and
 `ColorConfig`, are `Send` but not `Sync`: each can be built on one thread and
 used on another, but not shared between two at once. That is the shape

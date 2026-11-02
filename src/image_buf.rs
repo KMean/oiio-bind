@@ -443,10 +443,125 @@ impl ImageBuf {
         sys::imagebuf::imagebuf_nchannels(self.inner())
     }
 
+    /// Borrow the buffer's own pixel memory, without copying it.
+    ///
+    /// This is the way to hand an image to the rest of the Rust ecosystem.
+    /// [`get_pixels_into`](Self::get_pixels_into) copies and can convert; this
+    /// does neither, so `T` has to be exactly the format the buffer holds, and
+    /// a 4K float RGBA frame costs nothing instead of 132 MB.
+    ///
+    /// The slice borrows the buffer, so nothing can reallocate underneath it:
+    /// every method that could is `&mut self`.
+    ///
+    /// Returns an error rather than a slice when the pixels are not there to
+    /// borrow:
+    ///
+    /// * the image is deep, and has samples rather than pixels;
+    /// * its pixels have not been read, or belong to an
+    ///   [`ImageCache`](crate::ImageCache) rather than to the buffer;
+    /// * `T` is not the format the buffer holds, since nothing is converted;
+    /// * the rows are not contiguous, which OpenImageIO permits and which a
+    ///   flat slice cannot describe. [`get_pixels_into`](Self::get_pixels_into)
+    ///   handles that case.
+    ///
+    /// ```no_run
+    /// # fn main() -> oiio::Result<()> {
+    /// let image = oiio::ImageBuf::from_path("frame.exr".as_ref())?;
+    /// let pixels: &[f32] = image.pixels()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn pixels<T: Pixel>(&self) -> Result<&[T]> {
+        const OPERATION: &str = "borrow image buffer pixels";
+        let count = self.borrowable_element_count::<T>(OPERATION)?;
+
+        // SAFETY: `borrowable_element_count` has established that the buffer
+        // owns local, contiguous, already-read pixels whose format is exactly
+        // `T`, and has derived `count` from that same specification. The slice
+        // borrows `self`, and every method that could reallocate or free the
+        // pixels takes `&mut self`, so it cannot be invalidated while the
+        // borrow lives.
+        let data = unsafe { sys::imagebuf::imagebuf_localpixels(self.inner()) };
+        Ok(unsafe { std::slice::from_raw_parts(data.cast::<T>(), count) })
+    }
+
+    /// Borrow the buffer's own pixel memory for writing, without copying it.
+    ///
+    /// The mutable counterpart of [`pixels`](Self::pixels), with the same
+    /// conditions and the same failures.
+    pub fn pixels_mut<T: Pixel>(&mut self) -> Result<&mut [T]> {
+        const OPERATION: &str = "borrow image buffer pixels for writing";
+        let count = self.borrowable_element_count::<T>(OPERATION)?;
+
+        // SAFETY: as for `pixels`, and the `&mut self` borrow additionally
+        // excludes every other access to the buffer for the life of the slice.
+        let data = unsafe { sys::imagebuf::imagebuf_localpixels_mut(self.inner_mut()) };
+        Ok(unsafe { std::slice::from_raw_parts_mut(data.cast::<T>(), count) })
+    }
+
+    /// The conditions both borrows depend on, checked once.
+    ///
+    /// Returns how many `T` the buffer's local memory holds, having
+    /// established that borrowing it is sound.
+    fn borrowable_element_count<T: Pixel>(&self, operation: &'static str) -> Result<usize> {
+        self.require_flat(operation)?;
+
+        if !sys::imagebuf::imagebuf_pixels_valid(self.inner()) {
+            return Err(Error::operation(
+                operation,
+                "this buffer has no pixels yet; read it first".to_owned(),
+            ));
+        }
+
+        let spec = self.spec()?;
+        let actual = spec.format();
+        if actual != T::FORMAT {
+            return Err(Error::operation(
+                operation,
+                format!(
+                    "the buffer holds {actual:?} and nothing is converted when \
+                     borrowing; ask for {actual:?}, or use get_pixels_into to \
+                     convert to {:?}",
+                    T::FORMAT
+                ),
+            ));
+        }
+
+        // Null means the pixels are not the buffer's own: either it is backed
+        // by an ImageCache, which serves tiles on demand and owns them, or it
+        // has no storage at all.
+        if unsafe { sys::imagebuf::imagebuf_localpixels(self.inner()) }.is_null() {
+            return Err(Error::operation(
+                operation,
+                format!(
+                    "these pixels are not the buffer's to lend: its storage is \
+                     {:?}",
+                    self.storage()
+                ),
+            ));
+        }
+
+        // OpenImageIO does not promise contiguity, and says so where
+        // `localpixels` is documented. A flat slice cannot describe a buffer
+        // with gaps between its rows, so refuse rather than hand back a slice
+        // whose indices quietly mean the wrong pixels.
+        if !sys::imagebuf::imagebuf_contiguous(self.inner()) {
+            return Err(Error::operation(
+                operation,
+                "this buffer's rows are not contiguous, so a flat slice would \
+                 not describe it; use get_pixels_into"
+                    .to_owned(),
+            ));
+        }
+
+        spec.element_count()
+    }
+
     /// Copy a region out into a contiguous buffer.
     ///
     /// The destination length must exactly equal `roi.element_count()`, and
-    /// values are converted to `T` if the image holds another format.
+    /// values are converted to `T` if the image holds another format. To
+    /// borrow the pixels instead of copying them, see [`pixels`](Self::pixels).
     pub fn get_pixels_into<T: Pixel>(&self, roi: Roi, pixels: &mut [T]) -> Result<()> {
         self.require_flat("read image buffer pixels")?;
         self.require_region_inside(&roi)?;
