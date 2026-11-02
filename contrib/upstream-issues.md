@@ -30,6 +30,16 @@ on 2026-11-02, so **fifteen remain to decide on**. Full filed text in
 `contrib/issue-max-channel-clamp-ready-to-file.md`. **Three filed, two fixed
 so far.**
 
+**A sixteenth, found 2026-11-02 and not from the drafts:**
+`make_kernel("binomial", ...)` sizes its tap arrays from the extent asked
+for and indexes them over the odd-rounded image size, so an even or
+fractional extent reads past the allocation and a fractional one writes past
+it. Half of runs return a wrong kernel, variously a delta spike, a negative
+value a binomial cannot produce, or NaN. Guarded here as of `b3e300c`, in
+both `make_kernel` and `unsharp_mask`. Filing-ready text in
+`contrib/issue-binomial-kernel-ready-to-file.md`: no tracker duplicate, and
+no testsuite coverage of binomial at all, which is why it lasted.
+
 A note on how it got there, because the record should not flatter the
 process. The leftover/unguarded audit of 2026-11-02 reported this as a new
 finding, and it was presented as one. It is not: it is issue 4, drafted long
