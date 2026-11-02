@@ -399,10 +399,12 @@ cargo test --workspace --locked
 cargo test --workspace --release --locked
 ```
 
-GitHub Actions runs the optimized suite against OpenImageIO 3.1.14 on Linux,
-macOS, and Windows. The Windows job deliberately uses the vcpkg discovery path;
-the Unix jobs use `pkg-config`. The debug suite runs on Linux, since debug
-assertions and overflow checks only exist in that profile.
+GitHub Actions runs the optimized suite on Linux, macOS and Windows. Linux
+and macOS each build against both release lines, OpenImageIO 3.1.14 and
+3.2.1; Windows builds against 3.1.14 only, so 3.2 on Windows rests on local
+runs rather than on CI. The Windows job deliberately uses the vcpkg discovery
+path; the Unix jobs use `pkg-config`. The debug suite runs on Linux, since
+debug assertions and overflow checks only exist in that profile.
 
 ### Testing against real images
 

@@ -2,6 +2,121 @@
 
 This fork's changes, newest first.
 
+## 0.2.3 — 2026-11-02
+
+`oiio` moves to 0.2.3 and `oiio-sys` to 0.3.0. The theme is that the crate
+stopped being a single-threaded tool that owns its process, and became
+something a host or a service can embed: images can cross threads,
+OpenImageIO can be configured, and pixels can be handed to other Rust code
+without being copied first.
+
+**`oiio-sys` takes a minor bump rather than a patch** because three shims
+gained a required parameter. `imageinput_read_native_deep_scanlines`,
+`_deep_tiles` and `_deep_image` now take a `rust::String& error`. Nothing
+that only uses the `oiio` crate is affected; anything calling `oiio-sys`
+directly has to pass the extra argument.
+
+### The image values are `Send`
+
+`ImageBuf`, `ImageInput`, `ImageOutput`, `DeepImage` and `ColorConfig` could
+not leave the thread that made them, which ruled out the pattern this
+library's own domain assumes: a frame per worker, collected at the end.
+`paths.par_iter().map(ImageBuf::from_path)` did not compile, and nothing
+said why.
+
+All five are now `Send`. None is `Sync`, which is the honest line rather than
+a hedge: OpenImageIO supports moving these objects between threads and does
+not support two threads touching one. `ImageBuf` is the clearest case,
+because `void threads(int n) const { m_threads = n; }` writes a non-atomic
+`mutable int` through a `const` path, so a `&self` method in C++ is not
+read-only there.
+
+Each `unsafe impl` carries the upstream mechanism it rests on and states what
+it does not claim. Two things worth repeating here. `ImageBuf::write` reaches
+OpenImageIO's process-wide shared cache precisely *because* the buffer's own
+cache is null, which is harmless in a pure-crate process and is not created
+by `Send`. And OpenImageIO's error channel is thread-local, so a diagnostic
+raised before a move reads back empty after it.
+
+### `oiio::config`, for processes the crate does not own
+
+There was no way to tell OpenImageIO how much of the machine to use or what
+a file is allowed to ask for. A host already running its own thread pool had
+no knob, and a service reading files it did not create could not tighten a
+ceiling.
+
+The new module has typed functions for the settings that matter, and
+`set_attribute_int`/`_float`/`_string` for everything else:
+
+```rust,no_run
+# fn main() -> oiio::Result<()> {
+oiio::config::set_threads(4)?;
+oiio::config::set_limits(&oiio::config::Limits::current().with_channels(64))?;
+# Ok(()) }
+```
+
+Two details that are easy to get wrong and are therefore documented. `threads`
+reads back the *resolved* count, so after `set_threads(0)` it reports the
+number of cores rather than zero. And `limits:resolution` did not exist before
+OpenImageIO 3.1.19 (upstream #5297), so `Limits::resolution` is an
+`Option<u32>`: absent where the linked library has no such ceiling, and an
+error to set there rather than a silent no-op.
+
+`imagebuf:use_imagecache` is refused with a reason rather than passed through.
+Turning it on would make every file-backed `ImageBuf` a client of the shared
+cache, whose invalidation on drop would then land on arbitrary threads now
+that `ImageBuf` is `Send`.
+
+### Pixels can be borrowed instead of copied
+
+Every route out of an `ImageBuf` was a full copy. A 4K float RGBA frame is
+132 MB, paid on every handoff to another Rust library, which is most of the
+argument for having a binding rather than calling `oiiotool`.
+
+`ImageBuf::pixels` and `pixels_mut` return a slice into the buffer's own
+memory. The slice borrows the buffer, and every method that could reallocate
+takes `&mut self`, so the compiler refuses to let one outlive the pixels it
+points at.
+
+They return an error rather than a slice when the pixels are not the
+buffer's to lend: a deep image, an unread or cache-backed buffer, a type that
+is not the one stored, or rows that are not contiguous. That last one matters
+more than it looks: OpenImageIO says plainly that `localpixels` data need not
+be contiguous, and a flat slice cannot describe a buffer with gaps, so this
+refuses rather than quietly indexing the wrong pixels. `get_pixels_into`
+still copies, and still converts.
+
+### An exception boundary in the I/O shims
+
+`ffi_imageio.cpp` had no `catch` at all, while the other C++ translation
+units have forty-one between them. cxx wraps these shims `noexcept`, so an
+escaping exception is `std::terminate`: a process abort, in the one crate
+whose contract is that a mistake is a typed error.
+
+The three deep read paths now have one. They are the only place in that file
+where OpenImageIO sizes an allocation from the *file* rather than from a
+buffer this side validated, and `DeepData::init` resizes without a try/catch
+of its own. The ordinary reader paths defend themselves and the bounded reads
+are bounded by a caller-sized buffer, so the boundary belongs here rather
+than on all sixty-odd shims.
+
+The catch has not been observed firing. Of OpenEXR's 68 damaged fixtures
+exactly one is deep, and it reads cleanly. The mechanism is verified from
+upstream source; no test here proves a throw is caught.
+
+### Upstream
+
+Two further OpenImageIO defects found by this binding were filed. #5638, the
+colour engine writing `0.5 + 10 * src` into channels past the fourth, was
+fixed upstream within two days. #5645, `ImageBufAlgo::max` clamping its
+channel range with `std::max` where `min`, `absdiff`, `add` and `sub` all use
+`std::min`, is open. The binding already refused the affected `max` shapes.
+
+### Tests
+
+376 to 400. The new suites are `send_test`, `config_test` and
+`zero_copy_test`, and `corpus_test` now drives the deep read path against
+damaged fixtures where before it only drove the flat one.
 ## 0.2.2 — 2026-10-31
 
 `oiio` moves to 0.2.2 and `oiio-sys` to 0.2.1. No library behaviour changes:
