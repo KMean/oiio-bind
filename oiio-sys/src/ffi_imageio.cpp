@@ -1426,6 +1426,18 @@ attribute_int(const rust::Str name, const int value)
 }
 
 bool
+attribute_string(const rust::Str name, const rust::Str value)
+{
+    // OIIO's string overload wants a TypeString and the address of a C string,
+    // so the value has to be null-terminated and must outlive the call. A
+    // rust::Str is neither owned nor terminated, hence the copy.
+    const std::string owned(value.data(), value.length());
+    const char* pointer = owned.c_str();
+    return OIIO::attribute(std::string_view(name.data(), name.length()),
+                           OIIO::TypeString, &pointer);
+}
+
+bool
 getattribute(const rust::Str name, const TypeDesc type,
              rust::Slice<uint8_t> value)
 {

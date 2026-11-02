@@ -69,6 +69,7 @@
 use oiio_sys as sys;
 
 pub mod algo;
+pub mod config;
 
 mod attribute;
 mod color;

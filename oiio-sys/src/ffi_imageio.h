@@ -576,6 +576,9 @@ bool
 attribute_int(const rust::Str name, int value);
 
 bool
+attribute_string(const rust::Str name, rust::Str value);
+
+bool
 getattribute(const rust::Str name, TypeDesc type, rust::Slice<uint8_t> value);
 
 bool

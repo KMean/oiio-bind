@@ -632,6 +632,8 @@ mod ffi {
 
         pub fn attribute_int(name: &str, value: i32) -> bool;
 
+        pub fn attribute_string(name: &str, value: &str) -> bool;
+
         pub unsafe fn getattribute(name: &str, type_: TypeDesc, value: &mut [u8]) -> bool;
 
         pub fn getattribute_int(name: &str, value: &mut i32) -> bool;
