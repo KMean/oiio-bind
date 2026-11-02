@@ -24,9 +24,11 @@ a dozen of them fixes. It will be swept up with the rest at the next patch
 release. An earlier note here called this a missing backport; that was
 wrong.
 
-**Sixteen remain to decide on, plus one new finding stronger than any of
-them: `ImageBufAlgo::max`, written up in
-`contrib/issue-max-channel-clamp-ready-to-file.md`.**
+**Sixteen remain to decide on.** The `ImageBufAlgo::max` channel clamp, found
+on 2026-11-02 and stronger than any of them, was **filed the same day as
+[#5645](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5645)**.
+Full text in `contrib/issue-max-channel-clamp-ready-to-file.md`. **Three
+filed, two fixed so far.**
 
 That outcome is the argument for filing the rest: one carefully verified
 report, with a public retraction when its first diagnosis proved wrong,

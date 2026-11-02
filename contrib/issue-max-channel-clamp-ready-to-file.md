@@ -1,3 +1,16 @@
+# FILED as #5645
+
+**Filed 2026-11-02 as
+<https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5645>**
+by KMean. The live body was diffed against this file and is identical except
+for one sentence Kim cut in the GitHub form: the closing "Please treat it as
+free for anyone to pick up." The paragraph now ends at "...stating the change
+in full instead.", which is the better version. Rendering verified: the
+five-row table is a real table, the details block is collapsible, and all ten
+code blocks highlight.
+
+---
+
 # Ready to file — `ImageBufAlgo::max` channel clamp
 
 Prepared 2026-11-02. Verified against `origin/main`, `v3.2.2.0`, `v3.1.19.0`
