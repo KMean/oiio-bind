@@ -98,6 +98,17 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      # macOS runs on macos-14 rather than macos-15. Over twenty runs on
+      # 2026-11-02 the macos-15 arm64 jobs were cancelled sixteen times
+      # against five successes, always the same way: a runner assigned,
+      # then exactly fifteen minutes with zero steps executed, dying
+      # before `Set up job` finished. That is capacity in GitHub's pool,
+      # not anything here, but a workflow that is red three times in four
+      # for reasons nobody can act on teaches people to ignore it.
+      # macos-14 is also arm64, so the coverage is the same. If the
+      # cancellations follow, the next step is one macOS job rather than
+      # two, since the platform is the variable and both OpenImageIO
+      # lines are already covered on Linux.
       # Both released OpenImageIO lines are supported, so both are tested.
       # 3.1.14 predates the 3.1.16 Targa thumbnail fix (#5236) and 3.2.1.2
       # follows it, so between them they exercise both branches of the
@@ -115,12 +126,12 @@ jobs:
             oiio_exact: 3.2.1.2
             env_file: environment-3.2.yml
           - name: macOS arm64
-            os: macos-15
+            os: macos-14
             oiio: '3.1.14'
             oiio_exact: 3.1.14.1
             env_file: environment.yml
           - name: macOS arm64
-            os: macos-15
+            os: macos-14
             oiio: '3.2.1'
             oiio_exact: 3.2.1.2
             env_file: environment-3.2.yml
