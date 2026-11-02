@@ -22,6 +22,8 @@ mod ffi {
         s_width: f32,
         t_width: f32,
         fill: f32,
+        conservative_filter: bool,
+        anisotropic: u16,
     }
 
     unsafe extern "C++" {

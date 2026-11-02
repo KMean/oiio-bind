@@ -45,6 +45,8 @@ to_texture_opt(const TextureLookupOptions& options)
     opt.swidth       = options.s_width;
     opt.twidth       = options.t_width;
     opt.fill         = options.fill;
+    opt.conservative_filter = options.conservative_filter;
+    opt.anisotropic         = options.anisotropic;
     return opt;
 }
 

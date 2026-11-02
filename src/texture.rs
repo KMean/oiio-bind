@@ -478,6 +478,20 @@ pub struct TextureOptions {
     pub t_width: f32,
     /// Value for channels the texture does not have.
     pub fill: f32,
+    /// Whether to over-blur rather than alias where the filter does not
+    /// fit the footprint.
+    ///
+    /// On by default, which is OpenImageIO's own default and the safer
+    /// choice for stills. Turning it off keeps more detail at grazing
+    /// angles and risks aliasing, which in motion is the worse artefact.
+    pub conservative_filter: bool,
+    /// The largest anisotropic ratio the filter may use.
+    ///
+    /// 32 by default. A surface seen at a grazing angle needs a long thin
+    /// filter footprint, and this caps how long: lower is cheaper and
+    /// blurrier, higher is sharper and slower. Renderers usually expose
+    /// it, which is why it is here.
+    pub anisotropic: u16,
     /// What a missing or broken texture returns instead of an error.
     ///
     /// Set, a lookup against a file that does not exist or cannot be read
@@ -508,6 +522,10 @@ impl Default for TextureOptions {
             s_width: 1.0,
             t_width: 1.0,
             fill: 0.0,
+            // OpenImageIO's own defaults, so leaving these alone
+            // changes nothing about how a lookup behaves.
+            conservative_filter: true,
+            anisotropic: 32,
             missing_color: None,
         }
     }
@@ -530,6 +548,8 @@ impl TextureOptions {
             s_width: self.s_width,
             t_width: self.t_width,
             fill: self.fill,
+            conservative_filter: self.conservative_filter,
+            anisotropic: self.anisotropic,
         })
     }
 }
@@ -759,6 +779,34 @@ impl Derivatives {
             dsdy: 0.0,
             dtdy: width,
         }
+    }
+
+    /// The same footprint with a different change in s across x.
+    #[must_use]
+    pub fn with_dsdx(mut self, dsdx: f32) -> Self {
+        self.dsdx = dsdx;
+        self
+    }
+
+    /// The same footprint with a different change in t across x.
+    #[must_use]
+    pub fn with_dtdx(mut self, dtdx: f32) -> Self {
+        self.dtdx = dtdx;
+        self
+    }
+
+    /// The same footprint with a different change in s across y.
+    #[must_use]
+    pub fn with_dsdy(mut self, dsdy: f32) -> Self {
+        self.dsdy = dsdy;
+        self
+    }
+
+    /// The same footprint with a different change in t across y.
+    #[must_use]
+    pub fn with_dtdy(mut self, dtdy: f32) -> Self {
+        self.dtdy = dtdy;
+        self
     }
 
     /// No footprint at all, which asks for a point sample of the highest
@@ -1276,6 +1324,20 @@ impl TextureOptions {
     #[must_use]
     pub fn with_fill(mut self, fill: f32) -> Self {
         self.fill = fill;
+        self
+    }
+
+    /// The same texture options with conservative filtering changed.
+    #[must_use]
+    pub fn with_conservative_filter(mut self, conservative_filter: bool) -> Self {
+        self.conservative_filter = conservative_filter;
+        self
+    }
+
+    /// The same texture options with a different maximum anisotropic ratio.
+    #[must_use]
+    pub fn with_anisotropic(mut self, anisotropic: u16) -> Self {
+        self.anisotropic = anisotropic;
         self
     }
 
