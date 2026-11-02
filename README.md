@@ -345,10 +345,17 @@ fields are ordered so the reader closes before the proxy, and the proxy before
 the buffer it borrows.
 
 **Threading follows OpenImageIO's documentation, not guesswork.** `ImageCache`
-and `ImageHandle` are `Send + Sync`; `Perthread` is deliberately neither,
-because OpenImageIO states that one "should NEVER be shared between running
-threads". Those are the only `unsafe impl`s in the crate, and each carries its
-reasoning in a comment.
+and `ImageHandle` are `Send + Sync`, as are `TextureSystem` and
+`TextureHandle`; `Perthread` is deliberately neither, because OpenImageIO
+states that one "should NEVER be shared between running threads".
+
+The image values, `ImageBuf`, `ImageInput`, `ImageOutput`, `DeepImage` and
+`ColorConfig`, are `Send` but not `Sync`: each can be built on one thread and
+used on another, but not shared between two at once. That is the shape
+OpenImageIO actually supports, and it is what lets a frame sequence run on a
+thread pool. Every one of these `unsafe impl`s carries its reasoning in a
+comment above it, naming the upstream mechanism it rests on and stating what
+it does not claim.
 
 **What this does not claim.** OpenImageIO is a large C++ library and this
 crate does not audit it: a malformed file that crashes a reader will crash the
