@@ -114,32 +114,66 @@ involved.
 
 **To Reproduce**
 
-Three `oiiotool` commands. `A` has a fourth channel, `B` does not, so the
-fourth channel of the result can only come from `A`, whose value is `-1`.
+`oiiotool` only, no C++ needed. `A` is 8x1 with 4 channels, every channel
+`-1`. `B` is 8x1 with 3 channels carrying a horizontal ramp, so every pixel
+holds a different value. `B` has no fourth channel, so the fourth channel of
+the result can only come from `A`, whose value is `-1`.
+
+The ramp matters. With a single pixel, or with a constant `B`, the result is
+ambiguous for the reason given in the next section.
 
 ```bash
-oiiotool --pattern constant:color=-1,-1,-1,-1 1x1 4 -d float -o A4.exr
-oiiotool --pattern constant:color=5,6,7       1x1 3 -d float -o B3.exr
+oiiotool --pattern constant:color=-1,-1,-1,-1 8x1 4 -d float -o A8.exr
+oiiotool --pattern fill:left=0.1,0.1,0.1:right=0.8,0.8,0.8 8x1 3 -d float -o B8.exr
 
-oiiotool A4.exr B3.exr --max -echo "max: {TOP.AVGCOLOR}"
-oiiotool A4.exr B3.exr --min -echo "min: {TOP.AVGCOLOR}"
+oiiotool A8.exr B8.exr --max -o MAX8.exr
+for i in 0 1 2 3 4 5 6 7; do
+    oiiotool MAX8.exr --crop 1x1+$i+0 -echo "pixel $i: {TOP.AVGCOLOR}"
+done
 ```
 
-Observed:
+`B`'s own channel 0 runs `0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8`. Observed
+result:
 
 ```
-max: 5,6,7,0
-min: -1,-1,-1,-1
+pixel 0: 0.1,0.1,0.1,0.2
+pixel 1: 0.2,0.2,0.2,0.3
+pixel 2: 0.3,0.3,0.3,0.4
+pixel 3: 0.4,0.4,0.4,0.5
+pixel 4: 0.5,0.5,0.5,0.6
+pixel 5: 0.6,0.6,0.6,0.7
+pixel 6: 0.7,0.7,0.7,0.8
+pixel 7: 0.8,0.8,0.8,1.01939e-38
 ```
 
-`min` is correct. `max` returns `0` for a channel whose only possible source
-holds `-1`.
+Channel 3 at pixel `i` is `B`'s channel 0 at pixel `i + 1`. At pixel 7 there
+is no next pixel, and the value is a denormal from past the end of the
+allocation. That last one is not stable: across five runs here it came back
+as `4.40819e-39`, `8.72447e-39`, `0`, `0` and `6.97962e-39`. The first seven
+are deterministic.
 
-**Evidence that the value comes from the next pixel**
+Substituting `--min` for `--max` returns `-1,-1,-1,-1` at every pixel, which
+is `A`'s own channel 3, correctly.
 
-Giving `B` a different value in every pixel identifies where the read lands.
-`B` is 8x1 with 3 channels, pixel `i` channel `c` holding `10 * i + c`; `A`
-is 8x1 with 4 channels, every channel `-1`. Full program below.
+**Why this is not channel padding**
+
+The obvious innocent explanation is that `B` gets widened to 4 channels with
+zero before the operation, making channel 3 `max(-1, 0) = 0` and perfectly
+correct. That is worth ruling out explicitly, and the ramp does it: padding
+would put `0` in channel 3 at every pixel, not the following pixel's value.
+`0.2` at pixel 0 cannot come from a zero-filled channel.
+
+This is also why a 1x1 reproduction does not settle the question. With one
+pixel the only read is the one past the allocation, which lands on `0` a good
+fraction of the time, and `0` is exactly what zero padding would produce.
+
+**Independent confirmation below the oiiotool layer**
+
+The same shape of test against `ImageBufAlgo::max` directly, with no
+`oiiotool` involved, so there is no opportunity for any channel handling in
+between. `B` is 8x1 with 3 channels, pixel `i` channel `c` holding
+`10 * i + c`; `A` is 8x1 with 4 channels, every channel `-1`. Full program
+below.
 
 ```
 === ImageBufAlgo::min  (control, std::min clamp) -> ok=1, dst 4ch
