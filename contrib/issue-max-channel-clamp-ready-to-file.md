@@ -107,10 +107,26 @@ been edited since. The first release carrying it is `v2.2.6.1`.
 
 **OpenImageIO version and dependencies**
 
-Present and byte identical on `origin/main`, `v3.2.2.0`, `v3.1.19.0` and
-`origin/release` (3.2.1.1). Reproduced below on a 3.2.2.0 release build,
-Windows, MSVC. Platform independent: no SIMD, threading or format plugin is
-involved.
+```
+OIIO 3.2.2.0 | Windows/x86_64
+    Build compiler: MSVS 1951 | C++17/199711
+    HW features enabled at build: sse2,sse3,ssse3,sse41,sse42
+    No CUDA support (disabled / unavailable at build time)
+Dependencies: BZip2 1.0.8, DCMTK NONE, FFmpeg NONE, fmt 12.1.0, Freetype 2.13.3, GIF 5.2.2, Imath 3.2.2, JXL NONE, libdeflate 1.25, Libheif NONE, libjpeg-turbo 3.1.3, LibRaw NONE, libuhdr NONE, OpenColorIO 2.5.1, OpenCV NONE, OpenEXR 3.4.7, OpenJPEG 2.5.4, openjph 0.26.3, PNG 1.6.55, Ptex NONE, Ptex NONE, Robinmap 1.4.1, TBB NONE, TIFF 4.7.1, WebP 1.6.0, ZLIB 1.3.1, zstd 1.5.7
+```
+
+Nothing unusual about the environment and no nonstandard build options.
+
+The two lines are byte identical on `origin/main`, `v3.2.2.0`, `v3.1.19.0`
+and `origin/release` (3.2.1.1), so this is not specific to the build above.
+No SIMD, threading or format plugin is involved.
+
+**On filing this as an issue rather than a pull request**
+
+The template says to go straight to a pull request when the fix is already in
+hand, and the fix here is one token. I do not have a CLA in place, so I am
+filing the report instead and stating the change in full. Anyone who can open
+a PR should feel free to take it without crediting me.
 
 **To Reproduce**
 
