@@ -125,9 +125,9 @@ is involved.
 **On filing this as an issue rather than a pull request**
 
 The template says to go straight to a pull request when the fix is already in
-hand, and the fix here is one token. I do not have a CLA in place, so I am
-filing the report instead and stating the change in full. Anyone who can open
-a PR should feel free to take it without crediting me.
+hand, and this one is a single line. I do not have a CLA in place, so I am
+filing the report with the change stated in full instead. Please treat it as
+free for anyone to pick up.
 
 **To Reproduce**
 
@@ -216,7 +216,8 @@ channel 3 at every pixel.
 
 **The fix**
 
-One token, at `imagebufalgo_pixelmath.cpp:170` (`:169` on `v3.1.19.0`):
+One line, at `imagebufalgo_pixelmath.cpp:170` (`:169` on `v3.1.19.0`), with
+both occurrences of `std::max` becoming `std::min`:
 
 ```c++
 roi.chend = std::min(roi.chend, std::min(A.nchannels(), B.nchannels()));
