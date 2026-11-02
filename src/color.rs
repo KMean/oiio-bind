@@ -4,7 +4,7 @@
 //! whatever `$OCIO` points at, or OpenImageIO's built-in one when that is
 //! unset. Rather than guess, ask:
 //!
-//! ```no_run
+//! ```
 //! use oiio::ColorConfig;
 //!
 //! # fn main() -> oiio::Result<()> {

@@ -27,7 +27,12 @@ Gates, all run on 2026-11-02 at these versions:
 - [x] `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`
 - [x] `DOCS_RS=1 cargo doc --workspace --no-deps` -- the one that proves
       docs.rs can build without linking OpenImageIO
-- [x] `cargo test --workspace --all-targets`: **400 pass**, debug and
+- [x] `cargo test --workspace --all-targets` AND `cargo test --workspace
+      --doc`. **`--all-targets` does NOT include doctests**, so running
+      only that leaves every documented example unverified. CI's
+      `cargo test --workspace` does include them; a local gate using
+      `--all-targets` is weaker than CI, which is the wrong way round.
+      At 0.2.3 this was **400 pass**, debug and
       release, against the vcpkg 3.1.12.0 on this machine, with
       `OIIO_BIND_TEST_IMAGES` and `OIIO_BIND_TEST_EXR_IMAGES` set so the
       corpus suites actually run rather than skipping

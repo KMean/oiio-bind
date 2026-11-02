@@ -21,7 +21,7 @@
 //! rotations, while `flip`, `flop` and `transpose` inherited OpenImageIO's
 //! plain `roi` name and read it as source all the same.
 //!
-//! ```no_run
+//! ```
 //! use oiio::{algo, ImageBuf, ImageSpec, PixelFormat};
 //!
 //! # fn main() -> oiio::Result<()> {
@@ -1641,7 +1641,7 @@ pub enum Operand<'a> {
 /// rounds once. `a` is always an image, which satisfies OpenImageIO's rule
 /// that at least one of the first two arguments must be one.
 ///
-/// ```no_run
+/// ```
 /// use oiio::{algo, algo::Operand, ImageBuf, ImageSpec, PixelFormat};
 ///
 /// # fn main() -> oiio::Result<()> {
@@ -2476,7 +2476,7 @@ pub fn minchan(dst: &mut ImageBuf, src: &ImageBuf, roi: Option<Roi>) -> Result<(
 /// Each entry of `sources` produces one output channel, so the output has
 /// `sources.len()` channels. `names`, when given, must have the same length.
 ///
-/// ```no_run
+/// ```
 /// use oiio::algo::{self, ChannelSource};
 /// # use oiio::{ImageBuf, ImageSpec, PixelFormat};
 /// # fn main() -> oiio::Result<()> {

@@ -7,7 +7,7 @@
 //! Two situations need it. A library embedded in a host that owns the CPU
 //! budget has to stop OpenImageIO spawning a thread per core:
 //!
-//! ```no_run
+//! ```
 //! # fn main() -> oiio::Result<()> {
 //! oiio::config::set_threads(4)?;
 //! # Ok(())
@@ -18,7 +18,7 @@
 //! header can ask for, since the limits exist to turn a hostile file into a
 //! refusal rather than an allocation:
 //!
-//! ```no_run
+//! ```
 //! # fn main() -> oiio::Result<()> {
 //! use oiio::config::Limits;
 //!
@@ -150,7 +150,7 @@ impl Limits {
     /// This is the usual starting point, because tightening one ceiling
     /// should not mean restating the others:
     ///
-    /// ```no_run
+    /// ```
     /// # fn main() -> oiio::Result<()> {
     /// use oiio::config::{self, Limits};
     ///
