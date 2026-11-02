@@ -1932,10 +1932,60 @@ imagebufalgo_deep_holdout(ImageBuf& dst, const ImageBuf& src,
     return OIIO::ImageBufAlgo::deep_holdout(dst, src, holdout, roi, nthreads);
 }
 
+// The binomial branch of make_kernel sizes its tap arrays from the raw float
+// extent and then indexes them over the odd-rounded image size. In
+// `imagebufalgo.cpp` the size is `w = std::max(1, (int)ceilf(width)) | 1`,
+// while the taps are `OIIO_ALLOCA(float, width)` filled by `i < width`, and
+// the consuming loop reads `wfilter[p.x() - spec.x]` for `p.x() - spec.x` in
+// `[0, w)`. For an even width the last tap is read past the end of the
+// allocation; for a fractional one the fill itself writes past it.
+//
+// This is not cosmetic. Across six runs of `make_kernel("binomial", 4, 4)`
+// here, three returned a kernel of NaN, one was numerically zero, and two
+// were correct, because the value read is whatever the stack held. A NaN
+// kernel poisons every pixel of whatever it convolves, and the caller is
+// given no error.
+//
+// Odd integer extents are the case where the allocation and the loop agree,
+// so they are the case this accepts.
+// The one extent shape where the allocation and the consuming loop agree.
+static bool
+binomial_extent_is_safe(float extent)
+{
+    return extent >= 1.0f && extent == std::floor(extent)
+           && std::fmod(extent, 2.0f) == 1.0f;
+}
+
+static bool
+is_binomial(const rust::Str name)
+{
+    return OIIO::Strutil::iequals(to_string_view(name), "binomial");
+}
+
+static bool
+refuse_unsafe_binomial_kernel(ImageBuf& dst, const rust::Str name, float width,
+                              float height)
+{
+    if (!is_binomial(name)
+        || (binomial_extent_is_safe(width) && binomial_extent_is_safe(height)))
+        return false;
+    dst.errorfmt(
+        "make_kernel: a binomial kernel needs odd whole width and height, "
+        "and was asked for {} by {}; OpenImageIO sizes the taps from the "
+        "extent given and then indexes them over the next odd size, so an "
+        "even or fractional one reads past its own allocation and can return "
+        "a kernel of NaN",
+        width, height);
+    return true;
+}
+
 bool
 imagebufalgo_make_kernel(ImageBuf& dst, const rust::Str name, float width,
                          float height, float depth, bool normalize)
 {
+    if (refuse_unsafe_binomial_kernel(dst, name, width, height))
+        return false;
+
     dst = OIIO::ImageBufAlgo::make_kernel(to_string_view(name), width, height,
                                           depth, normalize);
     // An unrecognised filter name still yields a box kernel, with the
@@ -1983,6 +2033,21 @@ imagebufalgo_unsharp_mask(ImageBuf& dst, const ImageBuf& src,
         return false;
     if (refuse_narrow_destination(dst, src, "unsharp_mask"))
         return false;
+    // unsharp_mask builds its blur kernel by calling make_kernel with the
+    // name and width given: `make_kernel(kernel, 1, width)` above a width of
+    // three, `make_kernel(kernel, width, width)` at or below it. Either way
+    // the width reaches the binomial branch as an extent, so the same
+    // allocation defect applies and the same rule has to hold here.
+    if (is_binomial(kernel) && !binomial_extent_is_safe(width)) {
+        dst.errorfmt(
+            "unsharp_mask: a binomial kernel needs an odd whole width, and "
+            "was asked for {}; OpenImageIO sizes the taps from the width "
+            "given and then indexes them over the next odd size, so an even "
+            "or fractional one reads past its own allocation and can blur "
+            "with a kernel of NaN",
+            width);
+        return false;
+    }
     if (dst.initialized() && dst.spec().format != src.spec().format) {
         // The final pass dispatches on the destination's type and then reads
         // the source through an iterator of that same type. ImageBuf iterators
