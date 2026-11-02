@@ -1,7 +1,8 @@
 //! Filtered texture lookups.
 //!
-//! The interesting cases need a real mipmapped texture, so those are opt-in
-//! through `OIIO_BIND_TEST_IMAGES`, as in `corpus_test`.
+//! The interesting cases need a real mipmapped texture. `OIIO_BIND_TEST_IMAGES`
+//! supplies one from a corpus, as in `corpus_test`, and without it the fixture
+//! makes its own, so nothing here is opt-in any more.
 
 mod common;
 
@@ -9,21 +10,68 @@ use std::path::PathBuf;
 
 use common::{f32_ramp, write_image, ScratchDir};
 use oiio::{
-    Derivatives, Error, ImageSpec, InterpolationMode, MipMode, PixelFormat, TextureOptions,
-    TextureSystem, WrapMode,
+    algo, make_texture_from_buffer, Derivatives, Error, ImageBuf, ImageSpec, InterpolationMode,
+    MipMode, PixelFormat, TextureConfig, TextureMode, TextureOptions, TextureSystem, WrapMode,
 };
 
-/// A `.tx` from the corpus: tiled, mipmapped, and made by maketx rather than
-/// by us.
-fn a_texture() -> Option<PathBuf> {
-    let root = PathBuf::from(std::env::var_os("OIIO_BIND_TEST_IMAGES")?);
-    for name in ["grid.tx", "checker.tx", "miplevels.tx"] {
-        let path = root.join(name);
-        if path.is_file() {
-            return Some(path);
+/// A tiled, mipmapped `.tx` to look up, with whatever owns the file.
+///
+/// A corpus texture is preferred, because maketx wrote it rather than this
+/// crate, and the reference tool's output is better evidence than the code
+/// under test grading its own work.
+///
+/// Without a corpus it makes one, so the lookups run rather than report
+/// success without running. CI sets no `OIIO_BIND_TEST_IMAGES`, so every test
+/// that needed a texture skipped there, printing one line to a stderr nobody
+/// reads while `test result` said ok for all of them. Among the five was the
+/// only test of `unsafe impl Sync for TextureSystem`, which is the claim that
+/// lets a renderer share one across its workers.
+struct Texture {
+    path: PathBuf,
+    /// The directory holding a texture made here. `None` for a corpus file,
+    /// which is not ours to delete.
+    _scratch: Option<ScratchDir>,
+}
+
+fn a_texture() -> Texture {
+    if let Some(root) = std::env::var_os("OIIO_BIND_TEST_IMAGES") {
+        let root = PathBuf::from(root);
+        for name in ["grid.tx", "checker.tx", "miplevels.tx"] {
+            let path = root.join(name);
+            if path.is_file() {
+                return Texture {
+                    path,
+                    _scratch: None,
+                };
+            }
         }
     }
-    None
+
+    // A fine checker rather than a flat colour, because the lookups have to
+    // see a difference: blur and mip level both do nothing measurable to a
+    // constant, so those tests would pass on a texture that proved nothing.
+    // 64 is a power of two, so the pyramid halves cleanly all the way down,
+    // and 0 and 1 keep every filtered sample inside the range the mip test
+    // asserts. Three channels, because the fill test asks for eight and
+    // expects the ones past the texture to come from the fill value.
+    let scratch = ScratchDir::new("madetexture");
+    let path = scratch.file("checker.tx");
+    let spec = ImageSpec::new(64, 64, 3, PixelFormat::F32).unwrap();
+    let mut checker = ImageBuf::new(&spec).unwrap();
+    algo::checker(
+        &mut checker,
+        [4, 4, 1],
+        &[0.0, 0.0, 0.0],
+        &[1.0, 1.0, 1.0],
+        [0, 0, 0],
+        None,
+    )
+    .unwrap();
+    make_texture_from_buffer(TextureMode::Texture, &checker, &path, &TextureConfig::new()).unwrap();
+    Texture {
+        path,
+        _scratch: Some(scratch),
+    }
 }
 
 /// Environment lookups need no corpus: the crate makes its own lat-long map.
@@ -119,10 +167,8 @@ fn creates_a_texture_system() {
 
 #[test]
 fn looks_up_a_texture() {
-    let Some(path) = a_texture() else {
-        eprintln!("skipping: set OIIO_BIND_TEST_IMAGES to a corpus containing .tx files");
-        return;
-    };
+    let texture = a_texture();
+    let path = texture.path.clone();
 
     let textures = TextureSystem::new().unwrap();
     let resolution = textures.resolution(&path).unwrap();
@@ -183,10 +229,8 @@ fn looks_up_a_texture() {
 /// wired through, and the results stay sensible.
 #[test]
 fn blur_changes_what_a_lookup_returns() {
-    let Some(path) = a_texture() else {
-        eprintln!("skipping: set OIIO_BIND_TEST_IMAGES");
-        return;
-    };
+    let texture = a_texture();
+    let path = texture.path.clone();
 
     let textures = TextureSystem::new().unwrap();
     let resolution = textures.resolution(&path).unwrap();
@@ -237,10 +281,8 @@ fn blur_changes_what_a_lookup_returns() {
 /// Mip mode changes what a lookup reads, which is the point of having one.
 #[test]
 fn mip_mode_changes_the_result() {
-    let Some(path) = a_texture() else {
-        eprintln!("skipping: set OIIO_BIND_TEST_IMAGES");
-        return;
-    };
+    let texture = a_texture();
+    let path = texture.path.clone();
     let textures = TextureSystem::new().unwrap();
 
     // A wide filter, so the mip pyramid is genuinely in play.
@@ -275,10 +317,8 @@ fn mip_mode_changes_the_result() {
 
 #[test]
 fn options_change_the_result() {
-    let Some(path) = a_texture() else {
-        eprintln!("skipping: set OIIO_BIND_TEST_IMAGES");
-        return;
-    };
+    let texture = a_texture();
+    let path = texture.path.clone();
     let textures = TextureSystem::new().unwrap();
 
     let sample = |options: &TextureOptions, s: f32| -> f32 {
@@ -389,10 +429,8 @@ fn an_empty_destination_is_refused() {
 
 #[test]
 fn a_texture_system_can_be_shared_across_threads() {
-    let Some(path) = a_texture() else {
-        eprintln!("skipping: set OIIO_BIND_TEST_IMAGES");
-        return;
-    };
+    let texture = a_texture();
+    let path = texture.path.clone();
 
     let textures = std::sync::Arc::new(TextureSystem::new().unwrap());
     let options = TextureOptions::default();
