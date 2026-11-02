@@ -10,3 +10,8 @@ target/
 # committed image, and the corpora are external and opt-in.
 /*.exr
 /span-demo/
+
+# Review analysis that names upstream people stays local and out of this
+# public fork. Lives in F:\prjs\oiio-bind-private\ instead.
+contrib/draft-corrections.md
+contrib/*-private.md
