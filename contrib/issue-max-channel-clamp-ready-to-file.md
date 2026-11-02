@@ -156,9 +156,19 @@ from whichever input has them. That is what the comment there already
 describes and what `min` already does. No other change is needed, and `min`
 demonstrates the corrected behaviour on the same inputs today.
 
-A regression test would be two images differing in channel count through
-`--max`, asserting the extra channel survives, placed next to the same case
-for `--min`.
+**Why it has lasted**
+
+The mismatched channel case has no test coverage. `testsuite/oiiotool/run.py:137-139`
+is the only `--max` image-against-image test, and it feeds two 3 channel
+patterns, so `A.nchannels() == B.nchannels()` and the clamp cannot be
+observed either way. The `--min` test three lines above it does the same.
+Nothing else in the testsuite exercises either call with differing channel
+counts, and there is no `TODO` or `FIXME` near the clamp.
+
+A regression test is two images differing in channel count through `--max`,
+asserting the extra channel survives, placed beside the existing case at
+`testsuite/oiiotool/run.py:137`. Adding the same for `--min` would pin the
+behaviour this report treats as correct.
 
 <details>
 <summary>Full reproduction program</summary>
