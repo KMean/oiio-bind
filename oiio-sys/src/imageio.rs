@@ -317,6 +317,7 @@ mod ffi {
             chbegin: i32,
             chend: i32,
             data: Pin<&mut DeepData>,
+            error: &mut String,
         ) -> bool;
         #[allow(clippy::too_many_arguments)]
         pub fn imageinput_read_native_deep_tiles(
@@ -332,12 +333,14 @@ mod ffi {
             chbegin: i32,
             chend: i32,
             data: Pin<&mut DeepData>,
+            error: &mut String,
         ) -> bool;
         pub fn imageinput_read_native_deep_image(
             imageinput: Pin<&mut ImageInput>,
             subimage: i32,
             miplevel: i32,
             data: Pin<&mut DeepData>,
+            error: &mut String,
         ) -> bool;
         pub unsafe fn imageinput_read_native_scanline(
             imageinput: Pin<&mut ImageInput>,

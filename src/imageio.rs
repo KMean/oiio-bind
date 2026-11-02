@@ -421,13 +421,21 @@ impl ImageInput {
                 "OpenImageIO could not allocate deep data".to_owned(),
             ));
         };
+        let mut error = String::new();
         let succeeded = sys::imageio::imageinput_read_native_deep_image(
             self.inner_mut(),
             level_index(subimage)?,
             level_index(mip_level)?,
             pinned,
+            &mut error,
         );
         if !succeeded {
+            // A non-empty `error` is the C++ boundary reporting an exception
+            // it caught, which OpenImageIO never got to record. Anything else
+            // is an ordinary failure on its own error channel.
+            if !error.is_empty() {
+                return Err(Error::operation("read deep image", error));
+            }
             return Err(self.take_error("read deep image"));
         }
 
@@ -516,6 +524,7 @@ impl ImageInput {
                 "OpenImageIO could not allocate deep data".to_owned(),
             ));
         };
+        let mut error = String::new();
         let succeeded = sys::imageio::imageinput_read_native_deep_scanlines(
             self.inner_mut(),
             level_index(subimage)?,
@@ -526,8 +535,12 @@ impl ImageInput {
             0,
             spec.channel_count() as i32,
             pinned,
+            &mut error,
         );
         if !succeeded {
+            if !error.is_empty() {
+                return Err(Error::operation(OPERATION, error));
+            }
             return Err(self.take_error(OPERATION));
         }
 
@@ -583,6 +596,7 @@ impl ImageInput {
                 "OpenImageIO could not allocate deep data".to_owned(),
             ));
         };
+        let mut error = String::new();
         let succeeded = sys::imageio::imageinput_read_native_deep_tiles(
             self.inner_mut(),
             level_index(subimage)?,
@@ -596,8 +610,12 @@ impl ImageInput {
             0,
             spec.channel_count() as i32,
             pinned,
+            &mut error,
         );
         if !succeeded {
+            if !error.is_empty() {
+                return Err(Error::operation(OPERATION, error));
+            }
             return Err(self.take_error(OPERATION));
         }
 

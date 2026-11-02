@@ -363,17 +363,20 @@ imageinput_read_tiles_span(ImageInput& imageinput, int subimage, int miplevel,
 bool
 imageinput_read_native_deep_scanlines(ImageInput& imageinput, int subimage,
                                       int miplevel, int ybegin, int yend, int z,
-                                      int chbegin, int chend, DeepData& data);
+                                      int chbegin, int chend, DeepData& data,
+                                      rust::String& error);
 
 bool
 imageinput_read_native_deep_tiles(ImageInput& imageinput, int subimage,
                                   int miplevel, int xbegin, int xend,
                                   int ybegin, int yend, int zbegin, int zend,
-                                  int chbegin, int chend, DeepData& data);
+                                  int chbegin, int chend, DeepData& data,
+                                  rust::String& error);
 
 bool
 imageinput_read_native_deep_image(ImageInput& imageinput, int subimage,
-                                  int miplevel, DeepData& data);
+                                  int miplevel, DeepData& data,
+                                  rust::String& error);
 
 bool
 imageinput_read_native_scanline(ImageInput& imageinput, int subimage,

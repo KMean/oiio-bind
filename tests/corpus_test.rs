@@ -480,6 +480,19 @@ fn rejects_damaged_exrs_without_crashing() {
         // those is a correct outcome; a panic or a hang is not.
         let outcome = ImageInput::from_path(path).and_then(|mut input| {
             let spec = input.image_spec()?;
+
+            // A deep file sizes its allocation from the sample counts in its
+            // own header, not from a buffer this side validated, so it is the
+            // one read path a fuzzed file can drive into an allocation of its
+            // choosing. `DeepData::init` resizes without a try/catch of its
+            // own, and the shim is wrapped noexcept by cxx, so before the
+            // boundary in `ffi_imageio.cpp` an escaping `bad_alloc` here was
+            // `std::terminate`. Drive it deliberately: the only acceptable
+            // outcomes are a deep image or an error.
+            if spec.is_deep() {
+                return input.read_deep_image().map(|_| ());
+            }
+
             let count = spec.element_count()?;
             // A fuzzed header can claim an enormous image; refuse to allocate
             // for it rather than let the test become the denial of service.

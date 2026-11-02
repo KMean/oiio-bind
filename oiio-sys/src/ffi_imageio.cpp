@@ -836,31 +836,83 @@ imageinput_read_tiles_span(ImageInput& imageinput, int subimage, int miplevel,
                                  layout.z_stride);
 }
 
+// The three deep read paths below are the one place in this translation unit
+// where OpenImageIO sizes an allocation from the FILE rather than from a
+// buffer the caller already validated. The reader fills the `DeepData` from
+// the sample counts in the header, and `DeepData::init` resizes three
+// per-pixel vectors with no try/catch of its own, so a file claiming more
+// samples than the machine can hold throws `std::bad_alloc` or
+// `std::length_error` straight out of the reader.
+//
+// That is the same mechanism `imagebuf_new_from_spec_checked` guards in
+// `ffi_imagebuf.cpp`, reached by a different route. cxx wraps these shims
+// `noexcept`, so an escaping exception is `std::terminate`: a malformed or
+// hostile file would abort the process instead of returning an error. Every
+// other read path here hands OpenImageIO a caller-sized buffer and is bounded
+// by it, and the format readers catch their own exceptions, so the boundary
+// belongs here rather than on all sixty-odd shims.
+//
+// `catch (...)` is deliberate. OpenEXR raises `Iex::BaseExc`, which derives
+// from `std::exception`, but the readers are reached through a plugin
+// boundary and the point of a boundary is to hold regardless of what arrives.
+template<typename Body>
+static bool
+guard_deep_read(rust::String& error, const char* what, Body&& body)
+{
+    error = rust::String();
+    try {
+        return body();
+    } catch (const std::exception& exception) {
+        const std::string recorded = exception.what();
+        error = rust::String::lossy(
+            recorded.empty()
+                ? std::string(what) + ": OpenImageIO could not allocate the "
+                                      "deep samples this file declares"
+                : std::string(what) + ": " + recorded);
+        return false;
+    } catch (...) {
+        error = rust::String::lossy(
+            std::string(what)
+            + ": OpenImageIO raised an unrecognised exception");
+        return false;
+    }
+}
+
 bool
 imageinput_read_native_deep_scanlines(ImageInput& imageinput, int subimage,
                                       int miplevel, int ybegin, int yend, int z,
-                                      int chbegin, int chend, DeepData& data)
+                                      int chbegin, int chend, DeepData& data,
+                                      rust::String& error)
 {
-    return imageinput.read_native_deep_scanlines(subimage, miplevel, ybegin,
-                                                 yend, z, chbegin, chend, data);
+    return guard_deep_read(error, "read deep scanlines", [&] {
+        return imageinput.read_native_deep_scanlines(subimage, miplevel, ybegin,
+                                                     yend, z, chbegin, chend,
+                                                     data);
+    });
 }
 
 bool
 imageinput_read_native_deep_tiles(ImageInput& imageinput, int subimage,
                                   int miplevel, int xbegin, int xend,
                                   int ybegin, int yend, int zbegin, int zend,
-                                  int chbegin, int chend, DeepData& data)
+                                  int chbegin, int chend, DeepData& data,
+                                  rust::String& error)
 {
-    return imageinput.read_native_deep_tiles(subimage, miplevel, xbegin, xend,
-                                             ybegin, yend, zbegin, zend,
-                                             chbegin, chend, data);
+    return guard_deep_read(error, "read deep tiles", [&] {
+        return imageinput.read_native_deep_tiles(subimage, miplevel, xbegin,
+                                                 xend, ybegin, yend, zbegin,
+                                                 zend, chbegin, chend, data);
+    });
 }
 
 bool
 imageinput_read_native_deep_image(ImageInput& imageinput, int subimage,
-                                  int miplevel, DeepData& data)
+                                  int miplevel, DeepData& data,
+                                  rust::String& error)
 {
-    return imageinput.read_native_deep_image(subimage, miplevel, data);
+    return guard_deep_read(error, "read deep image", [&] {
+        return imageinput.read_native_deep_image(subimage, miplevel, data);
+    });
 }
 
 bool
