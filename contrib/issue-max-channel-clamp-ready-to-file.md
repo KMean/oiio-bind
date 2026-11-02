@@ -31,10 +31,19 @@ The siblings, all with identical surrounding structure:
 | `sub` | `imagebufalgo_addsub.cpp:381` | `std::min(roi.chend, std::min(...))` |
 
 The clamp is needed because `IBAprep` is called without
-`IBAprep_CLAMP_MUTUAL_NCHANNELS` (`:167`), and `IBAprep` on its own ends at
-`roi.chend = std::min(roi.chend, maxchans)`, where `maxchans` is the widest
-of `dst`, `A` and `B` rather than the narrowest. Each of these operations
-therefore has to narrow the range by hand. `max` widens it instead.
+`IBAprep_CLAMP_MUTUAL_NCHANNELS` (`:167`), and `IBAprep` ends with these
+lines (`imagebufalgo.cpp:307-309`):
+
+```c++
+if (prepflags & IBAprep_CLAMP_MUTUAL_NCHANNELS)
+    roi.chend = std::min(roi.chend, minchans);
+roi.chend = std::min(roi.chend, maxchans);
+```
+
+Without the flag, only the second line applies, and `maxchans` is the widest
+of `dst`, `A` and `B` rather than the narrowest, so it is not a constraint
+here. Each of these five operations therefore narrows the range by hand
+afterwards. `max` widens it instead.
 
 With `A` at 4 channels and `B` at 3, `roi.chend` becomes 4, and `max_impl`
 at `:137` runs
@@ -50,12 +59,24 @@ proxy built over the current pixel's raw pointer (`imagebuf.h:2016`). So
 pixel, and on the last pixel of the buffer it reads past the allocation.
 The call returns `true`.
 
-There is a second consequence. Because the clamp uses `std::max`, it can also
-raise `roi.chend` above `dst.nchannels()`. With `dst` pre-initialized to 3
-channels and both inputs at 4, `IBAprep`'s initialized-destination branch
-gives `roi.chend = 3`, `:170` raises it to 4, and `max_impl` writes `r[3]`
-into a 3 channel destination. `Iterator::operator[]` is equally unchecked, so
-that is an out of bounds write.
+There is a second consequence on the write side, which I want to describe
+carefully because I was not able to observe it.
+
+Because the clamp uses `std::max`, it can also raise `roi.chend` above
+`dst.nchannels()`. With `dst` pre-initialized to 3 channels and both inputs
+at 4, `IBAprep`'s initialized-destination branch gives `roi.chend = 3`,
+`:170` raises it to 4, and the loop writes `r[3]` into a 3 channel
+destination. The write path is unchecked in the same way as the read:
+`Iterator::set` at `imagebuf.h:1946-1951` is `proxy[i] = val` with no
+comparison against the channel count.
+
+Reading the destination back afterwards does not show it. Each pixel's stray
+write to offset 3 lands on the next pixel's channel 0, and that pixel's own
+write to channel 0 follows immediately and overwrites it, so the buffer ends
+up looking correct. On the final pixel there is no following write, and that
+one goes past the allocation. I could not demonstrate that from outside the
+library, so I am reporting it as something the code permits rather than as
+something I reproduced. The read case above is the one I can show.
 
 **The block below the clamp describes the other behaviour**
 
