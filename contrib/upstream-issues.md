@@ -24,6 +24,23 @@ a dozen of them fixes. It will be swept up with the rest at the next patch
 release. An earlier note here called this a missing backport; that was
 wrong.
 
+**lgritz opened
+[PR #5646](https://github.com/AcademySoftwareFoundation/OpenImageIO/pull/5646)
+against it within seven hours**, with exactly the one-line change the report
+proposed, character for character. His description confirms the report's
+reasoning rather than merely the defect: "my bet is that I wrote IBA::min()
+first, cut and pasted and then did a text replace s/min/max/, and didn't
+notice this use of std::min/std::max on the channels also got the text
+replacement". The report argued it was a copy-paste of min() with the
+substitution applied to the clamp as well as the comparison, from the
+byte-identical block below it and its stale comment. That was the part that
+could have been wrong and was not.
+
+The PR carries no regression test, and the report's test-coverage section
+is the obvious thing to offer: `testsuite/oiiotool/run.py:137-139` is the
+only `--max` image-against-image case and it feeds two 3-channel patterns,
+so nothing would catch this returning.
+
 **Issue 4 was filed as
 [#5645](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5645)**
 on 2026-11-02, so **fifteen remain to decide on**. Full filed text in
