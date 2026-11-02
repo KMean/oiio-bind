@@ -2,6 +2,62 @@
 
 This fork's changes, newest first.
 
+## Unreleased
+
+**When this is released `oiio-sys` needs 0.4.0, and `oiio` needs no bump.**
+`TextureLookupOptions` in the cxx bridge gained two fields and is
+constructible, so `cargo-semver-checks` reports
+`constructible_struct_adds_field` against it. `oiio`'s own additions sit on
+`#[non_exhaustive]` structs and are additive. Checked with the tool rather
+than by reading the diff.
+
+### A binomial kernel with an even or fractional extent is refused
+
+OpenImageIO's `make_kernel` sizes its binomial tap arrays from the extent
+asked for and then indexes them over the odd-rounded image size, so an even
+extent reads past the allocation and a fractional one writes past it. The
+value is whatever the stack held: of six runs of a 4 by 4, one was correct,
+one was wrong in the fifth digit, and four were a delta spike rather than a
+blur. One came back with a negative value, which a product of binomial
+coefficients cannot produce. On another build the same call returns `NaN`,
+which propagates to every pixel it convolves.
+
+`make_kernel` and `unsharp_mask` now refuse a binomial whose extents are not
+odd whole numbers, and say why. Every other kernel name is untouched, since
+those go through a `Filter2D` sized from the rounded image rather than from
+the extent, and a test pins that they still build at even widths.
+
+Written up for upstream in `contrib/issue-binomial-kernel-ready-to-file.md`.
+
+### Texture filtering quality is reachable
+
+`TextureOptions` gained `conservative_filter` and `anisotropic`, the two
+knobs a renderer normally exposes, with OpenImageIO's own defaults of `true`
+and `32` so nothing changes for a caller who leaves them alone. The tests
+check that setting them changes the result of a grazing lookup rather than
+merely that they can be set.
+
+`Derivatives` gained `with_*` builders. It is `#[non_exhaustive]` and it is
+an input, so without them a caller had only mutable field assignment for any
+footprint that is not square.
+
+### A security policy
+
+`SECURITY.md` says what the crate claims, what it does not, and which
+upstream defects are filed. The reporting channel is still to be chosen:
+issues, discussions and private vulnerability reporting are all disabled on
+the repository.
+
+### CI
+
+A Windows job on the 3.2 line, built from conda-forge rather than vcpkg, so
+3.2 on Windows no longer rests on one person's machine. It is also the first
+coverage of the `OIIO_INCLUDE_DIR` and `OIIO_LIBRARY_DIR` overrides, since
+`build.rs` sends Windows straight to vcpkg and a conda install is only
+reachable through them.
+
+A push to `main` no longer cancels the run before it. That had destroyed two
+runs in one afternoon, and a cancelled run reports as a failed one.
 ## 0.3.0 — 2026-11-02
 
 `oiio` moves to 0.3.0; `oiio-sys` is unchanged at 0.3.0. A breaking release

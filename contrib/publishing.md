@@ -58,6 +58,19 @@ Then tag `v0.2.3` and push the tag.
 **If `cargo publish` returns 403**, the token has expired. Run `cargo login`
 and paste a new one from crates.io with the `publish-update` scope covering
 both crates. Never paste a token into a chat.
+## A recurring cost: `TextureLookupOptions`
+
+`TextureLookupOptions` is a shared struct in the cxx bridge, so it is public
+and constructible, and cxx generates it rather than letting it be marked
+`#[non_exhaustive]`. Every texture option this crate adds therefore breaks
+`oiio-sys` and costs it a minor bump, even when the `oiio` change is purely
+additive. Adding anisotropy and conservative filtering on 2026-11-02 is the
+first instance: `oiio-sys` needs 0.4.0 while `oiio` needs nothing.
+
+`cargo-semver-checks` does catch this one, reporting
+`constructible_struct_adds_field`, so it does not need watching for by hand.
+Worth knowing when planning a release, not worth restructuring the bridge
+over.
 ## What the semver gate does not catch
 
 `cargo-semver-checks` runs in CI as of 2026-11-02 and is a floor, not a
