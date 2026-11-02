@@ -15,9 +15,18 @@ fix stated and a pull request offered. **A third party has since opened
 against it** (RafatH0ssain, 2026-10-31), applying exactly that one-line fix
 with a regression test. **Merged by lgritz on 2026-11-01 as `a239b899c`, and
 #5638 closed automatically one second later.** So issue 8 is fixed on `main`,
-the second of Kim's two filed issues to be fixed upstream. Not backported:
-`origin/release` (3.2.1.1) still carries the bad line. **Sixteen remain to
-decide on.**
+the second of Kim's two filed issues to be fixed upstream.
+
+It has not reached `origin/release` (3.2.1.1), but that is the normal
+cadence rather than a gap: the release branch has taken no commit since
+2026-10-02, and all 25 of the most recent `main` commits are main-only,
+a dozen of them fixes. It will be swept up with the rest at the next patch
+release. An earlier note here called this a missing backport; that was
+wrong.
+
+**Sixteen remain to decide on, plus one new finding stronger than any of
+them: `ImageBufAlgo::max`, written up in
+`contrib/issue-max-channel-clamp-ready-to-file.md`.**
 
 That outcome is the argument for filing the rest: one carefully verified
 report, with a public retraction when its first diagnosis proved wrong,
