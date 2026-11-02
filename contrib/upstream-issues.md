@@ -13,8 +13,11 @@ collapsed, and neither needs filing.
 fix stated and a pull request offered. **A third party has since opened
 [PR #5640](https://github.com/AcademySoftwareFoundation/OpenImageIO/pull/5640)
 against it** (RafatH0ssain, 2026-10-31), applying exactly that one-line fix
-with a regression test. Verified sound here on 2026-11-01; not yet reviewed
-or merged upstream. **Sixteen remain to decide on.**
+with a regression test. **Merged by lgritz on 2026-11-01 as `a239b899c`, and
+#5638 closed automatically one second later.** So issue 8 is fixed on `main`,
+the second of Kim's two filed issues to be fixed upstream. Not backported:
+`origin/release` (3.2.1.1) still carries the bad line. **Sixteen remain to
+decide on.**
 
 That outcome is the argument for filing the rest: one carefully verified
 report, with a public retraction when its first diagnosis proved wrong,
@@ -645,8 +648,25 @@ v3.2.2.0 and v3.1.19.0, and **reproduced on a 3.2.2.0 release** rather than on
 3.1.9. Reproduction: `contrib/colorconvert_leftover_repro.cpp`. The notes
 below are the original working text.
 
-**PR #5640, opened 2026-10-31 by RafatH0ssain, fixes it.** Checked against
-`main` (1ff2c7bc2) on 2026-11-01 and it is sound: the defect is still present
+**FIXED ON `main` by PR #5640** (opened 2026-10-31 by RafatH0ssain, merged by
+lgritz 2026-11-01 05:13 UTC as `a239b899c`; #5638 auto-closed by the `Fixes`
+link one second later). lgritz approved with "LGTM, thanks for this fix" and
+took responsibility for the line: "it was me who put in that bad line. I
+don't remember it, but I imagine that it was meant as some kind of temporary
+debugging measure." **`origin/main` now reads `r[c] = a[c];` at
+`color_ocio.cpp:3096`.**
+
+**It was not backported.** `origin/release`, at 3.2.1.1, still reads
+`r[c] = 0.5 + 10 * a[c];` at `color_ocio.cpp:2650` (checked 2026-11-02). The
+#5400 fix went to two release lines; this one has not moved off `main` yet.
+
+**No same-family audit followed, unlike #5400.** The only commit on `main`
+after the merge is an unrelated jpeg2000 fix. #5400 prompted lgritz to audit
+the whole `image_span` family in PR #5531 and produced five more fixes; this
+merge prompted none, so the family question is still open and unasked.
+
+The pre-merge check, kept because it is what established the PR was sound:
+checked against `main` (1ff2c7bc2) on 2026-11-01 and it was sound: the defect is still present
 at that commit, `r[c] = a[c]` is what the comment two lines above already
 describes, and the added testsuite case reproduces precisely. Running the
 PR's own command on an unfixed 3.2.2.0 gives
@@ -662,7 +682,7 @@ numerically probing the config against reference colours
 (`color_ocio.cpp:817-834`, `:857-876`), not by the config-alias lookup that
 makes the neighbouring `srgb_tx` lines differ between those two files.
 
-**What the PR does not fix, and what it leaves behind.** The defect reported
+**What the merge did not fix, and what it leaves behind.** The defect reported
 in #5638 is the arithmetic. The `a[c]` in that line is a separate defect:
 the read is unbounded. `colorconvert` calls `IBAprep(roi, &dst, &src)` with
 no flags (`:3189`), so no `IBAprep_CLAMP_MUTUAL_NCHANNELS`; with an
@@ -679,6 +699,28 @@ lines. This is the same family as the `copy()` draft
 (`contrib/issue-copy-unguarded-ready-to-file.md`) and has the same house-style
 remedy available: `paste` guards the same shape of loop with
 `c < src_nchans ? s[c] : D(0)`.
+
+**The reproduction still stands against the merged code, and it does not have
+to be re-run to show it.** `channelsToCopy` is
+`std::min(4, roi.nchannels())`, so with a 6-channel destination it is 4, and
+the kernel has two loops over the source: the processed loop
+`for (c = 0; c < channelsToCopy; ++c) v[c] = a[c]`, and the leftover loop from
+`channelsToCopy` to `roi.chend`. **PR #5640 touched only the leftover loop.**
+In the reproduction's output for a 2-channel source,
+
+```
+  (0,0) =          0          2        200        101     2000.5     2010.5
+```
+
+channels 4 and 5 are the leftover loop, so the merge changes them from
+`2000.5, 2010.5` to `200, 201`. But channels 2 and 3, `200` and `101`, come
+from the **processed** loop, which the merge did not touch at all: `200` is
+twice the following pixel's channel 0 (the matrix doubles it) and `101` is the
+following pixel's channel 1 (the matrix's last row is identity). Those two
+values are already post-merge behaviour. The unguarded read is therefore
+demonstrated on code the PR left exactly as it was, and after the fix the
+leftover channels still carry a neighbouring pixel's values rather than the
+`0` that `paste` would write.
 
 Not reachable through `oiiotool`, whose `--colorconvert` always builds a
 destination sized to the source. It needs a caller that pre-allocates a wider
