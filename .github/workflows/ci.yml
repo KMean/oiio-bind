@@ -55,6 +55,37 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --no-deps --locked
 
+  semver:
+    name: Semver
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # Same reason as the quality job: this reads the public API, it does
+      # not link OpenImageIO. build.rs returns early on DOCS_RS and emits
+      # `cfg(docsrs)`, which no source gates on, so the API this sees is the
+      # API a real build produces.
+      DOCS_RS: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Compares the public API of both crates against their newest published
+      # versions, and judges the change against the version in Cargo.toml. It
+      # does not forbid breaking changes, only unannounced ones: a break with
+      # a minor bump passes, a break without one fails.
+      #
+      # When this fails, the fix is almost always to bump the version in the
+      # same commit as the break rather than at release time. That is what it
+      # is for. `oiio-sys` 0.3.0 was a breaking change caught by hand at
+      # release; this is the gate that would have caught it when it landed.
+      - name: Check semver
+        uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
+        with:
+          rust-toolchain: 1.95.0
+          shared-key: semver
+
   unix:
     name: ${{ matrix.name }} / OIIO ${{ matrix.oiio }}
     runs-on: ${{ matrix.os }}
