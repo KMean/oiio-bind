@@ -188,6 +188,64 @@ jobs:
           export LD_LIBRARY_PATH="$CONDA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           cargo test --workspace --locked -- --nocapture
 
+      # The four examples are compiled by --all-targets and by cargo test,
+      # so they cannot rot syntactically, but nothing ever ran them: a panic,
+      # an empty output or a chain that writes a blank file would survive
+      # every other job. One platform is enough, because what breaks in an
+      # example is its own logic rather than the host.
+      #
+      # The assertions are on values, not exit codes. An example that reads
+      # nothing still exits 0 and prints a spec full of zeros, which is
+      # exactly the failure worth catching.
+      - name: Smoke-test the examples
+        if: runner.os == 'Linux' && matrix.oiio == '3.2.1'
+        shell: micromamba-shell {0}
+        run: |
+          set -euo pipefail
+          export LD_LIBRARY_PATH="$CONDA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          out=$(mktemp -d)
+          fixture=tests/images/test16.png
+          run() { local ex="$1"; shift; cargo run --release --locked --quiet --example "$ex" -- "$@"; }
+
+          # test16.png is a 16x16 uint16 RGBA four-corner fill. info has to
+          # report that shape rather than an empty spec.
+          run info "$fixture" | tee "$out/info.txt"
+          grep -qE 'data window: +16 x 16 x 1' "$out/info.txt"
+          grep -qE 'pixel type: +uint16' "$out/info.txt"
+          grep -qE 'channels: +4' "$out/info.txt"
+
+          # thumbnail and the oiiox chain must each leave a file that reads
+          # back at the size asked for, which a zero-byte write would not.
+          run thumbnail "$fixture" "$out/thumb.png" 8
+          run oiiox -i "$fixture" --resize 8x8 --o "$out/chain.png"
+          for f in "$out/thumb.png" "$out/chain.png"; do
+            test -s "$f"
+            # Into a file rather than straight into grep: grep -q closes
+            # the pipe on its first match, cargo dies of SIGPIPE, and
+            # pipefail then fails the step over a successful match.
+            run info "$f" > "$out/check.txt"
+            grep -qE 'data window: +8 x 8 x 1' "$out/check.txt"
+          done
+
+          # --stats reads every pixel, so pinning the numbers pins the read.
+          # The pattern puts 0 and 1 in every channel and leaves alpha solid,
+          # and the asymmetry between R and G is the signature of the corners:
+          # a decode that silently produced zeros would not reproduce it.
+          run oiiox -i "$fixture" --stats | tee "$out/stats.txt"
+          grep -qE '^  R: min 0\.00000 max 1\.00000 avg 0\.50000 stddev 0\.18889$' "$out/stats.txt"
+          grep -qE '^  G: min 0\.00000 max 1\.00000 avg 0\.50000 stddev 0\.30732$' "$out/stats.txt"
+          grep -qE '^  A: min 1\.00000 max 1\.00000 avg 1\.00000 stddev 0\.00000$' "$out/stats.txt"
+
+          # corpus_hash is one arm of the corpus differential, and the hash is
+          # the value the C++ arm has to agree with, so it is pinned rather
+          # than merely checked for not being an error. The input is uint16
+          # and the conversion to f32 is exact, so this is the same number on
+          # every platform and both OpenImageIO lines.
+          echo "$fixture" | run corpus_hash | tee "$out/hash.txt"
+          grep -qE '^tests/images/test16[.]png[[:space:]]+0[[:space:]]+16x16x4[[:space:]]+b1291e4ff7e887b5$' "$out/hash.txt"
+
+          rm -rf "$out"
+
   windows:
     name: Windows x86_64 / OIIO 3.1.14
     runs-on: windows-2022
