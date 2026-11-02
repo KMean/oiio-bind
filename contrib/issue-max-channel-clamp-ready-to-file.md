@@ -117,9 +117,10 @@ Dependencies: BZip2 1.0.8, DCMTK NONE, FFmpeg NONE, fmt 12.1.0, Freetype 2.13.3,
 
 Nothing unusual about the environment and no nonstandard build options.
 
-The two lines are byte identical on `origin/main`, `v3.2.2.0`, `v3.1.19.0`
-and `origin/release` (3.2.1.1), so this is not specific to the build above.
-No SIMD, threading or format plugin is involved.
+The clamp at `:170` and the kernel line at `:137` are byte identical on
+`origin/main`, `v3.2.2.0`, `v3.1.19.0` and `origin/release` (3.2.1.1), so
+this is not specific to the build above. No SIMD, threading or format plugin
+is involved.
 
 **On filing this as an issue rather than a pull request**
 
