@@ -1,7 +1,18 @@
-# Draft reports for OpenImageIO
+# OpenImageIO defects this binding works around
 
-Nineteen issues from building Rust bindings against OpenImageIO 3.1/3.2, plus
-one open observation not yet settled enough to report.
+Nineteen defects found while building Rust bindings against OpenImageIO
+3.1/3.2, plus one open observation. This is the reference the crate cites:
+where `oiio` refuses an argument that OpenImageIO accepts, or works around
+behaviour the manual does not describe, the reason is written up here with
+the upstream source that justifies it. `src/texture.rs` and `ROADMAP.md`
+point at these sections by number.
+
+Recording a defect and reporting it are separate jobs. Three are filed
+upstream; the rest are recorded because the crate had to handle them, not
+because they are queued to send. A report is only worth sending once its
+line numbers and every claim in it have been re-checked against current
+upstream, which is work per report rather than work once, and reports being
+prepared are kept out of this repository until they are filed.
 
 **Issues 1 and 2 are resolved upstream** (PR #5531, merged 2026-10-02, first
 released in 3.1.18.1 and 3.2.1.1). Issue 1 was filed as #5400; issue 2 was
@@ -44,7 +55,7 @@ so nothing would catch this returning.
 **Issue 4 was filed as
 [#5645](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5645)**
 on 2026-11-02, so **fifteen remain to decide on**. Full filed text in
-`contrib/issue-max-channel-clamp-ready-to-file.md`. **Three filed, two fixed
+`contrib/filed-5645-max-channel-clamp.md`. **Three filed, two fixed
 so far.**
 
 **A sixteenth, found 2026-11-02 and not from the drafts:**
@@ -54,7 +65,7 @@ fractional extent reads past the allocation and a fractional one writes past
 it. Half of runs return a wrong kernel, variously a delta spike, a negative
 value a binomial cannot produce, or NaN. Guarded here as of `b3e300c`, in
 both `make_kernel` and `unsharp_mask`. Filing-ready text in
-`contrib/issue-binomial-kernel-ready-to-file.md`: no tracker duplicate, and
+a report prepared in full: no tracker duplicate, and
 no testsuite coverage of binomial at all, which is why it lasted.
 
 A note on how it got there, because the record should not flatter the
@@ -467,7 +478,7 @@ which is presumably why this went unnoticed.
 
 **Filed 2026-11-02 as
 <https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5645>.** The
-filed text is `contrib/issue-max-channel-clamp-ready-to-file.md`, with line
+filed text is `contrib/filed-5645-max-channel-clamp.md`, with line
 numbers refreshed to `origin/main` (the ones below are v3.1.19.0's) and a
 reproduction the draft lacked. The notes below are the original working text.
 
@@ -697,7 +708,7 @@ Found while binding these for Rust; the binding does not expose `blocksize`.
 
 **Filed 2026-10-30 as
 <https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5638>.** The
-filed text is `contrib/issue-8-ready-to-file.md`: this issue rewritten to the
+filed text is `contrib/filed-5638-colour-engine-channels.md`: this issue rewritten to the
 bug-report template, with line numbers refreshed against `main` (1ff2c7bc2),
 v3.2.2.0 and v3.1.19.0, and **reproduced on a 3.2.2.0 release** rather than on
 3.1.9. Reproduction: `contrib/colorconvert_leftover_repro.cpp`. The notes
@@ -751,7 +762,7 @@ pre-allocated 6-channel destination returns success and writes values read
 from the *following* pixels, and past the allocation at the end of the
 buffer. Identical on 3.2.2.0 and on the vcpkg 3.1.12.0, so both release
 lines. This is the same family as the `copy()` draft
-(`contrib/issue-copy-unguarded-ready-to-file.md`) and has the same house-style
+(prepared in full, kept unpublished) and has the same house-style
 remedy available: `paste` guards the same shape of loop with
 `c < src_nchans ? s[c] : D(0)`.
 

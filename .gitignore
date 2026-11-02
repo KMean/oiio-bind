@@ -15,3 +15,12 @@ target/
 # public fork. Lives in F:\prjs\oiio-bind-private\ instead.
 contrib/draft-corrections.md
 contrib/*-private.md
+
+# A report that is finished but not filed stays out of a public fork: the
+# name alone invites the question of why it was not just filed, and the
+# answer is nobody's business but ours. They live in F:\prjs\oiio-bind-private\
+# until they are filed, and come back renamed for the issue number.
+contrib/*ready-to-file*.md
+
+# Working notes written to Kim rather than to a reader of this repository.
+contrib/session-*.md

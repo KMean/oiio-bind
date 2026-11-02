@@ -27,7 +27,7 @@ odd whole numbers, and say why. Every other kernel name is untouched, since
 those go through a `Filter2D` sized from the rounded image rather than from
 the extent, and a test pins that they still build at even widths.
 
-Written up for upstream in `contrib/issue-binomial-kernel-ready-to-file.md`.
+Written up for upstream in full, not yet filed.
 
 ### Texture filtering quality is reachable
 

@@ -65,8 +65,9 @@ is reachable from this crate, it is guarded here and reported upstream:
 |---|---|---|
 | [#5400](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5400) | `read_image` with an `image_span` transposed x and y on tiled files | fixed |
 | [#5638](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5638) | the colour engine wrote `0.5 + 10 * src` into channels past the fourth | fixed |
-| [#5645](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5645) | `ImageBufAlgo::max` reads past the narrower input | open |
+| [#5645](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5645) | `ImageBufAlgo::max` reads past the narrower input | fix open in [#5646](https://github.com/AcademySoftwareFoundation/OpenImageIO/pull/5646) |
 
-Further findings are drafted in `contrib/upstream-issues.md`. A defect that is
-only reachable by calling OpenImageIO directly, not through this crate, is an
-upstream matter rather than a vulnerability here.
+The rest of what this crate works around is written up in
+`contrib/upstream-issues.md`, with the upstream source for each. A defect that
+is only reachable by calling OpenImageIO directly, not through this crate, is
+an upstream matter rather than a vulnerability here.
