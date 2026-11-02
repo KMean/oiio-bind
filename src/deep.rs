@@ -55,6 +55,25 @@ pub struct DeepImage {
     channels: Vec<DeepChannel>,
 }
 
+// The simplest of the crate's `Send` claims, and checked rather than assumed.
+// `DeepData::Impl` is plain owned storage: the per-pixel sample counts and
+// offsets, one flat data block, and the channel types and names. No pool, no
+// arena, no allocator with thread affinity, and no `thread_local` in
+// `deepdata.cpp`. The destructor drops those vectors and nothing else, so
+// running it on a different thread than the constructor changes nothing. The
+// channel names are `ustring`s, whose global table is guarded by a
+// `spin_rw_mutex` (`ustring.cpp:37`, read locks on lookup, write lock on
+// insert), so sharing those across threads is already synchronised upstream.
+// The Rust-side fields beside the pointer are two arrays of integers and a
+// `Vec<DeepChannel>` of plain data, all `Send` on their own.
+//
+// `Sync` is deliberately absent. Several `const` methods are not read-only:
+// `all_data` and `get_pointers` (`deepdata.cpp:841-846`, `:851-856`) allocate
+// and fill cached state behind a `const` signature, so two threads holding
+// `&DeepImage` could race them. Anything that needs one deep image on several
+// threads wants `Arc<Mutex<_>>`, or a clone per thread.
+unsafe impl Send for DeepImage {}
+
 impl DeepImage {
     /// Build an empty deep image matching a specification.
     ///

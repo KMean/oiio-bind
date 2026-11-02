@@ -86,6 +86,58 @@ pub struct ImageBuf {
     inner: cxx::UniquePtr<sys::imagebuf::ImageBuf>,
 }
 
+// `ImageBufImpl` holds its own pixel storage, its own `ImageSpec` and its own
+// error string; there is no `thread_local` in `imagebuf.cpp`, nothing
+// `Perthread`-shaped, and no handle keyed to the creating thread. Every buffer
+// this crate makes from a file passes a null cache (see `from_path`, which
+// hands `cxx::SharedPtr::null()` to the shim), so `m_imagecache` is null and
+// the destructor's one cache-reaching branch (`imagebuf.cpp:866-869`) does not
+// fire. Moving the value to another thread and dropping it there is therefore
+// a drop of plain owned memory.
+//
+// `Sync` is NOT claimed, and the clearest reason is a one-liner:
+// `void threads(int n) const { m_threads = n; }` (`imagebuf.cpp:287`) writes a
+// non-atomic `mutable int m_threads` (`:345`) through a `const` path. A `&self`
+// method in C++ is not read-only here. This crate already contains that
+// correctly, because the shim takes a non-const `ImageBuf&` and the wrapper is
+// `set_threads(&mut self)`, which is the `&mut` discipline doing real work
+// rather than decoration. Keep new methods on `&mut self` unless the C++ behind
+// them is genuinely const.
+//
+// Two things this impl does not claim.
+//
+// First, `write()` reaches OpenImageIO's process-wide shared cache, and it does
+// so *because* `m_imagecache` is null. `ImageBuf::write` calls
+// `m_impl->invalidate(filename, true)` (`imagebuf.cpp:1767`), whose body
+// fetches `ImageCache::create(true)` and, when the buffer's own cache differs
+// from the shared one, invalidates the shared one too (`:312-320`; the comment
+// there says as much). In a process where only this crate uses OpenImageIO
+// that is a locked singleton fetch and a lookup that misses, because nothing
+// populates the shared cache. Where foreign OpenImageIO code shares the process
+// and has populated it, that invalidation can free state another reader is
+// walking, which is the hazard described above `ImageCache`'s own impl. `Send`
+// does not create this: two threads can each build a buffer and call `write`
+// concurrently today with `ImageBuf: !Send`. It is stated because a comment
+// claiming this type never touches an `ImageCache` would be false.
+//
+// Second, diagnostics do not travel. OpenImageIO's global error channel is
+// `static thread_local ErrorHolder` (`strutil.cpp:217`), so a message raised on
+// the thread that built a buffer reads back empty on the thread that received
+// it. `ImageBuf`'s own `m_err` is a member and does move with the value; it is
+// the global channel that does not. Nothing here is unsound, but an error
+// explaining a failure can be lost across a move.
+//
+// Conditions for the above to keep holding. Never pass a real cache to
+// `imagebuf_new_from_file`: with one, `drop` becomes a `close` plus
+// `invalidate` on that cache from whatever thread the drop lands on, which the
+// borrow checker cannot see and so cannot exclude against a concurrent `&self`
+// read. Leave `imagebuf_lock`/`imagebuf_unlock` unbound in the safe crate; they
+// are declared in `oiio-sys` and referenced nowhere here, and a lock released
+// on a thread that did not take it is undefined behaviour. And do not expose
+// `imagebuf_new_from_buffer`, whose result aliases caller memory with no
+// lifetime, making `Send` a claim about that memory too.
+unsafe impl Send for ImageBuf {}
+
 impl ImageBuf {
     /// An image with no specification and no pixels yet.
     ///

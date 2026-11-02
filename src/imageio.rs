@@ -15,6 +15,38 @@ pub struct ImageInput {
     _bytes: Option<Vec<u8>>,
 }
 
+// OpenImageIO's position on `ImageInput` is that two threads must not call
+// into one concurrently, which forbids `Sync` and says nothing against `Send`:
+// a reader is not bound to the thread that opened it. The base class carries a
+// `std::recursive_mutex` for callers who want to serialise access themselves,
+// and every use of it upstream is a scoped guard inside a single call, so no
+// lock is ever held across a return and nothing can be left locked by the
+// thread that moves the value away.
+//
+// The three owned pieces move as a unit. `_bytes` is the Vec an in-memory
+// reader was opened over and `_proxy` is the `IOProxy` pointing into it;
+// because they are fields of the same struct they travel together, and the
+// proxy registers itself nowhere thread-keyed.
+//
+// `close()` takes `self` by value, which is what keeps the close and the
+// destructor on one thread. Keep it that way: it is the reason there is no
+// window in which a half-closed reader could be observed from elsewhere.
+//
+// `Sync` is not claimed and should not be. Besides the concurrency rule above,
+// the error channel OpenImageIO fills on failure is
+// `static thread_local ErrorHolder` (`strutil.cpp:217`), so a message raised on
+// one thread is not readable from another; `take_error` taking `&mut self` is
+// what keeps that honest.
+//
+// Two conditions. Leave `lock`, `unlock` and `try_lock` (`imageio.h:2200-2206`)
+// unbound, since a recursive mutex unlocked by a thread that did not lock it is
+// undefined behaviour, and if they are ever exposed the guard must itself be
+// `!Send`. And note this impl covers every format plugin, because the crate
+// cannot choose which reader a file produces: the readers surveyed for
+// thread-bound state keep theirs inside a single call, and a reader that held
+// state across calls keyed to its creating thread would invalidate this.
+unsafe impl Send for ImageInput {}
+
 impl ImageInput {
     /// Open an image file with configuration hints.
     ///
@@ -692,6 +724,25 @@ pub struct ImageOutput {
     /// the writer that fills it.
     proxy: Option<cxx::UniquePtr<sys::filesystem::IOProxy>>,
 }
+
+// The same reasoning as `ImageInput`, with one difference that matters. A
+// writer carries buffered state and a scanline cursor, and several formats
+// will only take rows in order, which is why this type tracks `next_scanline`
+// itself. None of that state is bound to a thread: it is members of the writer
+// and of this struct, and they move together. The destructor flushes and
+// closes, and flushing from a thread other than the one that opened the file
+// is no different from flushing late on the same thread.
+//
+// `Sync` is not claimed. The whole argument above leans on no `&self` path
+// reaching the writer's buffered state, the scanline cursor, or the error
+// channel. The FFI declaration `imageoutput_geterror(imageoutput:
+// &ImageOutput, clear: bool)` is a shared reference at the sys layer, so that
+// property is enforced here and only here, by `take_error` taking `&mut self`.
+// Adding a `&self` accessor that reaches any of those would break this impl.
+//
+// As with `ImageInput`, this covers every writer plugin, because the crate
+// does not choose which one a filename produces.
+unsafe impl Send for ImageOutput {}
 
 impl ImageOutput {
     /// Record the specification the file was actually opened with.

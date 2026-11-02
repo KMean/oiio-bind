@@ -28,6 +28,31 @@ pub struct ColorConfig {
     inner: cxx::UniquePtr<sys::color::ColorConfig>,
 }
 
+// A `ColorConfig` owns its `ColorConfig::Impl` outright: the OCIO config
+// handle, the colour space and role vectors, and the strings they hold. None
+// of it is thread-bound. There is no `thread_local` anywhere in
+// `color_ocio.cpp`, nothing registers the config in a thread-keyed table, and
+// the destructor only drops those vectors and releases the OCIO handle, so it
+// is as happy on one thread as another.
+//
+// `Send` is all that is claimed. `Sync` is not, and the reason is worth
+// recording because the type looks read-only and is not: the config is built
+// on first use rather than at construction (upstream `f05656438`, "load the
+// color config on first use"), so the first `&self` call on a freshly made
+// `ColorConfig` mutates it. Two threads reaching that through `&` would race
+// an initialisation that is not atomic. A caller who wants one config across
+// threads writes `Arc<Mutex<ColorConfig>>`, or more cheaply builds one per
+// thread, which is inexpensive here.
+//
+// Two methods must stay unbound for this to keep holding. `reset()`
+// (`color_ocio.cpp:1070-1085`) replaces the whole `Impl` in place, which would
+// free vectors and strings a `&self` reader is walking; if it is ever wanted
+// it takes `&mut self`, exactly as `invalidate` does on `ImageCache` and
+// `TextureSystem`. And `default_colorconfig()` hands back a process-wide
+// shared instance, which would put two Rust values over one C++ object and
+// defeat the per-value discipline the rest of this crate is built on.
+unsafe impl Send for ColorConfig {}
+
 impl ColorConfig {
     /// The active configuration: `$OCIO`, or OpenImageIO's built-in one.
     pub fn new() -> Result<Self> {
