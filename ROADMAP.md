@@ -312,8 +312,9 @@ Two are now fixed upstream. Issue 1 was filed as #5400 and fixed in PR #5531,
 which also fixed issue 2 — never filed — plus three more in the same family
 that this crate never drafted. Seventeen remain, all still present. One of
 them — the colour engine writing `0.5 + 10 * src` into channels past the
-fourth instead of copying them — is now filed as #5638, leaving sixteen still
-to decide on. Several are guarded here rather than passed on, which is why a
+fourth instead of copying them — was filed as #5638 and is fixed upstream.
+A second, `ImageBufAlgo::max` widening the channel range where `min` narrows
+it, was filed as #5645. Fifteen remain to decide on. Several are guarded here rather than passed on, which is why a
 few operations refuse arguments OpenImageIO accepts:
 
 - `algo::max` refuses unequal channel counts and a narrower destination.

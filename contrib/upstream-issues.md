@@ -24,11 +24,22 @@ a dozen of them fixes. It will be swept up with the rest at the next patch
 release. An earlier note here called this a missing backport; that was
 wrong.
 
-**Sixteen remain to decide on.** The `ImageBufAlgo::max` channel clamp, found
-on 2026-11-02 and stronger than any of them, was **filed the same day as
-[#5645](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5645)**.
-Full text in `contrib/issue-max-channel-clamp-ready-to-file.md`. **Three
-filed, two fixed so far.**
+**Issue 4 was filed as
+[#5645](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5645)**
+on 2026-11-02, so **fifteen remain to decide on**. Full filed text in
+`contrib/issue-max-channel-clamp-ready-to-file.md`. **Three filed, two fixed
+so far.**
+
+A note on how it got there, because the record should not flatter the
+process. The leftover/unguarded audit of 2026-11-02 reported this as a new
+finding, and it was presented as one. It is not: it is issue 4, drafted long
+before, and the binding has guarded against it since the pixel-maths slice.
+The audit agents were told to skip `mad`, `copy`, `channel_sum` and
+`colorconvert` as already known, but were never given the sixteen drafts, so
+they rediscovered one. What the day actually produced was the correction the
+draft needed: its line numbers were the v3.1.19.0 ones (`:169`, `:72`,
+`:323`) rather than `main`'s, and it had no reproduction. Both were fixed
+before filing. The filing is sound; the discovery claim was not.
 
 That outcome is the argument for filing the rest: one carefully verified
 report, with a public retraction when its first diagnosis proved wrong,
@@ -425,7 +436,13 @@ and drew no review comments, so parenthesisation was never discussed; the
 idiom preferred in #2261's discussion was the raw `#if OIIO_VERSION <= 20008`,
 which is presumably why this went unnoticed.
 
-## Issue 4 — `ImageBufAlgo::max` widens the channel range where `min` narrows it
+## Issue 4 — FILED as #5645 — `ImageBufAlgo::max` widens the channel range where `min` narrows it
+
+**Filed 2026-11-02 as
+<https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5645>.** The
+filed text is `contrib/issue-max-channel-clamp-ready-to-file.md`, with line
+numbers refreshed to `origin/main` (the ones below are v3.1.19.0's) and a
+reproduction the draft lacked. The notes below are the original working text.
 
 **Title:** `ImageBufAlgo::max(dst, A, B)` reads and writes out of bounds when
 the destination has fewer channels than the inputs, or the inputs differ in
