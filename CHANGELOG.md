@@ -36,9 +36,11 @@ widens the destination to seven channels and a deep one returns five with the
 source at channel 0, reporting success either way.
 
 The same omission is why pasting into an empty deep destination printed
-`OIIO_ASSERT(dst.deep() && src.deep())` on a build with assertions live. That
-is gone as a consequence rather than as a separate fix. Written up for
-upstream in full, not yet filed.
+`OIIO_ASSERT(dst.deep() && src.deep())`. That is gone as a consequence rather
+than as a separate fix. Note that it printed on every build, not only on one
+configured with assertions live: `OIIO_ASSERT` always evaluates and always
+writes to stderr, and only its abort is conditional. `OIIO_DASSERT` is the one
+that compiles out. Written up for upstream in full, not yet filed.
 
 ### `ImageBuf::read` keeps the mip level it was attached to
 
@@ -122,20 +124,28 @@ directory that does not exist, and every EXR corpus test skipped and passed.
 ### A binomial kernel with an even or fractional extent is refused
 
 OpenImageIO's `make_kernel` sizes its binomial tap arrays from the extent
-asked for and then indexes them over the odd-rounded image size, so an even
-extent reads past the allocation and a fractional one writes past it. The
-value is whatever the stack held: of six runs of a 4 by 4, one was correct,
-one was wrong in the fifth digit, and four were a delta spike rather than a
-blur. One came back with a negative value, which a product of binomial
-coefficients cannot produce. On another build the same call returns `NaN`,
-which propagates to every pixel it convolves.
+asked for and then indexes them over the odd-rounded image size. An even
+extent reads one float past the allocation; a fractional one writes past it
+and then reads past it.
+
+The value read is whatever was there, so the result depends on which of the
+two arrays overruns. An even or fractional *width* overruns the last of the
+three allocations and varies from run to run: of 20 runs of a 4 by 4 on
+OpenImageIO 3.2.2.0, twelve gave the correct maximum of 0.140625, five gave
+1.000000, which is a delta rather than a blur, one gave 0.125335, and two gave
+a maximum of -0.000000, meaning no value in the kernel was positive. A product
+of binomial coefficients cannot be non-positive, and convolving with that
+kernel returns black. An even or fractional *height* with an odd width
+overruns the middle allocation instead and is stably wrong rather than
+variable: `1x4` returns 0.333333 every run where `[1,3,3,1]/8` gives 0.375.
 
 `make_kernel` and `unsharp_mask` now refuse a binomial whose extents are not
 odd whole numbers, and say why. Every other kernel name is untouched, since
 those go through a `Filter2D` sized from the rounded image rather than from
 the extent, and a test pins that they still build at even widths.
 
-Written up for upstream in full, not yet filed.
+Reported upstream as
+[#5648](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5648).
 
 ### Texture filtering quality is reachable
 
