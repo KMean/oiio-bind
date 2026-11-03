@@ -348,3 +348,28 @@ fn the_deep_operations_refuse_flat_images() {
         "unexpected message: {error}"
     );
 }
+
+/// Pasting a deep source into an empty destination works, and must do so
+/// without tripping OpenImageIO's own assertion on the way.
+///
+/// `deep_paste_` opens with `OIIO_ASSERT(dst.deep() && src.deep())` and then,
+/// twelve lines down, handles an uninitialized destination itself with
+/// `dst.reset(src.spec())`. So the assertion rejects a shape the function is
+/// written to support. A build with assertions compiled out prints and
+/// carries on; conda-forge ships one with them live.
+///
+/// This was invisible because it is not an error: the call returns Ok and the
+/// result is correct. It showed up as 25 assertion lines in a CI run that
+/// passed. The shim now does OpenImageIO's own reset first.
+#[test]
+fn pasting_a_deep_source_into_an_empty_destination_works() {
+    let src = deep_image(4, 4, 2);
+    let mut dst = ImageBuf::empty().unwrap();
+
+    algo::paste(&mut dst, [0, 0, 0], 0, &src, None)
+        .expect("a deep source pastes into an empty destination");
+
+    assert!(dst.is_deep(), "the destination should have become deep");
+    assert_eq!(dst.deep_sample_count(0, 0), 2);
+    assert_eq!(dst.deep_sample_count(3, 3), 2);
+}

@@ -2562,6 +2562,22 @@ imagebufalgo_paste(ImageBuf& dst, int xbegin, int ybegin, int zbegin,
         return false;
     }
 
+    // deep_paste_ opens with OIIO_ASSERT(dst.deep() && src.deep())
+    // (imagebufalgo_copy.cpp:59) and then, twelve lines further down, handles
+    // an uninitialized destination itself with dst.reset(src.spec()). So the
+    // assertion rejects a shape the function is written to support, and an
+    // empty destination plus a deep source trips it every time. A build with
+    // assertions compiled out only prints; one with them live aborts, and
+    // conda-forge ships OpenImageIO with them live, which is where this was
+    // found: 25 of these in a single passing CI run, drowning out whatever
+    // else those logs had to say.
+    //
+    // Doing OpenImageIO's own reset first is not a behaviour change. It is
+    // the same call, on the same condition, a few microseconds earlier, and
+    // it leaves the assertion looking at the deep destination it expects.
+    if (!dst.initialized() && src.deep())
+        dst.reset(src.spec());
+
     if (!OIIO::ImageBufAlgo::paste(dst, xbegin, ybegin, zbegin, chbegin, src,
                                    srcroi, nthreads))
         return false;
