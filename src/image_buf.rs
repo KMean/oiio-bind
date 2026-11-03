@@ -225,9 +225,20 @@ impl ImageBuf {
         Ok(buffer)
     }
 
-    /// Read the pixels of the attached file.
+    /// Read the pixels of the attached file, at the subimage and mip level it
+    /// is attached to.
+    ///
+    /// Those are the indices [`ImageBuf::from_path_at`] was given, which
+    /// [`ImageBuf::subimage`] and [`ImageBuf::mip_level`] report before any
+    /// pixel is read. OpenImageIO's own `read` defaults both to zero instead,
+    /// so a buffer attached to mip level 3 whose spec says 64 by 64 came back
+    /// 512 by 512 from level 0, with nothing reported: the level was asked
+    /// for, confirmed by the spec, and then replaced. Reading what the buffer
+    /// says it holds is the only answer that cannot surprise a caller.
+    ///
+    /// Use [`ImageBuf::read_at`] to read a different one.
     pub fn read(&mut self) -> Result<()> {
-        self.read_at(0, 0, None)
+        self.read_at(self.subimage(), self.mip_level(), None)
     }
 
     /// Read one subimage and mip level, optionally converting the pixels.
@@ -378,7 +389,7 @@ impl ImageBuf {
                 format!(
                     "the buffer kept previously read channels {:?} instead of {:?}; \
                      OpenImageIO does not re-read when only the position of a \
-                     same-sized channel range changes — read the full image first, \
+                     same-sized channel range changes; read the full image first, \
                      or use a fresh buffer",
                     held.channel_names(),
                     expected
@@ -423,7 +434,27 @@ impl ImageBuf {
         sys::imagebuf::imagebuf_nsubimages(self.inner())
     }
 
-    /// Number of mip levels in the current subimage.
+    /// Always 0 for a buffer this crate made. Use
+    /// [`ImageCache::mip_level_count`](crate::ImageCache::mip_level_count).
+    ///
+    /// `ImageBufImpl::init_spec` fills `m_nmiplevels` only on its
+    /// cache-backed branch (`imagebuf.cpp:1137`). The branch that opens the
+    /// file through `ImageInput` sets `m_nsubimages` from
+    /// `oiio:subimages` and leaves `m_nmiplevels` at the zero it was
+    /// initialised with (`imagebuf.cpp:1232-1267`), so `nmiplevels()`
+    /// answers 0 for every file, mipmapped or not. `nsubimages()`, from the
+    /// same function, is correct.
+    ///
+    /// Every buffer this crate opens from a file passes a null cache, which
+    /// is what the `Send` reasoning on this type rests on, so that branch is
+    /// the only one it takes. The number is still available: an
+    /// [`ImageCache`](crate::ImageCache) reports 10 levels for OpenEXR's
+    /// `ColorCodedLevels.exr` where this returns 0. Reading a level works
+    /// regardless, and [`ImageBuf::from_path_at`] refuses one past the last.
+    ///
+    /// This is kept rather than removed because it is OpenImageIO's own
+    /// accessor, and a caller comparing the two libraries should find it
+    /// where they expect and read what it does.
     pub fn mip_level_count(&self) -> i32 {
         sys::imagebuf::imagebuf_nmiplevels(self.inner())
     }
@@ -828,8 +859,16 @@ impl ImageBuf {
 
     /// One sample's value, as an unsigned integer.
     ///
-    /// Use this for a channel whose type is unsigned; reading it as a float
-    /// would round values a float cannot hold exactly.
+    /// Use this for a channel whose type is unsigned, and note what the
+    /// alternative does rather than assuming it is approximate.
+    /// [`deep_value`](Self::deep_value) does not round an unsigned channel, it
+    /// *normalises* it: OpenImageIO converts through `convert_type`, which
+    /// divides by [`u32::MAX`]. An object id of 2,056,745,377 comes back as
+    /// 0.47887334, which is a plausible colour value and not a wrong-looking
+    /// number, so nothing announces the loss. Deep EXRs from a renderer carry
+    /// `id` and `particleid` channels as `uint32` next to half `R G B A Z`, so
+    /// a caller walking every channel with `deep_value` reads most of them
+    /// correctly and silently scales the identifiers into nothing.
     pub fn deep_value_uint(&self, x: i32, y: i32, channel: u32, sample: u32) -> Result<u32> {
         let (channel, sample) = self.deep_index("read deep value", x, y, channel, sample)?;
         Ok(sys::imagebuf::imagebuf_deep_value_uint(

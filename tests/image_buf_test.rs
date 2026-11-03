@@ -142,6 +142,73 @@ fn reads_a_subimage_and_mip_level() {
     assert_eq!(pixels, expected);
 }
 
+/// `read` reads the level the buffer is attached to, not level zero.
+///
+/// The test above passes the indices twice, once to `from_path_at` and again
+/// to `read_at`, and had to: `read` used to call `read_at(0, 0, None)`
+/// whatever the buffer was opened on. So a buffer attached to mip level 1,
+/// whose `spec` reported the 8 by 8 level and whose `mip_level` reported 1,
+/// came back from `read` holding the 16 by 16 base image with `mip_level` at
+/// 0. Nothing was returned to say so. OpenImageIO's `read` defaults both
+/// indices to zero, which is visible in a C++ call signature and invisible
+/// behind a Rust method that takes no arguments at all.
+///
+/// On a colour-coded pyramid, where every level is a different colour, the
+/// consequence is a lookup that silently answers from the wrong level.
+#[test]
+fn read_uses_the_level_the_buffer_was_attached_to() {
+    let scratch = ScratchDir::new("bufmiplevel");
+    let path = scratch.file("mipped.exr");
+
+    let sizes = [(16_u32, 16_u32), (8, 8), (4, 4), (2, 2), (1, 1)];
+    let levels: Vec<ImageSpec> = sizes
+        .into_iter()
+        .map(|(width, height)| {
+            ImageSpec::new(width, height, 3, PixelFormat::F16)
+                .unwrap()
+                .with_tile_size([4, 4, 1])
+                .unwrap()
+                .with_attribute("textureformat", "Plain Texture")
+        })
+        .collect();
+
+    let mut output = oiio::ImageOutput::create(&path, &levels[0]).unwrap();
+    for (index, level) in levels.iter().enumerate() {
+        if index > 0 {
+            output.append_mip_level(level).unwrap();
+        }
+        output
+            .write_image(&f16_ramp(level.element_count().unwrap()))
+            .unwrap();
+    }
+    output.close().unwrap();
+
+    for (index, (width, height)) in sizes.iter().enumerate() {
+        let level = index as u32;
+        let mut image = ImageBuf::from_path_at(&path, 0, level).unwrap();
+
+        // What the buffer says it is attached to, before any pixel is read.
+        assert_eq!(image.mip_level(), level);
+        assert_eq!(image.spec().unwrap().dimensions(), [*width, *height, 1]);
+
+        // `read` with no arguments, which is the call that used to discard it.
+        image.read().unwrap();
+        assert_eq!(
+            image.spec().unwrap().dimensions(),
+            [*width, *height, 1],
+            "read() should have kept mip level {level}"
+        );
+        assert_eq!(image.mip_level(), level);
+
+        // And the pixels are that level's, not the base image's.
+        let expected = f16_ramp(levels[index].element_count().unwrap());
+        let roi = image.spec().unwrap().data_window().unwrap();
+        let mut pixels = vec![f16::ZERO; roi.element_count().unwrap()];
+        image.get_pixels_into(roi, &mut pixels).unwrap();
+        assert_eq!(pixels, expected, "mip level {level} held the wrong pixels");
+    }
+}
+
 #[test]
 fn writes_an_image_to_a_file() {
     let scratch = ScratchDir::new("bufwrite");

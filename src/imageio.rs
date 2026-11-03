@@ -1324,7 +1324,7 @@ impl ImageOutput {
                 format!(
                     "a {width}×{height} thumbnail cannot be stored: dimensions must be \
                      under 256, and OpenImageIO's own downsizing clamps to 256 and \
-                     truncates it to zero — resize it first"
+                     truncates it to zero; resize it first"
                 ),
             ));
         }
