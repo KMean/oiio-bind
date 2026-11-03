@@ -318,6 +318,12 @@ operations refuse arguments OpenImageIO accepts:
 - `algo::checker` refuses a square of zero, `render_box` a reversed filled
   box, `render_text` text with no glyphs, and the filter window ops a width of
   one.
+- `algo::paste` refuses a first channel on a deep source, which OpenImageIO
+  ignores, and sizes an empty deep destination from the destination region, so
+  an offset paste lands where it was asked rather than wrapping into the next
+  scanline. Where the destination is already allocated it clips the source to
+  what fits, which is both the flat path's behaviour and what the call
+  documents, and refuses the paste when nothing would land.
 - Every measurement, and `ifft`, refuse inputs whose pixels they would
   dereference through a null pointer.
 

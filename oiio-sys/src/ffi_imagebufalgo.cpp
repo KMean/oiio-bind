@@ -297,7 +297,7 @@ refuse_distant_pair(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
         = OIIO::roi_union(a.roi(), b.roi()).npixels();
     if (spanned <= held * 16 + 1024)
         return false;
-    dst.errorfmt("{}: the two images sit too far apart to combine — one spans "
+    dst.errorfmt("{}: the two images sit too far apart to combine: one spans "
                  "{},{} to {},{} and the other {},{} to {},{}, so the result "
                  "would cover {} pixels for {} of input. Give an explicit "
                  "region, or move them onto the same coordinates",
@@ -2552,7 +2552,7 @@ imagebufalgo_paste(ImageBuf& dst, int xbegin, int ybegin, int zbegin,
     // chbegin offsets the source's channels into the destination and is not
     // clamped anywhere. Far enough negative and the destination's channel
     // count goes negative too, at which point IBAprep hands it to
-    // default_channel_names(), which is noexcept and reserves that many —
+    // default_channel_names(), which is noexcept and reserves that many:
     // std::terminate, with nothing printed.
     const ROI source = srcroi.defined() ? srcroi : src.roi();
     if (chbegin + source.chend <= 0) {
@@ -2562,24 +2562,104 @@ imagebufalgo_paste(ImageBuf& dst, int xbegin, int ybegin, int zbegin,
         return false;
     }
 
-    // deep_paste_ opens with OIIO_ASSERT(dst.deep() && src.deep())
-    // (imagebufalgo_copy.cpp:59) and then, twelve lines further down, handles
-    // an uninitialized destination itself with dst.reset(src.spec()). So the
-    // assertion rejects a shape the function is written to support, and an
-    // empty destination plus a deep source trips it every time. A build with
-    // assertions compiled out only prints; one with them live aborts, and
-    // conda-forge ships OpenImageIO with them live, which is where this was
-    // found: 25 of these in a single passing CI run, drowning out whatever
-    // else those logs had to say.
-    //
-    // Doing OpenImageIO's own reset first is not a behaviour change. It is
-    // the same call, on the same condition, a few microseconds earlier, and
-    // it leaves the assertion looking at the deep destination it expects.
-    if (!dst.initialized() && src.deep())
-        dst.reset(src.spec());
+    ROI effective = srcroi;
+
+    // Everything below is the deep path, which never goes through IBAprep.
+    // ImageBufAlgo::paste sends a deep source to deep_paste_
+    // (imagebufalgo_copy.cpp:56) and that function substitutes
+    // dst.reset(src.spec()) for the IBAprep call. Three separate things
+    // follow from the substitution and all three are reported as success.
+    if (src.deep()) {
+        // The region the caller asked the source to land on, computed the
+        // way ImageBufAlgo::paste computes it.
+        const ROI target(source.xbegin + xbegin,
+                         source.xbegin + xbegin + source.width(),
+                         source.ybegin + ybegin,
+                         source.ybegin + ybegin + source.height(),
+                         source.zbegin + zbegin,
+                         source.zbegin + zbegin + source.depth(),
+                         source.chbegin, source.chend);
+
+        // One. deep_paste_ never reads the channel part of dstroi, so chbegin
+        // is dropped. A flat paste with a first channel of 2 widens the
+        // destination to seven channels and puts the source at channel 2; a
+        // deep one returns five channels with the source at channel 0 and
+        // says it worked. There is nothing to pass on here, so this refuses.
+        if (chbegin != 0) {
+            dst.errorfmt("paste: OpenImageIO's deep path ignores the first "
+                         "channel, so a value of {} would be dropped without "
+                         "being reported; paste at channel zero and move the "
+                         "channels afterwards with channels or channel_append",
+                         chbegin);
+            return false;
+        }
+
+        // Two. The reset takes the source's window, so the destination region
+        // is gone before a sample is written. deep_paste_ then writes at
+        // x + (dstroi.xbegin - srcroi.xbegin) through
+        // ImageBuf::set_deep_samples and ImageBuf::copy_deep_pixel, and both
+        // of those call pixelindex() with check_range defaulting to false. A
+        // coordinate outside the destination is not clipped, it gets a linear
+        // index that wraps into the next scanline: an 8x8 source pasted at
+        // x=10 into an empty destination comes back shifted one row and two
+        // columns, with the writes that ran off the end dropped by
+        // DeepData::set_samples and its own bounds test. 128 samples became
+        // 108. The flat path has none of this, because paste_ iterates and
+        // tests d.exists().
+        //
+        // Sizing an uninitialized destination from the destination region is
+        // what IBAprep does for the flat path (imagebufalgo.cpp:229,
+        // set_roi(spec, roi)), so this makes the two agree rather than
+        // inventing a third behaviour. At an offset of zero it is the same
+        // reset OpenImageIO would have done.
+        //
+        // Three. deep_paste_ opens with
+        // OIIO_ASSERT(dst.deep() && src.deep()) and only twelve lines later
+        // handles an uninitialized destination itself, so it asserts against
+        // the one shape it goes on to support. Where OIIO_ASSERT is live,
+        // which is how conda-forge builds OpenImageIO, every such paste
+        // prints one: 25 in a single CI run that reported success throughout.
+        // Doing the reset here leaves the assertion looking at the deep
+        // destination it expects.
+        if (!dst.initialized()) {
+            ImageSpec spec = src.spec();
+            // Move the display window with the data window, so whatever
+            // relationship the source had between the two survives the paste.
+            spec.full_x += target.xbegin - spec.x;
+            spec.full_y += target.ybegin - spec.y;
+            spec.full_z += target.zbegin - spec.z;
+            spec.x      = target.xbegin;
+            spec.y      = target.ybegin;
+            spec.z      = target.zbegin;
+            spec.width  = target.width();
+            spec.height = target.height();
+            spec.depth  = target.depth();
+            dst.reset(spec);
+        } else {
+            // An allocated destination cannot be resized, so the source
+            // region is narrowed until what lands is inside it. That is both
+            // the flat path's behaviour and what this call documents: pixels
+            // outside the destination are dropped.
+            const ROI landed = OIIO::roi_intersection(target, dst.roi());
+            if (landed.xend <= landed.xbegin || landed.yend <= landed.ybegin
+                || landed.zend <= landed.zbegin) {
+                dst.errorfmt("paste: the source would land at {},{} to {},{} "
+                             "and the destination holds {},{} to {},{}, so no "
+                             "sample would be pasted",
+                             target.xbegin, target.ybegin, target.xend,
+                             target.yend, dst.roi().xbegin, dst.roi().ybegin,
+                             dst.roi().xend, dst.roi().yend);
+                return false;
+            }
+            effective = ROI(landed.xbegin - xbegin, landed.xend - xbegin,
+                            landed.ybegin - ybegin, landed.yend - ybegin,
+                            landed.zbegin - zbegin, landed.zend - zbegin,
+                            source.chbegin, source.chend);
+        }
+    }
 
     if (!OIIO::ImageBufAlgo::paste(dst, xbegin, ybegin, zbegin, chbegin, src,
-                                   srcroi, nthreads))
+                                   effective, nthreads))
         return false;
     if (!dst.initialized()) {
         // OpenImageIO can leave the destination unallocated and still report
