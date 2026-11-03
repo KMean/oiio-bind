@@ -115,15 +115,39 @@ fn reads_a_deep_image_and_its_samples() {
 
 #[test]
 fn deep_accessors_are_bounds_checked() {
-    let Some(path) = a_deep_file() else {
-        eprintln!("skipping: set OIIO_BIND_TEST_EXR_IMAGES");
-        return;
-    };
+    // Built here rather than read from the corpus. These guards are the Rust
+    // layer's own, not the reader's, and the corpus is opt-in through an
+    // environment variable that no CI job sets, so this test - the only one
+    // that reaches DeepImage::pixel_index and DeepImage::address, and so the
+    // only cover for the out-of-window refusal in roughly a dozen public
+    // methods - had never run on any runner.
+    //
+    // The origin is deliberately away from zero, because at [0, 0] a test
+    // cannot tell a window check from a sign check, and the sample counts are
+    // set rather than searched for, so every assertion below names the pixel
+    // it means.
+    let spec = ImageSpec::new(4, 3, 2, PixelFormat::F32)
+        .unwrap()
+        .with_channel_names(["Z", "A"])
+        .unwrap()
+        .with_origin([7, 11, 0])
+        .as_deep();
+    let mut deep = DeepImage::new(&spec).unwrap();
 
-    let mut input = ImageInput::from_path(&path).unwrap();
-    let deep = input.read_deep_image().unwrap();
     let origin = deep.origin();
     let [width, height, _] = deep.dimensions();
+    assert_eq!(origin, [7, 11, 0]);
+
+    // One pixel carries samples and one is left empty, which is the sparse
+    // case the sample-index guard exists for.
+    let (full_x, full_y) = (origin[0] + 1, origin[1] + 1);
+    let (empty_x, empty_y) = (origin[0], origin[1]);
+    deep.set_sample_count(full_x, full_y, 3).unwrap();
+    for sample in 0..3 {
+        deep.set_value(full_x, full_y, 0, sample, sample as f32 + 1.0)
+            .unwrap();
+        deep.set_value(full_x, full_y, 1, sample, 0.5).unwrap();
+    }
 
     // Outside the data window on either axis.
     assert!(matches!(
@@ -138,47 +162,40 @@ fn deep_accessors_are_bounds_checked() {
         deep.value(origin[0] + width as i32, origin[1], 0, 0),
         Err(Error::InvalidRegion { axis: "x", .. })
     ));
+    // Below the origin on y as well as x, which an origin of zero cannot show.
+    assert!(matches!(
+        deep.sample_count(origin[0], origin[1] - 1),
+        Err(Error::InvalidRegion { axis: "y", .. })
+    ));
+
+    // A write takes the same route as a read, so it is refused in the same
+    // place. Without pixel_index this is the call that corrupts memory.
+    assert!(matches!(
+        deep.set_sample_count(origin[0] - 1, origin[1], 1),
+        Err(Error::InvalidRegion { axis: "x", .. })
+    ));
 
     // A channel the image does not have.
     assert!(matches!(
-        deep.value(origin[0], origin[1], deep.channel_count(), 0),
+        deep.value(full_x, full_y, deep.channel_count(), 0),
         Err(Error::InvalidRoi(_))
     ));
 
-    // A sample index beyond what the pixel holds must be refused, and the
-    // last valid one accepted. Deep images are sparse, so the pixel to test
-    // this on has to be searched for rather than assumed to be near a corner.
-    let mut populated = None;
-    'outer: for y in origin[1]..origin[1] + height as i32 {
-        for x in origin[0]..origin[0] + width as i32 {
-            if deep.sample_count(x, y).unwrap() > 0 {
-                populated = Some((x, y));
-                break 'outer;
-            }
-        }
-    }
-    let (x, y) = populated.expect("expected some pixel with at least one sample");
-    let count = deep.sample_count(x, y).unwrap();
-
-    assert!(deep.value(x, y, 0, count - 1).is_ok(), "last sample");
+    // The last valid sample is accepted and the one past it is not.
+    let count = deep.sample_count(full_x, full_y).unwrap();
+    assert_eq!(count, 3);
+    assert_eq!(deep.value(full_x, full_y, 0, count - 1).unwrap(), 3.0);
     assert!(matches!(
-        deep.value(x, y, 0, count),
+        deep.value(full_x, full_y, 0, count),
         Err(Error::InvalidRoi(_))
     ));
 
     // An empty pixel has no valid sample at all.
-    let mut empty = None;
-    'search: for y in origin[1]..origin[1] + height as i32 {
-        for x in origin[0]..origin[0] + width as i32 {
-            if deep.sample_count(x, y).unwrap() == 0 {
-                empty = Some((x, y));
-                break 'search;
-            }
-        }
-    }
-    if let Some((x, y)) = empty {
-        assert!(matches!(deep.value(x, y, 0, 0), Err(Error::InvalidRoi(_))));
-    }
+    assert_eq!(deep.sample_count(empty_x, empty_y).unwrap(), 0);
+    assert!(matches!(
+        deep.value(empty_x, empty_y, 0, 0),
+        Err(Error::InvalidRoi(_))
+    ));
 }
 
 /// Build a deep image sample by sample, write it, read it back, and check
