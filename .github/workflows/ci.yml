@@ -181,6 +181,19 @@ jobs:
 
       - name: Run optimized tests
         shell: micromamba-shell {0}
+        env:
+          # property_test aborts on OIIO 3.2.1 roughly one run in five, from
+          # an image_span getptr contract assertion with hfft_ firing just
+          # before it. Both 3.2.1 jobs have hit it and neither 3.1.14 job ever
+          # has, so it is the version rather than the platform. An abort
+          # cannot be caught, and proptest does not persist its inputs, so
+          # without this the log records which assertion fired and nothing
+          # about which of forty-odd operations was called with what.
+          #
+          # Only on 3.2.1, because it costs about 3000 lines a run. The empty
+          # branch is off: a GitHub expression yielding "" still defines the
+          # variable, which is why tracing() tests for a non-empty value.
+          OIIO_BIND_TRACE: ${{ matrix.oiio == '3.2.1' && '1' || '' }}
         run: |
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             export LD_LIBRARY_PATH="$CONDA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

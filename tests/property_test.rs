@@ -18,6 +18,20 @@
 
 mod common;
 
+/// Whether to print the shape and probe name before every call.
+///
+/// Empty means off, not on. CI sets this from a matrix expression, and an
+/// expression that yields "" still defines the variable, so `is_some` would
+/// have turned tracing on everywhere.
+///
+/// This exists because an abort cannot be caught. When `property_test` died
+/// of SIGABRT on OIIO 3.2.1, the log said which assertion fired and nothing
+/// about which of the forty-odd operations had been called with what, and
+/// the inputs are random and not persisted, so the run was not repeatable.
+fn tracing() -> bool {
+    std::env::var_os("OIIO_BIND_TRACE").is_some_and(|value| !value.is_empty())
+}
+
 use oiio::algo::{FitMode, Operand, WarpOptions};
 use oiio::{algo, ImageBuf, ImageSpec, PixelFormat, Roi};
 use proptest::prelude::*;
@@ -183,13 +197,13 @@ proptest! {
         region in any_region(),
     ) {
         let Some(source) = shape.build() else { return Ok(()) };
-        if std::env::var_os("OIIO_BIND_TRACE").is_some() {
+        if tracing() {
             eprintln!("CASE {shape:?} region {region:?}");
         }
 
         macro_rules! probe {
             ($name:literal, $call:expr) => {{
-                if std::env::var_os("OIIO_BIND_TRACE").is_some() {
+                if tracing() {
                     eprintln!("-> {}", $name);
                 }
                 let mut dst = ImageBuf::empty().unwrap();
@@ -267,7 +281,7 @@ proptest! {
 
         macro_rules! probe {
             ($name:literal, $call:expr) => {{
-                if std::env::var_os("OIIO_BIND_TRACE").is_some() {
+                if tracing() {
                     eprintln!("-> {}", $name);
                 }
                 let mut dst = ImageBuf::empty().unwrap();
@@ -322,7 +336,7 @@ proptest! {
 
         macro_rules! probe {
             ($name:literal, $call:expr) => {{
-                if std::env::var_os("OIIO_BIND_TRACE").is_some() {
+                if tracing() {
                     eprintln!("-> {} src {:?} dst {:?} region {:?}",
                               $name, source_shape, dest_shape, region);
                 }
@@ -408,7 +422,7 @@ proptest! {
 
         macro_rules! probe {
             ($name:literal, $call:expr) => {{
-                if std::env::var_os("OIIO_BIND_TRACE").is_some() {
+                if tracing() {
                     eprintln!("-> {}", $name);
                 }
                 let mut dst = ImageBuf::empty().unwrap();
