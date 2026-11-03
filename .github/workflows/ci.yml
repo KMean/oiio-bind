@@ -214,6 +214,62 @@ jobs:
           export LD_LIBRARY_PATH="$CONDA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           cargo test --workspace --locked -- --nocapture
 
+      # tests/corpus_guard_test.rs pins the same refusals as
+      # guard_coverage_test, but against real data windows, real per-channel
+      # formats and real deep samples: a file whose display window and data
+      # window do not overlap, one whose overlap is a single pixel, a
+      # 1500-square data window starting at -250, four halves and a float, and
+      # deep render elements holding 160,000 samples. It also checks the
+      # direction a refusal cannot, that a real four-element composite still
+      # goes through.
+      #
+      # None of it ran here. The corpus suites are opt-in on three variables
+      # and no job set any of them, so every one of those tests printed a line
+      # to a stderr nobody reads while `test result` said ok.
+      #
+      # Only the files the tests name are fetched: 39MB sparsely against the
+      # 700MB the two corpora weigh, in about six seconds. The patterns carry
+      # no leading slash deliberately. A gitignore pattern containing a slash
+      # is anchored to the root anyway, and the anchored spelling gets
+      # rewritten into a host path by MSYS, which is where this was tested
+      # before it was pushed.
+      #
+      # OIIO_BIND_REQUIRE_CORPUS turns a skip into a failure. Without it a
+      # path that does not exist is indistinguishable from a variable that was
+      # never set, so a renamed fixture or a typo here would put this step
+      # straight back to passing silently, which is the thing it exists to
+      # stop. One fixture is exempt by name in the test file: a deep render
+      # with a real ZBack channel, which no public corpus carries.
+      - name: Run the guards against real images
+        if: runner.os == 'Linux' && matrix.oiio == '3.2.1'
+        shell: micromamba-shell {0}
+        run: |
+          set -euo pipefail
+          export LD_LIBRARY_PATH="$CONDA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          corpora=$(mktemp -d)
+          fetch() {
+            local repo="$1" dest="$2"
+            shift 2
+            git clone --quiet --filter=blob:none --no-checkout --depth 1 \
+              "https://github.com/AcademySoftwareFoundation/$repo" "$corpora/$dest"
+            git -C "$corpora/$dest" sparse-checkout set --no-cone "$@"
+            git -C "$corpora/$dest" checkout --quiet
+          }
+          fetch openexr-images exr \
+            DisplayWindow/t08.exr DisplayWindow/t11.exr DisplayWindow/t14.exr \
+            ScanLines/Desk.exr ScanLines/Blobbies.exr \
+            MultiResolution/ColorCodedLevels.exr 'v2/LowResLeftView/*.exr'
+          fetch OpenImageIO-images oiio grid-overscan.exr
+          fetch openexr openexr src/test/bin/test_images/objectid.deep.exr
+          du -sh "$corpora"
+          find "$corpora" -name '*.exr' | sort
+          OIIO_BIND_REQUIRE_CORPUS=1 \
+          OIIO_BIND_TEST_IMAGES="$corpora/oiio" \
+          OIIO_BIND_TEST_EXR_IMAGES="$corpora/exr" \
+          OIIO_BIND_TEST_DEEP_IMAGES="$corpora/openexr/src/test/bin/test_images" \
+            cargo test --release --locked --test corpus_guard_test --test deep_test \
+            -- --nocapture
+
       # The four examples are compiled by --all-targets and by cargo test,
       # so they cannot rot syntactically, but nothing ever ran them: a panic,
       # an empty output or a chain that writes a blank file would survive

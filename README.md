@@ -416,13 +416,27 @@ because the corpora are large and not vendored:
 git clone https://github.com/AcademySoftwareFoundation/OpenImageIO-images
 git clone https://github.com/AcademySoftwareFoundation/openexr-images
 OIIO_BIND_TEST_IMAGES=/path/to/OpenImageIO-images \
-OIIO_BIND_TEST_EXR_IMAGES=/path/to/openexr-images/exr-images \
+OIIO_BIND_TEST_EXR_IMAGES=/path/to/openexr-images \
 OIIO_BIND_TEST_DEEP_IMAGES=/path/to/openexr/src/test/bin/test_images \
   cargo test --test corpus_test --test corpus_guard_test --test deep_test \
   -- --nocapture
 ```
 
-Without those variables the suites report that they were skipped and pass.
+Each variable names the directory that *contains* the corpus, so
+`OIIO_BIND_TEST_EXR_IMAGES` is the `openexr-images` clone itself, which holds
+`DisplayWindow/`, `ScanLines/`, `v2/` and the rest at its root.
+
+A path that does not exist is treated as an absent variable: the suite skips
+and passes, printing one line to say so. That is right for a developer who has
+not downloaded 700MB of images, and it means a typo looks exactly like
+success. Set `OIIO_BIND_REQUIRE_CORPUS=1` to turn every skip in
+`corpus_guard_test` into a failure instead, which is what CI does. One fixture
+is exempt by name, a deep render carrying a real `ZBack` channel, because no
+public corpus has one.
+
+CI fetches only the files those tests name, sparsely: 39MB rather than the
+700MB the corpora weigh, which is why the guard suite runs on every push while
+the full corpus sweeps stay local.
 
 `corpus_test` reads every image in both corpora — overscan EXRs with negative
 data window origins, tiled mip pyramids, multi-part files, real camera

@@ -99,6 +99,26 @@ Every deep file in both is `R G B A Z` with a float `Z` and point samples, and
 `DeepData::Zback_channel()` silently returns `Z_channel()` when `ZBack` is
 absent, so the whole suite had been exercising the fallback.
 
+### The corpus guards run in CI, and a missing fixture fails
+
+No job set any of the corpus variables, so every test gated on one printed a
+line to a stderr nobody reads while `test result` said ok. One job now fetches
+the files the guard suite names, sparsely: 39MB against the 700MB the corpora
+weigh, in about six seconds. `tests/deep_test.rs` comes along with it, which
+is how `reads_a_deep_image_and_its_samples` came to run on a runner for the
+first time, against a render element of 162,877 samples.
+
+`OIIO_BIND_REQUIRE_CORPUS` turns a skip in `corpus_guard_test` into a failure.
+Without it a path that does not exist is indistinguishable from a variable
+that was never set, so a renamed fixture would put the new step straight back
+to passing silently. One fixture is exempt by name, a deep render carrying a
+real `ZBack` channel, because no public corpus has one.
+
+The `openexr-images` path in the README was also wrong: a fresh clone has
+`DisplayWindow/`, `ScanLines/` and `v2/` at its root, not under an
+`exr-images/` directory. Anyone who followed it set the variable to a
+directory that does not exist, and every EXR corpus test skipped and passed.
+
 ### A binomial kernel with an even or fractional extent is refused
 
 OpenImageIO's `make_kernel` sizes its binomial tap arrays from the extent

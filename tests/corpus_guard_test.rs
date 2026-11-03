@@ -57,6 +57,40 @@ use oiio::{algo, ImageBuf, ImageSpec, PixelFormat, Roi};
 // Fixtures
 // ---------------------------------------------------------------------------
 
+/// Report that a test is skipping, or fail if the run says it must not.
+///
+/// A missing variable and a variable pointing somewhere wrong are the same
+/// thing to every helper here: both skip, both print a line, both pass. That
+/// is right for a developer who has not downloaded 700MB of images, and wrong
+/// for a run that is supposed to be exercising them, where a renamed fixture
+/// or a typo in a path reads as a clean suite.
+///
+/// So `OIIO_BIND_REQUIRE_CORPUS` turns every skip in this file into a
+/// failure. CI sets it alongside the paths, which is what keeps a broken
+/// fetch from looking like a green run.
+fn skip(reason: &str) {
+    if required() {
+        panic!("{reason} (OIIO_BIND_REQUIRE_CORPUS is set, so this is a failure)");
+    }
+    eprintln!("skipping: {reason}");
+}
+
+fn required() -> bool {
+    std::env::var_os("OIIO_BIND_REQUIRE_CORPUS").is_some_and(|v| !v.is_empty())
+}
+
+/// Report a skip that `OIIO_BIND_REQUIRE_CORPUS` must not turn into a
+/// failure, because no public corpus carries the fixture.
+///
+/// There is exactly one: a deep render with a real `ZBack` channel. Neither
+/// `openexr-images` nor OpenEXR's own test set has one, so the test runs
+/// where someone has a production render and nowhere else. Saying so here is
+/// the difference between a fixture that is missing and a fixture that does
+/// not exist to fetch.
+fn skip_not_public(reason: &str) {
+    eprintln!("skipping: {reason} (no public corpus carries this fixture)");
+}
+
 fn corpus_root(variable: &str) -> Option<PathBuf> {
     let path = PathBuf::from(std::env::var_os(variable)?);
     path.is_dir().then_some(path)
@@ -81,10 +115,13 @@ fn deep_roots() -> Vec<PathBuf> {
 
 /// The first of `candidates` found in any directory named by
 /// `OIIO_BIND_TEST_DEEP_IMAGES`, read and ready.
-fn deep_fixture(candidates: &[&str]) -> Option<(String, ImageBuf)> {
+fn deep_fixture(candidates: &[&str], public: bool) -> Option<(String, ImageBuf)> {
+    let report = if public { skip } else { skip_not_public };
     let roots = deep_roots();
     if roots.is_empty() {
-        eprintln!("skipping: set {DEEP_IMAGES} to one or more directories of deep EXRs");
+        report(&format!(
+            "set {DEEP_IMAGES} to one or more directories of deep EXRs"
+        ));
         return None;
     }
     for name in candidates {
@@ -99,7 +136,7 @@ fn deep_fixture(candidates: &[&str]) -> Option<(String, ImageBuf)> {
             }
         }
     }
-    eprintln!("skipping: none of {candidates:?} are under {DEEP_IMAGES}");
+    report(&format!("none of {candidates:?} are under {DEEP_IMAGES}"));
     None
 }
 
@@ -109,12 +146,12 @@ fn deep_fixture(candidates: &[&str]) -> Option<(String, ImageBuf)> {
 /// corpus that is present but missing one file skips that test alone.
 fn load(variable: &str, relative: &str) -> Option<ImageBuf> {
     let Some(root) = corpus_root(variable) else {
-        eprintln!("skipping: set {variable}");
+        skip(&format!("set {variable}"));
         return None;
     };
     let path = root.join(relative);
     if !path.is_file() {
-        eprintln!("skipping: {} is not in the corpus", path.display());
+        skip(&format!("{} is not in the corpus", path.display()));
         return None;
     }
     let mut image = ImageBuf::from_path(&path).expect("could not open the corpus file");
@@ -127,7 +164,7 @@ fn load(variable: &str, relative: &str) -> Option<ImageBuf> {
 /// The first of `candidates` that is present, with its name.
 fn load_any(variable: &str, candidates: &[&str]) -> Option<(String, ImageBuf)> {
     let Some(root) = corpus_root(variable) else {
-        eprintln!("skipping: set {variable}");
+        skip(&format!("set {variable}"));
         return None;
     };
     for relative in candidates {
@@ -136,7 +173,7 @@ fn load_any(variable: &str, candidates: &[&str]) -> Option<(String, ImageBuf)> {
             return Some(((*relative).to_string(), image));
         }
     }
-    eprintln!("skipping: none of {candidates:?} are under {variable}");
+    skip(&format!("none of {candidates:?} are under {variable}"));
     None
 }
 
@@ -156,19 +193,22 @@ fn deep_element(name: &str) -> Option<ImageBuf> {
 
 /// A deep render carrying a `ZBack` channel, which neither public corpus has.
 fn deep_with_zback() -> Option<(String, ImageBuf)> {
-    deep_fixture(&["deepHelicopter.exr", "deepGround.exr"])
+    deep_fixture(&["deepHelicopter.exr", "deepGround.exr"], false)
 }
 
 /// A deep image with `uint32` identifier channels beside its half colour
 /// channels, from OpenEXR's own test set.
 fn deep_with_identifiers() -> Option<(String, ImageBuf)> {
-    deep_fixture(&[
-        "objectid.deep.exr",
-        "multivariate.deep.exr",
-        "11.deep.exr",
-        "42.deep.exr",
-        "64.deep.exr",
-    ])
+    deep_fixture(
+        &[
+            "objectid.deep.exr",
+            "multivariate.deep.exr",
+            "11.deep.exr",
+            "42.deep.exr",
+            "64.deep.exr",
+        ],
+        true,
+    )
 }
 
 /// The corner a region starts at, as `ImageSpec::with_origin` wants it.
@@ -453,11 +493,11 @@ fn copying_between_two_real_windows_that_do_not_meet_is_refused() {
 #[test]
 fn the_distance_guard_clears_a_real_four_element_composite() {
     let Some(root) = corpus_root(EXR_IMAGES) else {
-        eprintln!("skipping: set {EXR_IMAGES}");
+        skip(&format!("set {EXR_IMAGES}"));
         return;
     };
     if !root.join("v2/LowResLeftView/Balls.exr").is_file() {
-        eprintln!("skipping: the v2 render elements are not in the corpus");
+        skip("the v2 render elements are not in the corpus");
         return;
     }
 
@@ -1049,7 +1089,7 @@ fn a_deep_render_with_a_zback_channel_survives_a_paste() {
         .map(|c| spec.channel_format(c))
         .collect();
     let Some(zback) = names.iter().position(|n| n == "ZBack") else {
-        eprintln!("skipping: {name} has no ZBack channel");
+        skip_not_public(&format!("{name} has no ZBack channel"));
         return;
     };
     let zback = zback as u32;
@@ -1434,12 +1474,12 @@ fn pasting_a_deep_image_with_integer_channels_keeps_the_identifiers() {
 #[test]
 fn every_mip_level_of_a_colour_coded_pyramid_reads_as_itself() {
     let Some(root) = corpus_root(EXR_IMAGES) else {
-        eprintln!("skipping: set {EXR_IMAGES}");
+        skip(&format!("set {EXR_IMAGES}"));
         return;
     };
     let path = root.join("MultiResolution/ColorCodedLevels.exr");
     if !path.is_file() {
-        eprintln!("skipping: {} is not in the corpus", path.display());
+        skip(&format!("{} is not in the corpus", path.display()));
         return;
     }
 
