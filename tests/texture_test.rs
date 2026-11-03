@@ -305,13 +305,22 @@ fn mip_mode_changes_the_result() {
     let highest = sample(MipMode::None);
     let filtered = sample(MipMode::Trilinear);
     println!("mip modes: none {highest:.5}, trilinear {filtered:.5}");
-    // Both must be sensible; whether they differ depends on the texture, so
-    // assert what is certain rather than inventing a threshold.
     assert!(highest.is_finite() && filtered.is_finite());
     assert!((0.0..=1.0).contains(&highest), "unexpected value {highest}");
     assert!(
         (0.0..=1.0).contains(&filtered),
         "unexpected value {filtered}"
+    );
+
+    // The name of this test, asserted. It used to stop at the two bounds
+    // above on the ground that "whether they differ depends on the texture",
+    // which was true of a flat texture and not of either fixture this has:
+    // the made checker gives 0.00000 against 0.32400 and the corpus grid.tx
+    // 0.00176 against 0.79219. Both clear this by a wide margin, and a mip
+    // mode that stopped being honoured would not.
+    assert!(
+        (highest - filtered).abs() > 0.1,
+        "the mip mode should change the answer: none {highest}, trilinear {filtered}"
     );
 }
 
@@ -336,8 +345,7 @@ fn options_change_the_result() {
         value[0]
     };
 
-    // Outside the unit square, wrapping decides the answer. Black must give
-    // zero where clamping gives an edge value.
+    // Outside the unit square, wrapping decides the answer.
     let mut black = TextureOptions::default()
         .with_s_wrap(WrapMode::Black)
         .with_t_wrap(WrapMode::Black);
@@ -350,6 +358,12 @@ fn options_change_the_result() {
         .with_interpolation(InterpolationMode::Closest)
         .with_mip_mode(MipMode::None);
 
+    let periodic = TextureOptions::default()
+        .with_s_wrap(WrapMode::Periodic)
+        .with_t_wrap(WrapMode::Periodic)
+        .with_interpolation(InterpolationMode::Closest)
+        .with_mip_mode(MipMode::None);
+
     let outside = 1.5_f32;
     let black_value = sample(&black, outside);
     let clamp_value = sample(&clamp, outside);
@@ -357,6 +371,42 @@ fn options_change_the_result() {
     assert_eq!(
         black_value, 0.0,
         "black wrapping should read as zero outside"
+    );
+
+    // This used to compare black against clamp, on the stated ground that
+    // "black must give zero where clamping gives an edge value". Both
+    // fixtures answer zero for clamp as well, because the texel at the edge
+    // they land on happens to be black, so the comparison held while
+    // demonstrating nothing about wrapping.
+    //
+    // Periodic wrapping gives an identity instead, and one that does not
+    // depend on which texel is where: s and s + 1 must read the same.
+    //
+    // It has to be read somewhere the texture is not black, or the identity
+    // is 0 == 0 and this lands back where it started. Neither fixture is
+    // black everywhere but both are black at the centre, so the coordinate is
+    // searched for rather than assumed, and not finding one is a failure.
+    let mut probe = None;
+    for step in 1..64 {
+        let s = step as f32 / 64.0;
+        let value = sample(&periodic, s);
+        if value > 0.01 {
+            probe = Some((s, value));
+            break;
+        }
+    }
+    let (s, inside) = probe.expect(
+        "the fixture should be non-black somewhere along t = 0.5, or this identity \
+         compares zero against zero",
+    );
+    let wrapped = sample(&periodic, s + 1.0);
+    println!(
+        "periodic: s={s} reads {inside}, s={} reads {wrapped}",
+        s + 1.0
+    );
+    assert_eq!(
+        wrapped, inside,
+        "periodic wrapping must make s and s + 1 the same lookup"
     );
 
     // fill supplies channels the texture does not have.
