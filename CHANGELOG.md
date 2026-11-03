@@ -11,6 +11,94 @@ constructible, so `cargo-semver-checks` reports
 `#[non_exhaustive]` structs and are additive. Checked with the tool rather
 than by reading the diff.
 
+### A deep paste lands where it was asked
+
+`ImageBufAlgo::paste` sends a deep source down a path that never calls
+`IBAprep`. Where the flat path sizes an uninitialized destination to the
+destination region, the deep path substitutes `dst.reset(src.spec())` and
+takes the source's window, then writes at the requested offset through
+`ImageBuf::set_deep_samples` and `copy_deep_pixel`. Both of those index with
+range checking off, so a coordinate past the destination is not clipped: it
+wraps into the next scanline.
+
+An 8 by 8 deep source with two samples a pixel, pasted at x = 10 into an empty
+destination, came back on an 0..8 window holding 108 of its 128 samples,
+shifted one row and two columns, reported as success. A real render element of
+162,877 samples came back with 138,536 of its 310,184 pixels empty.
+
+`algo::paste` now sizes an empty deep destination from the destination region,
+which is what `IBAprep` does for flat pixels, and clips the source region when
+the destination is already allocated and cannot hold it, which is what the
+flat path does and what the call documents. A paste where nothing would land
+is refused rather than scattered. It also refuses a non-zero `first_channel`
+on a deep source, because the deep path ignores it: a flat paste at channel 2
+widens the destination to seven channels and a deep one returns five with the
+source at channel 0, reporting success either way.
+
+The same omission is why pasting into an empty deep destination printed
+`OIIO_ASSERT(dst.deep() && src.deep())` on a build with assertions live. That
+is gone as a consequence rather than as a separate fix. Written up for
+upstream in full, not yet filed.
+
+### `ImageBuf::read` keeps the mip level it was attached to
+
+It called `read_at(0, 0, None)` whatever the buffer was opened on, so
+`from_path_at(path, 0, 3)` reported a 64 by 64 level-3 specification and then
+`read` returned the 512 by 512 base image with `mip_level` back at 0. Nothing
+said so. OpenImageIO's `read` defaults both indices to zero, which is visible
+in a C++ call signature and invisible behind a Rust method that takes no
+arguments at all.
+
+`read` now reads the subimage and mip level the buffer reports. A caller who
+wants a different one has `read_at`, unchanged. Code that called `from_path`
+and then `read` is unaffected, since that attaches to 0 and 0.
+
+Found on `ColorCodedLevels.exr`, whose mip levels are deliberately different
+colours. On the ramps and checkers the tests used before, the wrong level is a
+different number of similar numbers.
+
+### `deep_value` on an unsigned channel, and `mip_level_count`
+
+Two documentation corrections, both about a return value that looks fine.
+
+`ImageBuf::deep_value` does not round an unsigned channel, it normalises it:
+OpenImageIO converts through `convert_type`, which divides by `u32::MAX`. A
+deep EXR from a renderer carries `id` and `particleid` as `uint32` beside half
+colour channels, so an object id of 2,056,745,377 reads back as 0.47887334,
+which is a plausible colour value rather than a wrong-looking number.
+`deep_value_uint` is the accessor that answers, and its documentation now says
+what the other one does instead of calling it approximate.
+
+`ImageBuf::mip_level_count` returns 0 for every file. `ImageBufImpl::init_spec`
+fills `m_nmiplevels` only on its cache-backed branch; the branch that opens
+through `ImageInput` sets `m_nsubimages` beside it and leaves `m_nmiplevels`
+at zero. Every buffer this crate opens from a file passes a null cache, which
+is what the `Send` reasoning on the type rests on, so that is the only branch
+it takes. `ImageCache::mip_level_count` reports the real number, and the
+documentation now points there.
+
+### The guards run against real pixels
+
+`tests/guard_coverage_test.rs` pins every refusal with an 8 by 8 buffer of F32
+zeroes whose data window starts at the origin and whose deep variant holds no
+samples at all. The guards are made of data windows, channel formats and deep
+samples, so a new suite, `tests/corpus_guard_test.rs`, runs them again against
+the corpora: a file whose display window and data window do not overlap, one
+whose overlap is a single pixel, a 1500-square data window starting at -250,
+channels that are four halves and a float, and render elements holding 160,000
+samples.
+
+It also asserts the direction a refusal cannot, which nothing did before: that
+a real four-element composite goes through. A guard that refuses legitimate
+work cannot be worked around, and a suite full of `expect_err` goes on passing
+when one starts to.
+
+A third opt-in variable, `OIIO_BIND_TEST_DEEP_IMAGES`, takes a list of
+directories, because the deep fixtures worth having are in neither corpus.
+Every deep file in both is `R G B A Z` with a float `Z` and point samples, and
+`DeepData::Zback_channel()` silently returns `Z_channel()` when `ZBack` is
+absent, so the whole suite had been exercising the fallback.
+
 ### A binomial kernel with an even or fractional extent is refused
 
 OpenImageIO's `make_kernel` sizes its binomial tap arrays from the extent
