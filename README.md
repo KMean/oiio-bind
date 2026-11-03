@@ -409,24 +409,49 @@ debug assertions and overflow checks only exist in that profile.
 ### Testing against real images
 
 Those tests all read images this crate wrote, which proves it agrees with
-itself. Two further suites read files it did not write, and are opt-in because
-the corpora are large and not vendored:
+itself. Three further suites read files it did not write, and are opt-in
+because the corpora are large and not vendored:
 
 ```bash
 git clone https://github.com/AcademySoftwareFoundation/OpenImageIO-images
 git clone https://github.com/AcademySoftwareFoundation/openexr-images
 OIIO_BIND_TEST_IMAGES=/path/to/OpenImageIO-images \
 OIIO_BIND_TEST_EXR_IMAGES=/path/to/openexr-images/exr-images \
-  cargo test --test corpus_test -- --nocapture
+OIIO_BIND_TEST_DEEP_IMAGES=/path/to/openexr/src/test/bin/test_images \
+  cargo test --test corpus_test --test corpus_guard_test --test deep_test \
+  -- --nocapture
 ```
 
-Without those variables the suite reports that it was skipped and passes.
-With them it reads every image in both corpora — overscan EXRs with negative
+Without those variables the suites report that they were skipped and pass.
+
+`corpus_test` reads every image in both corpora — overscan EXRs with negative
 data window origins, tiled mip pyramids, multi-part files, real camera
 metadata — and checks that the cache and the direct reader agree. It also
 reads OpenEXR's `Damaged` directory, a fuzzing corpus of reader crash cases,
 and requires that each file produces an error or an image rather than taking
 the process with it.
+
+`corpus_guard_test` runs the refusals in
+[`guard_coverage_test`](tests/guard_coverage_test.rs) a second time, against
+real pixels. Those guards are about data windows, channel formats and deep
+samples, and a synthetic fixture has its data window equal to its display
+window at the origin, one format for every channel, and no samples at all. The
+corpora supply the rest: a file whose display window and data window do not
+overlap, one whose overlap is a single pixel, a 1500-square data window
+starting at -250, channels that are four halves and a float, and render
+elements holding 160,000 samples. It also asserts the direction a refusal
+cannot: that a real four-element composite goes through.
+
+`OIIO_BIND_TEST_DEEP_IMAGES` is the third because the deep fixtures worth
+having are not in either corpus and not in one place, so it takes a list of
+directories in the platform's `PATH` form. Every deep file in both corpora is
+`R G B A Z` with a float `Z` and point samples. OpenEXR's own deep test set,
+which lives under `src/test/bin/test_images` in the library repository rather
+than in `openexr-images`, adds `uint32` identifier channels and a half `Z`; a
+production render adds a real `ZBack`. Both matter, because
+`DeepData::Zback_channel()` silently returns `Z_channel()` when `ZBack` is
+absent, and `deep_value` on a `uint32` channel divides by `u32::MAX` rather
+than failing.
 
 
 ## Links
