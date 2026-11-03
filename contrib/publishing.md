@@ -162,8 +162,8 @@ by construction as of this date.
 **Correction, 2026-10-31.** The reasoning in that last sentence does not
 hold, and should not be reused for a future release. Two faults. The class
 was misdiagnosed: it is not uninitialised destination memory but an unchecked
-read past a narrower *source*, traced in `upstream-issues.md` under the open
-observation. And quiet runs cannot evidence exhaustion, because the binding
+read past a narrower *source*. And quiet runs cannot evidence exhaustion,
+because the binding
 now refuses those shapes and `check_result` returns early on `Err`, so the
 property test never reaches them — and its criterion is plausibility
 (`is_finite() && abs() < 1e30`), not correctness, so an over-read landing on

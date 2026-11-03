@@ -101,8 +101,7 @@ writing such checks — `openimageio_version()` is
   and tile ranges tile-aligned, because OpenEXR lays the sample arrays over
   the file by trusting the caller's coordinates. Region reads always
   include every channel — OpenImageIO's deep channel-subset path pairs the
-  kept channels' data with the wrong names (issue 13 in
-  `contrib/upstream-issues.md`).
+  kept channels' data with the wrong names.
 - [x] The `ImageCache` image queries (existence, UDIM, counts, formats,
   texture kind, average and constant colors) and thumbnails end to end:
   cache-side reading, `ImageBuf` carriage, `ImageOutput` writing with the
@@ -151,9 +150,8 @@ writing such checks — `openimageio_version()` is
 The bounded pixel calls validate the caller's buffer against the image
 specification and then pass explicit strides, rather than using OpenImageIO's
 `image_span` overloads. Two defects motivated that, both measured with
-`contrib/span_tiled_read_repro.cpp` and
-`contrib/span_scanline_origin_repro.cpp` — standalone C++ programs using only
-public OpenImageIO API, so neither depends on this crate.
+two standalone C++ programs using only public OpenImageIO API, so neither
+depended on this crate.
 
 **Both are now fixed upstream**, by Larry Gritz in PR #5531 (commit
 `054d048`, merged 2026-10-02), first released in **3.1.18.1** and **3.2.1.1**:
@@ -177,15 +175,6 @@ The explicit-stride overloads handle both cases correctly, and the safety
 argument is unchanged: `bounded_pixel_layout` still proves that the buffer holds
 exactly one contiguous value per channel, pixel, row, and slice before any
 pointer reaches C++. Both behaviours have regression tests.
-
-The reproductions are kept, and still build and run. Against 3.1.18.1 or
-newer, or 3.2.1.1 or newer, both should now report no mismatches:
-
-```
-cl /std:c++17 /EHsc /utf-8 /MD contrib/span_tiled_read_repro.cpp \
-   /I <oiio>/include /I <deps>/include \
-   /link /LIBPATH:<oiio>/lib OpenImageIO.lib OpenImageIO_Util.lib
-```
 
 The explicit-stride paths nonetheless stay. They are correct on every
 OpenImageIO version, including the many that predate the fix, and switching to
@@ -233,8 +222,8 @@ The `ImageBufAlgo` surface is being completed in slices, each one commit:
 - [x] Statistics and introspection: `pixel_stats`, `histogram`,
   `constant_color`, `is_constant_channel`, `is_monochrome`, `nonzero_region`
   and `pixel_hash_sha1`. Three of them read or write out of bounds for regions
-  the rest of `ImageBufAlgo` accepts; see issues 5, 6 and 7 in
-  `contrib/upstream-issues.md`. Most also have no deep-image guard, and a deep
+  the rest of `ImageBufAlgo` accepts. Most also have no deep-image guard, and
+  a deep
   buffer has no pixel pointer to walk — the two exceptions are
   `computePixelStats`, which has a per-sample branch, and `nonzero_region`,
   which dispatches to `deep_nonempty_region`. This binding still refuses deep
@@ -244,8 +233,8 @@ The `ImageBufAlgo` surface is being completed in slices, each one commit:
   `contrast_remap`, `saturate`, `invert`, `paste`, `cut`. `Operand` mirrors
   OpenImageIO's `Image_or_Const` for the three operations that accept either.
   `max` refuses two argument shapes that `min` accepts, because OpenImageIO's
-  image-against-image `max` reads and writes out of bounds for them; see
-  issue 4 in `contrib/upstream-issues.md`.
+  image-against-image `max` reads and writes out of bounds for them, reported
+  upstream as #5645.
 - [x] Rotation and warping: `rotate`, the right-angle rotations, `reorient`,
   `warp`, `st_warp`. The right-angle rotations take a region of the *source*,
   as `paste` does; `rotate` takes radians clockwise and is hard-wired to black
@@ -303,19 +292,23 @@ verified.
 
 ## On binding OpenImageIO safely
 
-Binding this library turned up nineteen defects in it, many of which let safe
-Rust read or write out of bounds, crash, or silently corrupt an image.
-`contrib/upstream-issues.md` has all of them, each verified against upstream
-source and re-checked against 3.1.19.0, 3.2.2.0 and `main` on 2026-10-30.
+Binding this library turned up defects in OpenImageIO itself, many of which
+let safe Rust read or write out of bounds, crash, or silently corrupt an
+image. Three were reported upstream:
 
-Two are now fixed upstream. Issue 1 was filed as #5400 and fixed in PR #5531,
-which also fixed issue 2 — never filed — plus three more in the same family
-that this crate never drafted. Seventeen remain, all still present. One of
-them — the colour engine writing `0.5 + 10 * src` into channels past the
-fourth instead of copying them — was filed as #5638 and is fixed upstream.
-A second, `ImageBufAlgo::max` widening the channel range where `min` narrows
-it, was filed as #5645. Fifteen remain to decide on. Several are guarded here rather than passed on, which is why a
-few operations refuse arguments OpenImageIO accepts:
+- [#5400](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5400),
+  `read_image` with an `image_span` transposing x and y on tiled files. Fixed
+  in PR #5531, which also fixed four more in the same family once the
+  maintainer audited it.
+- [#5638](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5638),
+  the colour engine writing `0.5 + 10 * src` into channels past the fourth
+  instead of copying them. Fixed.
+- [#5645](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5645),
+  `ImageBufAlgo::max` widening the channel range where `min` narrows it. A fix
+  is open as PR #5646.
+
+The others are guarded here rather than passed on, which is why a few
+operations refuse arguments OpenImageIO accepts:
 
 - `algo::max` refuses unequal channel counts and a narrower destination.
 - `algo::constant_color` and `algo::nonzero_region` refuse a region that

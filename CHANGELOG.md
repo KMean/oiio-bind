@@ -330,7 +330,7 @@ unwritten channel would have failed at the first element.
 default ROI, `IBAprep` then replaces that ROI with the destination's own
 window, and `copy_` indexes the source across it with no guard, where
 `paste_` in the same file does guard. All three routes are written up as the
-open observation in `contrib/upstream-issues.md`.
+open observation, recorded outside this repository.
 
 Two claims are withdrawn. The guess that a Highway SIMD path skipped a
 clearing step is wrong: there is no Highway code in OpenImageIO 3.1.x at all,
@@ -348,7 +348,7 @@ over-read that lands on real neighbouring data passes silently.
 ### Documentation
 
 - `ROADMAP.md` no longer says the crates have never been published, and the
-  defect count tracks `contrib/upstream-issues.md` (nineteen found, two now
+  defect count is current (nineteen found, two now
   fixed upstream, seventeen outstanding, re-checked against 3.1.19.0,
   3.2.2.0 and `main` on 2026-10-30). One of the seventeen — the colour engine
   writing `0.5 + 10 * src` into channels past the fourth — has since been
@@ -608,8 +608,8 @@ before the fork, but nothing was ever published under it, so starting both at
   sample arrays by trusting the caller's coordinates — out of order or
   misaligned, it reads outside them. Deep region reads always include
   every channel: OpenImageIO's channel-subset path pairs each kept
-  channel's data with the wrong channel's name (upstream issue 13 in
-  `contrib/upstream-issues.md`), mislabelling Z and alpha with it.
+  channel's data with the wrong channel's name, mislabelling Z and alpha
+  with it.
 - `ImageOutput::write_rectangle`, for formats whose writers can place
   pixels at random. No format shipped with OpenImageIO 3.1 reports the
   `rectangles` capability and the fallback fails without a message, so the
@@ -623,8 +623,8 @@ before the fork, but nothing was ever published under it, so starting both at
   constant). Answers OpenImageIO declines without recording an error are
   `None`; reported failures are errors. `make_texture` now stamps a
   `Software` tag when the configuration sets none, because the cache only
-  honours a texture's own constant-color metadata under one (upstream
-  issue 14 in `contrib/upstream-issues.md`) — without it, API-made
+  honours a texture's own constant-color metadata under one — without it,
+  API-made
   textures silently lose what `maketx` wrote into them.
 - `ImageInput::read_native_image` (and `_at`): the image in its declared
   native channel formats, each channel packed per pixel — the read for
@@ -845,8 +845,8 @@ before the fork, but nothing was ever published under it, so starting both at
   update, and the file walk reads each file's subimage vector while a first
   open on another thread resizes it — the same free-under-read invalidation
   can cause, reached by a diagnostic call. All three take `&mut self` now,
-  matching `invalidate`. Recorded for upstream as issue 12 in
-  `contrib/upstream-issues.md`, since it contradicts the manual's claim that
+  matching `invalidate`. Recorded for upstream, since it contradicts the
+  manual's claim that
   the cache is completely thread-safe.
 
   Reading a deep file with one high byte in a channel name no longer aborts
@@ -905,8 +905,7 @@ before the fork, but nothing was ever published under it, so starting both at
   operation in the `IBAprep` uninitialised-destination class `mad` was the
   first of: a one-channel source copied into a disjoint five-channel
   destination returned success with `inf` in a channel the copy never wrote.
-  The class is recorded as the open observation in
-  `contrib/upstream-issues.md`, now with three sightings.
+  The class is recorded as the open observation, now with three sightings.
 
 - A third review — nine reviewers fanned across every module plus a
   cross-cutting sweep, each finding verified against the OpenImageIO source —
@@ -920,7 +919,7 @@ before the fork, but nothing was ever published under it, so starting both at
   or null — and both index their per-pixel bookkeeping vectors directly, so a
   pixel outside the image was a heap read and a heap write. The shims refuse
   it, which keeps the pair callable like their guarded siblings. Recorded for
-  upstream as issue 11 in `contrib/upstream-issues.md`.
+  upstream.
 
   A deep image too large for the machine is an error rather than
   `std::terminate`. `DeepData::init` resizes three per-pixel vectors with no
@@ -1062,8 +1061,7 @@ before the fork, but nothing was ever published under it, so starting both at
   indexes past the shorter input and past a destination narrower than either.
   Its own assertion — in code the widening makes unreachable — says the range
   was meant to narrow. The binding refuses those shapes rather than passing
-  them on. Drafted for upstream as issue 4 in `contrib/upstream-issues.md`;
-  present in 3.1 and still in 3.2.
+  them on. Later filed upstream as #5645; present in 3.1 and still in 3.2.
 - Three borrowed strings pointed into freed memory. `ImageBuf::name`,
   `ImageBuf::file_format_name` and `DeepData::channelname` each built a
   `rust::Str` from an OpenImageIO `string_view`, which selects the

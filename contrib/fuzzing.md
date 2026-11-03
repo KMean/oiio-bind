@@ -88,8 +88,8 @@ Two targets are worth having, and they find different things:
 2. **File bytes** — `ImageInput::from_memory` on arbitrary input. This exercises
    OpenImageIO's parsers, which are upstream's code, but the binding must turn
    whatever they do into an `Err` rather than a crash. That is not currently
-   true: see the UTF-8 error-message defect in `contrib/upstream-issues.md`,
-   where 30 of the 184 OpenEXR fuzzer fixtures kill the process.
+   true: a UTF-8 error-message defect upstream kills the process on 30 of the
+   184 OpenEXR fuzzer fixtures.
 
 `tests/corpus_test.rs` already sweeps OpenEXR's `Damaged` directory, which is a
 corpus of real fuzzer findings and the right seed corpus for target 2.

@@ -362,7 +362,7 @@ impl TextureConfig {
         // "OpenImageIO" or "maketx". The maketx and oiiotool executables
         // stamp one; the library call these wrappers use does not, so
         // API-made textures would silently lose their constant-color
-        // metadata (`contrib/upstream-issues.md`, issue 14). Stamp it here
+        // metadata. Stamp it here
         // unless the caller chose their own.
         if !self.attributes.iter().any(|(name, _)| name == "Software") {
             AttributeValue::from("OpenImageIO oiio-bind").write(pinned.as_mut(), "Software")?;
@@ -503,8 +503,7 @@ pub struct TextureOptions {
     /// fill is exact, but when an existing UDIM set's individual tile is
     /// unpopulated, lookups wider than four channels receive the color's
     /// first four values repeated — OpenImageIO fills per four-channel
-    /// chunk and never advances the color (drafted as upstream issue 18 in
-    /// `contrib/upstream-issues.md`).
+    /// chunk and never advances the color.
     pub missing_color: Option<Vec<f32>>,
 }
 
