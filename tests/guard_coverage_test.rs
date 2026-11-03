@@ -278,15 +278,23 @@ fn color_range_check_refuses_a_deep_source() {
     );
 }
 
-/// `fillholes_pushpull` refuses a deep source. It also needs an alpha
-/// channel, so the message may name either; what matters is that it refuses
-/// rather than reading samples as pixels.
+/// `fillholes_pushpull` refuses a deep source.
+///
+/// This asserted only that the message was non-empty, which no `Error` ever
+/// is: `Error::operation` substitutes a sentence of its own when OpenImageIO
+/// says nothing. OpenImageIO refuses a deep source here too, through
+/// IBAprep, so the assertion held with the guard deleted and pinned nothing.
 #[test]
 fn fillholes_refuses_a_deep_source() {
     let mut dst = ImageBuf::empty().unwrap();
     let error = algo::fillholes_pushpull(&mut dst, &deep(4, 4))
         .expect_err("fillholes cannot read a deep image");
-    assert!(!error.to_string().is_empty(), "there should be a reason");
+    assert!(
+        error
+            .to_string()
+            .contains("fillholes_pushpull: deep images are not supported"),
+        "unexpected message: {error}"
+    );
 }
 
 /// `copy` refuses a pre-allocated destination whose data window the source

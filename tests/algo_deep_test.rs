@@ -255,17 +255,28 @@ fn deep_merge_interleaves_two_images_samples() {
 
 #[test]
 fn deep_merge_needs_matching_channels() {
+    // A superset rather than a subset, so the count is the ONLY difference.
+    // This used to compare the 5-channel R,G,B,A,Z against an R,G,B,A one,
+    // which is missing Z as well as being shorter, so the test could not
+    // tell which of the two OpenImageIO objected to.
     let five = deep_image(2, 2, 1);
-    let spec = ImageSpec::new(2, 2, 4, PixelFormat::F32)
+    let spec = ImageSpec::new(2, 2, 6, PixelFormat::F32)
         .unwrap()
-        .with_channel_names(["R", "G", "B", "A"])
+        .with_channel_names(["R", "G", "B", "A", "Z", "extra"])
         .unwrap()
         .as_deep();
-    let four = ImageBuf::new(&spec).unwrap();
+    let six = ImageBuf::new(&spec).unwrap();
 
     let mut merged = ImageBuf::empty().unwrap();
-    let error = algo::deep_merge(&mut merged, &five, &four, true, None).unwrap_err();
-    println!("mismatched channels reported as: {error}");
+    let error = algo::deep_merge(&mut merged, &five, &six, true, None).unwrap_err();
+    // Asserting the cause, not just that something failed. The body used to
+    // be a println, so it passed for any error at all.
+    assert!(
+        error
+            .to_string()
+            .contains("images must have the same number of channels"),
+        "unexpected message: {error}"
+    );
 }
 
 #[test]
@@ -318,9 +329,22 @@ fn the_deep_operations_refuse_flat_images() {
     let flat = ImageBuf::new(&ImageSpec::new(4, 4, 4, PixelFormat::F32).unwrap()).unwrap();
     let deep = deep_image(4, 4, 1);
 
+    // require_deep's own wording, not just is_err. OpenImageIO refuses the
+    // same shape itself, so a bare is_err passed with the guard removed and
+    // pinned nothing.
     let mut result = ImageBuf::empty().unwrap();
-    assert!(algo::deep_merge(&mut result, &flat, &deep, true, None).is_err());
+    let error = algo::deep_merge(&mut result, &flat, &deep, true, None)
+        .expect_err("deep_merge needs a deep first image");
+    assert!(
+        error.to_string().contains("is not a deep image"),
+        "unexpected message: {error}"
+    );
 
     let mut result = ImageBuf::empty().unwrap();
-    assert!(algo::deep_holdout(&mut result, &flat, &deep, None).is_err());
+    let error = algo::deep_holdout(&mut result, &flat, &deep, None)
+        .expect_err("deep_holdout needs a deep source");
+    assert!(
+        error.to_string().contains("is not a deep image"),
+        "unexpected message: {error}"
+    );
 }

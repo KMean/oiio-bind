@@ -295,7 +295,14 @@ fn an_empty_transform_path_is_refused() {
         None,
     )
     .unwrap_err();
-    println!("empty transform path reported as: {error}");
+    // The crate's own wording. The doc comment above states a memory-safety
+    // claim, and the body used to be a println, so it held whether or not
+    // the guard existed: OpenImageIO refuses an empty name too, with
+    // "Unknown filetransform name".
+    assert!(
+        error.to_string().contains("no transform file was named"),
+        "unexpected message: {error}"
+    );
 }
 
 #[test]
