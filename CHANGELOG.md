@@ -40,7 +40,8 @@ The same omission is why pasting into an empty deep destination printed
 than as a separate fix. Note that it printed on every build, not only on one
 configured with assertions live: `OIIO_ASSERT` always evaluates and always
 writes to stderr, and only its abort is conditional. `OIIO_DASSERT` is the one
-that compiles out. Written up for upstream in full, not yet filed.
+that compiles out. Reported upstream as
+[#5649](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5649).
 
 ### `ImageBuf::read` keeps the mip level it was attached to
 

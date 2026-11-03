@@ -67,6 +67,7 @@ is reachable from this crate, it is guarded here and reported upstream:
 | [#5638](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5638) | the colour engine wrote `0.5 + 10 * src` into channels past the fourth | fixed |
 | [#5645](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5645) | `ImageBufAlgo::max` reads past the narrower input | fixed |
 | [#5648](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5648) | `make_kernel("binomial", ...)` indexes its tap arrays past their allocation for even or fractional extents | open |
+| [#5649](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5649) | a deep `paste` wraps into the next scanline instead of clipping, and drops `chbegin` | open |
 
 A defect that is only reachable by calling OpenImageIO directly, not through
 this crate, is an upstream matter rather than a vulnerability here.

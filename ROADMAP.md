@@ -294,7 +294,7 @@ verified.
 
 Binding this library turned up defects in OpenImageIO itself, many of which
 let safe Rust read or write out of bounds, crash, or silently corrupt an
-image. Four were reported upstream:
+image. Five were reported upstream:
 
 - [#5400](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5400),
   `read_image` with an `image_span` transposing x and y on tiled files. Fixed
@@ -309,6 +309,10 @@ image. Four were reported upstream:
 - [#5648](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5648),
   `make_kernel("binomial", ...)` sizing its tap arrays from the requested
   extent and indexing them over the odd-rounded one. Open.
+- [#5649](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5649),
+  a deep `paste` writing through an unrange-checked `pixelindex`, so an offset
+  wraps into the next scanline rather than clipping, and ignoring `chbegin`.
+  Open.
 
 The others are guarded here rather than passed on, which is why a few
 operations refuse arguments OpenImageIO accepts:
