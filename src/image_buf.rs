@@ -469,10 +469,28 @@ impl ImageBuf {
     ///   flat slice cannot describe. [`get_pixels_into`](Self::get_pixels_into)
     ///   handles that case.
     ///
+    /// ```
+    /// use oiio::{ImageBuf, ImageSpec, PixelFormat};
+    /// # fn main() -> oiio::Result<()> {
+    /// let spec = ImageSpec::new(64, 64, 4, PixelFormat::F32)?;
+    /// let image = ImageBuf::new(&spec)?;
+    /// let pixels: &[f32] = image.pixels()?;
+    /// assert_eq!(pixels.len(), 64 * 64 * 4);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// A buffer attached to a file holds nothing to borrow until it is read,
+    /// so neither the read nor the type is optional. Most OpenEXR files hold
+    /// `half`, and asking for `f32` over one of those is refused rather than
+    /// converted. [`ImageSpec::format`](crate::ImageSpec::format) says which
+    /// to ask for when it is not known in advance.
+    ///
     /// ```no_run
     /// # fn main() -> oiio::Result<()> {
-    /// let image = oiio::ImageBuf::from_path("frame.exr".as_ref())?;
-    /// let pixels: &[f32] = image.pixels()?;
+    /// let mut image = oiio::ImageBuf::from_path("frame.exr".as_ref())?;
+    /// image.read()?;
+    /// let pixels: &[oiio::f16] = image.pixels()?;
     /// # Ok(())
     /// # }
     /// ```
