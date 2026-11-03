@@ -134,6 +134,16 @@ pub use color::ColorConfig;
 pub use deep::{DeepChannel, DeepImage};
 pub use error::{Error, Result};
 pub use half::f16;
+
+// The README's samples are written as Rust, but nothing compiled them: the
+// file is not included anywhere, so rustdoc never saw it and a sample could
+// drift from the API with every release and still look right. This item
+// exists only under `cfg(doctest)`, so the blocks become doctests without
+// appearing in the rendered documentation.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+pub struct ReadmeSamples;
+
 pub use image_buf::{ImageBuf, Storage, Wrap};
 pub use image_cache::{ImageCache, ImageCacheBuilder, ImageHandle, Perthread, TileGuard};
 pub use image_spec::ImageSpec;
