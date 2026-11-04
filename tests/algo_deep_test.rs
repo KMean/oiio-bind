@@ -535,15 +535,24 @@ fn a_deep_paste_that_overhangs_its_destination_is_clipped_not_wrapped() {
     }
 }
 
-/// And a paste that misses the destination altogether is refused rather than
-/// scrambled.
+/// And a paste that misses the destination altogether changes nothing, and
+/// says so by succeeding.
 ///
-/// With the writes unchecked there is no offset large enough to miss: an
+/// With the writes unchecked there was no offset large enough to miss: an
 /// 8-wide destination and an offset of 10 wrapped into the next row and
-/// reported success. Since nothing can be pasted here, the honest answer is
-/// an error.
+/// reported success with the samples scrambled. Now nothing lands and nothing
+/// is written.
+///
+/// This returns `Ok` rather than an error, which is a deliberate change from
+/// how the crate first fixed it. The flat path succeeds for the same
+/// arguments, because `paste_` iterates and every destination pixel fails
+/// `d.exists()`, so it copies nothing and returns true. Refusing only the
+/// deep case would make one path stricter than the other for identical
+/// arguments. Upstream's own fix for this, PR #5652 against issue #5649,
+/// made the same choice and pins it in `test_paste_deep`, so a crate that
+/// refused here would also disagree with the library it binds.
 #[test]
-fn a_deep_paste_that_misses_its_destination_is_refused() {
+fn a_deep_paste_that_misses_its_destination_changes_nothing() {
     let src = deep_image(8, 8, 2);
     let spec = ImageSpec::new(8, 8, 5, PixelFormat::F32)
         .unwrap()
@@ -552,17 +561,56 @@ fn a_deep_paste_that_misses_its_destination_is_refused() {
         .as_deep();
     let mut dst = ImageBuf::new(&spec).unwrap();
 
-    let error = algo::paste(&mut dst, [10, 0, 0], 0, &src, None)
-        .expect_err("a deep paste with nothing landing must be refused");
-    assert!(
-        error.to_string().contains("no sample would be pasted"),
-        "unexpected message: {error}"
-    );
+    algo::paste(&mut dst, [10, 0, 0], 0, &src, None)
+        .expect("a deep paste that lands nowhere is a no-op, not an error");
     assert_eq!(
         samples_in(&dst),
         0,
-        "a refused paste must not have written anything"
+        "nothing landed, so nothing may have been written"
     );
+
+    // The flat path, for the comparison the doc comment rests on.
+    let flat_src = ImageBuf::new(&ImageSpec::new(8, 8, 5, PixelFormat::F32).unwrap()).unwrap();
+    let mut flat_dst = ImageBuf::new(&ImageSpec::new(8, 8, 5, PixelFormat::F32).unwrap()).unwrap();
+    algo::paste(&mut flat_dst, [10, 0, 0], 0, &flat_src, None)
+        .expect("the flat path succeeds for the same arguments");
+}
+
+/// A source channel subset cannot be honoured either, for the same reason a
+/// channel offset cannot: the deep copy is whole-pixel.
+///
+/// Upstream's fix refuses this alongside the offset, so the crate does too.
+#[test]
+fn a_deep_paste_refuses_a_source_channel_subset() {
+    let src = deep_image(4, 4, 2);
+
+    // Narrower than the source: the range stops short of its channel count.
+    let narrower = Roi::new(0..4, 0..4, 0..1, 0..3).unwrap();
+    let mut dst = ImageBuf::empty().unwrap();
+    let error = algo::paste(&mut dst, [0, 0, 0], 0, &src, Some(narrower))
+        .expect_err("a deep paste cannot copy a channel subset");
+    assert!(
+        error.to_string().contains("cannot be honored"),
+        "unexpected message: {error}"
+    );
+
+    // And a range that starts above channel zero, which upstream's fix
+    // refuses separately. Its channel count matches the source's, so only the
+    // start makes it a subset.
+    let offset = Roi::new(0..4, 0..4, 0..1, 1..5).unwrap();
+    let mut dst = ImageBuf::empty().unwrap();
+    let error = algo::paste(&mut dst, [0, 0, 0], 0, &src, Some(offset))
+        .expect_err("a source channel range above zero cannot be honoured either");
+    assert!(
+        error.to_string().contains("cannot be honored"),
+        "unexpected message: {error}"
+    );
+
+    // The whole range is the control, and goes through.
+    let all = Roi::new(0..4, 0..4, 0..1, 0..5).unwrap();
+    let mut dst = ImageBuf::empty().unwrap();
+    algo::paste(&mut dst, [0, 0, 0], 0, &src, Some(all))
+        .expect("the full channel range is what a deep paste can do");
 }
 
 /// `first_channel` is ignored on the deep path, so it is refused.

@@ -2585,6 +2585,16 @@ imagebufalgo_paste(ImageBuf& dst, int xbegin, int ybegin, int zbegin,
         // destination to seven channels and puts the source at channel 2; a
         // deep one returns five channels with the source at channel 0 and
         // says it worked. There is nothing to pass on here, so this refuses.
+        if (srcroi.defined()
+            && (srcroi.chbegin != 0 || srcroi.chend < src.nchannels())) {
+            dst.errorfmt("paste: OpenImageIO's deep path copies whole pixels, "
+                         "so a source channel range of {}..{} out of {} "
+                         "cannot be honored; paste every channel and select "
+                         "afterwards with channels",
+                         srcroi.chbegin, srcroi.chend, src.nchannels());
+            return false;
+        }
+
         if (chbegin != 0) {
             dst.errorfmt("paste: OpenImageIO's deep path ignores the first "
                          "channel, so a value of {} would be dropped without "
@@ -2622,18 +2632,17 @@ imagebufalgo_paste(ImageBuf& dst, int xbegin, int ybegin, int zbegin,
         // Doing the reset here leaves the assertion looking at the deep
         // destination it expects.
         if (!dst.initialized()) {
+            // Both windows take the destination region, which is what
+            // IBAprep does for the flat path (imagebufalgo.cpp:252, :233) and
+            // what upstream's own fix does. The tile dimensions are cleared
+            // for the same reason: a tiled source would otherwise hand back a
+            // tiled destination that the flat path never produces.
             ImageSpec spec = src.spec();
-            // Move the display window with the data window, so whatever
-            // relationship the source had between the two survives the paste.
-            spec.full_x += target.xbegin - spec.x;
-            spec.full_y += target.ybegin - spec.y;
-            spec.full_z += target.zbegin - spec.z;
-            spec.x      = target.xbegin;
-            spec.y      = target.ybegin;
-            spec.z      = target.zbegin;
-            spec.width  = target.width();
-            spec.height = target.height();
-            spec.depth  = target.depth();
+            OIIO::set_roi(spec, target);
+            OIIO::set_roi_full(spec, target);
+            spec.tile_width  = 0;
+            spec.tile_height = 0;
+            spec.tile_depth  = 0;
             dst.reset(spec);
         } else {
             // An allocated destination cannot be resized, so the source
@@ -2643,13 +2652,14 @@ imagebufalgo_paste(ImageBuf& dst, int xbegin, int ybegin, int zbegin,
             const ROI landed = OIIO::roi_intersection(target, dst.roi());
             if (landed.xend <= landed.xbegin || landed.yend <= landed.ybegin
                 || landed.zend <= landed.zbegin) {
-                dst.errorfmt("paste: the source would land at {},{} to {},{} "
-                             "and the destination holds {},{} to {},{}, so no "
-                             "sample would be pasted",
-                             target.xbegin, target.ybegin, target.xend,
-                             target.yend, dst.roi().xbegin, dst.roi().ybegin,
-                             dst.roi().xend, dst.roi().yend);
-                return false;
+                // Nothing overlaps, so nothing is pasted. This returns true
+                // rather than an error because the flat path does: paste_
+                // iterates and every destination pixel fails d.exists(), so
+                // the call succeeds having copied nothing. Refusing here
+                // would make a deep paste stricter than a flat one for the
+                // same arguments, and stricter than the library once
+                // upstream's fix ships.
+                return true;
             }
             effective = ROI(landed.xbegin - xbegin, landed.xend - xbegin,
                             landed.ybegin - ybegin, landed.yend - ybegin,

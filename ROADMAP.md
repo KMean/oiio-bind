@@ -308,11 +308,12 @@ image. Five were reported upstream:
   in PR #5646.
 - [#5648](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5648),
   `make_kernel("binomial", ...)` sizing its tap arrays from the requested
-  extent and indexing them over the odd-rounded one. Open.
+  extent and indexing them over the odd-rounded one. A fix is open as PR #5653,
+  with a regression test.
 - [#5649](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5649),
   a deep `paste` writing through an unrange-checked `pixelindex`, so an offset
   wraps into the next scanline rather than clipping, and ignoring `chbegin`.
-  Open.
+  A fix is open as PR #5652, with a regression test.
 
 The others are guarded here rather than passed on, which is why a few
 operations refuse arguments OpenImageIO accepts:
@@ -325,12 +326,15 @@ operations refuse arguments OpenImageIO accepts:
 - `algo::checker` refuses a square of zero, `render_box` a reversed filled
   box, `render_text` text with no glyphs, and the filter window ops a width of
   one.
-- `algo::paste` refuses a first channel on a deep source, which OpenImageIO
-  ignores, and sizes an empty deep destination from the destination region, so
-  an offset paste lands where it was asked rather than wrapping into the next
-  scanline. Where the destination is already allocated it clips the source to
-  what fits, which is both the flat path's behaviour and what the call
-  documents, and refuses the paste when nothing would land.
+- `algo::paste` refuses a first channel or a source channel subset on a deep
+  source, which OpenImageIO ignores, and sizes an empty deep destination from
+  the destination region, so an offset paste lands where it was asked rather
+  than wrapping into the next scanline. Where the destination is already
+  allocated it clips the source to what fits, which is the flat path's
+  behaviour and what the call documents; a paste that lands nowhere succeeds
+  having changed nothing, again as the flat path does. All of this matches
+  upstream's own fix in PR #5652, so the answer does not depend on which
+  OpenImageIO is linked.
 - Every measurement, and `ifft`, refuse inputs whose pixels they would
   dereference through a null pointer.
 

@@ -43,6 +43,38 @@ writes to stderr, and only its abort is conditional. `OIIO_DASSERT` is the one
 that compiles out. Reported upstream as
 [#5649](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5649).
 
+### The deep paste workaround now answers as the fixed library will
+
+OpenImageIO accepted [#5649](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5649)
+and Larry Gritz opened
+[PR #5652](https://github.com/AcademySoftwareFoundation/OpenImageIO/pull/5652)
+against it, which fixes `deep_paste_` the way the report proposed. Comparing
+that patch against this crate's workaround turned up four places where the two
+disagreed, and a disagreement is the one thing a workaround must not have: it
+would mean the same call returning different answers depending on which
+OpenImageIO the caller linked, which is what the workaround exists to prevent.
+
+All four now follow the upstream patch:
+
+- A paste that lands entirely outside the destination returns `Ok` and changes
+  nothing. It used to be refused. The flat path succeeds for the same
+  arguments, since `paste_` iterates and every destination pixel fails
+  `d.exists()`, so refusing only the deep case made one path stricter than the
+  other for identical input.
+- An empty destination takes the destination region for *both* its data and
+  its display window, through `set_roi` and `set_roi_full`, which is what
+  `IBAprep` does for flat pixels. It used to keep the source's display window
+  and shift it by the same offset as the data window, which preserved more but
+  matched neither the flat path nor the fix.
+- An empty destination is untiled. A tiled deep source used to hand back a
+  tiled destination, which the flat path never produces.
+- A source channel *subset* is refused, alongside the channel offset that was
+  already refused. The deep copy is whole-pixel, so neither can be honoured.
+
+The assertion fix and the offset fix from the previous entry are unchanged. The
+workaround stays in place regardless, because this crate supports OpenImageIO
+3.1.4 and newer and the patch is not in any release yet.
+
 ### `ImageBuf::read` keeps the mip level it was attached to
 
 It called `read_at(0, 0, None)` whatever the buffer was opened on, so
