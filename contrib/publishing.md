@@ -1,13 +1,76 @@
 # Publishing to crates.io
 
 **Done: both crates were published at 0.1.0 on 2026-08-15**, then `oiio`
-0.1.1, both at 0.2.0, and `oiio` 0.2.1. The checklist further down is the
-0.1.0 one, kept for its reasoning; the current release is below.
+0.1.1, both at 0.2.0, `oiio` 0.2.1, both at 0.2.2, `oiio` 0.2.3 with
+`oiio-sys` 0.3.0, and `oiio` 0.3.0. The checklists further down are kept for
+their reasoning; the current release is immediately below.
 
 Remember that publishing is irreversible: a published version can be yanked,
 but never replaced or deleted.
 
-## Ready to publish: `oiio` 0.2.3 and `oiio-sys` 0.3.0
+## Ready to publish: `oiio` 0.3.1 and `oiio-sys` 0.4.0
+
+Prepared 2026-11-06, commit `4a0acae`. Versions are bumped, the changelog
+section is dated, and the tree is clean.
+
+**`oiio-sys` takes a minor bump** because `TextureLookupOptions` in the cxx
+bridge gained two fields and is constructible, which `cargo-semver-checks`
+reports as `constructible_struct_adds_field`. **`oiio` is a patch**: its
+additions sit on `#[non_exhaustive]` structs, and its one behavioural change
+is `premult` and `unpremult` refusing a destination wider than the source
+where they previously returned success with values read past the source's
+pixel. No signature moved, and the call whose result changes was returning
+garbage.
+
+Gates, all run on 2026-11-06 at these versions, against the vcpkg 3.1.12 on
+this machine, with the three corpus variables set and
+`OIIO_BIND_REQUIRE_CORPUS=1` so the corpus suites run rather than skipping:
+
+- [x] `cargo fmt --all --check`
+- [x] `cargo clippy --workspace --all-targets -- -D warnings`
+- [x] `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`
+- [x] `DOCS_RS=1 cargo doc --workspace --no-deps`
+- [x] `cargo test --workspace --all-targets`: **470 pass**
+- [x] `cargo test --workspace --doc`: **26 pass**. The two together are the
+      496 a `cargo test --all` reports, which is the arithmetic that shows
+      `--all-targets` leaves 26 doctests unrun on its own.
+- [x] `cargo package -p oiio-sys`: packages **and verifies**, 38 files,
+      490.0 KiB raw and 87.1 KiB compressed, compiling from its own directory
+- [x] README checked: `oiio = "0.3"` in the usage block still covers 0.3.1,
+      the crates.io links are present, and the CI paragraph still matches the
+      workflow. No change needed.
+- [ ] `cargo package -p oiio` cannot verify until `oiio-sys` 0.4.0 is on the
+      index. Confirmed failing with the expected "location searched:
+      crates.io index". Expected, not a fault, see **Order** below.
+
+**Ordering trap, fixed in this release rather than worked around.** Running
+`DOCS_RS=1 cargo doc` used to leave the target directory in docs mode, so
+every later build failed at the link step with MSVC 1120 until a `cargo
+clean`. `build.rs` returned early before emitting any rerun directives, so
+cargo never re-ran it when `DOCS_RS` went away. It now emits
+`rerun-if-env-changed=DOCS_RS` before that return, verified by running the
+docs gate and then a test build with no clean in between. The gates above can
+be run in any order.
+
+Note for anyone clearing `DOCS_RS` by hand: `$env:DOCS_RS = ""` does **not**
+work, because `std::env::var("DOCS_RS").is_ok()` is true for an empty value.
+Remove the variable rather than blanking it, or just use a fresh shell.
+
+Then, in order:
+
+```bash
+cargo publish -p oiio-sys
+```
+
+Wait for the index, then:
+
+```bash
+cargo publish -p oiio
+```
+
+Then tag `v0.3.1` and push the tag.
+
+## Published: `oiio` 0.2.3 and `oiio-sys` 0.3.0
 
 Prepared 2026-11-02. **`oiio-sys` takes a MINOR bump, not a patch.** Three
 shims gained a required parameter when the exception boundary landed, so
