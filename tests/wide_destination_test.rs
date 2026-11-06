@@ -334,6 +334,12 @@ fn uniform_operations() -> Vec<(
 )> {
     vec![
         ("laplacian", algo::laplacian),
+        // OpenImageIO implements invert as mad(A, -1.0, 1.0), so it reaches
+        // the kernel the four mad shims guard. imagebufalgo_invert calls the
+        // library directly rather than routing through imagebufalgo_mad_icc,
+        // so it does not inherit that guard: the same bypass shape as the
+        // no-alpha copy fallback in premult.
+        ("invert", algo::invert),
         ("ifft", algo::ifft),
         ("polar_to_complex", algo::polar_to_complex),
         ("complex_to_polar", algo::complex_to_polar),
@@ -429,6 +435,81 @@ fn probe(shape: &Shape) -> Vec<String> {
         let mut dst = shape.destination();
         let outcome = algo::add(&mut dst, &src, &src, None);
         complaints.extend(report(shape, "add", outcome, &dst));
+    }
+    {
+        // Empty min and max are -FLT_MAX and +FLT_MAX, so the clamp is a pass
+        // through and anything read past the source pixel lands verbatim.
+        // clamp_alpha_to_unit stays false, because it writes the alpha channel
+        // separately and would muddy the mechanism.
+        let mut dst = shape.destination();
+        let outcome = algo::clamp(&mut dst, &src, &[], &[], false, None);
+        complaints.extend(report(shape, "clamp", outcome, &dst));
+    }
+    {
+        // Every slice empty is the documented identity remap, so this too
+        // writes the value it read and nothing else.
+        let mut dst = shape.destination();
+        let outcome = algo::contrast_remap(&mut dst, &src, &Default::default(), None);
+        complaints.extend(report(shape, "contrast_remap", outcome, &dst));
+    }
+    {
+        // st_warp needs its coordinate map in 0..1, so it cannot be the ramp:
+        // the ramp's values clamp to the window edge and the sampler then
+        // reads outside the data window, where a buffer answers black from its
+        // own scratch rather than from a source pixel, which would mask the
+        // defect rather than show it. A constant half samples the middle.
+        let coordinates = {
+            let spec = ImageSpec::new(shape.width, shape.height, 2, PixelFormat::F32)
+                .unwrap()
+                .with_origin(shape.src_origin);
+            let mut map = ImageBuf::new(&spec).unwrap();
+            algo::fill(&mut map, &[0.5, 0.5], None).unwrap();
+            map
+        };
+        let mut dst = shape.destination();
+        let outcome = algo::st_warp(
+            &mut dst,
+            &src,
+            &coordinates,
+            [0, 1],
+            [false, false],
+            &Default::default(),
+            None,
+        );
+        complaints.extend(report(shape, "st_warp", outcome, &dst));
+    }
+
+    // An EXPLICIT region whose channel range spans the destination. Everything
+    // above passes None, and the two are not equivalent: IBAprep shrink-wraps
+    // a defined ROI to the DESTINATION rather than to the source, and `flip`
+    // copies the region's channel range straight through where `transpose`
+    // clamps it to the source. So a defined chend is its own question.
+    if let Ok(region) = Roi::new(
+        shape.src_origin[0]..shape.src_origin[0] + shape.width as i32,
+        shape.src_origin[1]..shape.src_origin[1] + shape.height as i32,
+        0..1,
+        0..shape.dst_channels,
+    ) {
+        for (name, operation) in uniform_operations() {
+            let mut dst = shape.destination();
+            let outcome = operation(&mut dst, &src, Some(region));
+            complaints.extend(report(
+                shape,
+                &format!("{name} with an explicit full-width region"),
+                outcome,
+                &dst,
+            ));
+        }
+        {
+            let mut dst = shape.destination();
+            let outcome = algo::copy(&mut dst, &src, None, Some(region));
+            complaints.extend(report(
+                shape,
+                "copy with an explicit full-width region",
+                outcome,
+                &dst,
+            ));
+        }
     }
 
     complaints

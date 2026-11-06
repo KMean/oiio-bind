@@ -371,6 +371,37 @@ refuse_wide_destination(ImageBuf& dst, const ImageBuf& src,
     return true;
 }
 
+// The companion to the guard above, for the operations that pass the CALLER'S
+// region through to the kernel rather than having IBAprep widen one for them.
+//
+// The two are not interchangeable and an operation needs whichever matches how
+// its range is decided. `invert`, `clamp`, `contrast_remap` and `st_warp` call
+// IBAprep with an undefined region, and its initialized-destination branch
+// replaces that with the destination's whole window including chend, so the
+// destination's width is what reaches the kernel and
+// refuse_wide_destination is the guard that sees it. `flip`, `flop` and the
+// three quarter rotations instead copy the region they were given straight
+// into their own loop bounds: with an undefined region they substitute
+// `src.roi()` and are correct, and only a DEFINED region whose chend runs past
+// the source reaches an unchecked read. Guarding those on the destination's
+// width instead would refuse the undefined case too, which works today.
+//
+// `transpose` already clamps its region to the source and is the model for what
+// the others should have done.
+bool
+refuse_wide_region(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
+                   const char* operation)
+{
+    if (!roi.defined() || !src.initialized()
+        || roi.chend <= src.nchannels())
+        return false;
+    dst.errorfmt("{}: the region asks for channels up to {} and the source has "
+                 "{}; OpenImageIO reads past the source pixel rather than "
+                 "clipping the region to it",
+                 operation, roi.chend, src.nchannels());
+    return true;
+}
+
 // The colour engine mishandles a region that starts above channel zero in
 // three separate ways, all measured: it transforms channels 0..n rather than
 // the ones asked for, it leaves the requested upper channels merely copied,
@@ -780,7 +811,8 @@ bool
 imagebufalgo_flip(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
                   int nthreads)
 {
-    if (refuse_empty_region(dst, src, roi, "flip"))
+    if (refuse_empty_region(dst, src, roi, "flip")
+        || refuse_wide_region(dst, src, roi, "flip"))
         return false;
     return OIIO::ImageBufAlgo::flip(dst, src, roi, nthreads);
 }
@@ -789,7 +821,8 @@ bool
 imagebufalgo_flop(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
                   int nthreads)
 {
-    if (refuse_empty_region(dst, src, roi, "flop"))
+    if (refuse_empty_region(dst, src, roi, "flop")
+        || refuse_wide_region(dst, src, roi, "flop"))
         return false;
     return OIIO::ImageBufAlgo::flop(dst, src, roi, nthreads);
 }
@@ -2251,7 +2284,8 @@ bool
 imagebufalgo_rotate90(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
                       int nthreads)
 {
-    if (refuse_empty_region(dst, src, roi, "rotate90"))
+    if (refuse_empty_region(dst, src, roi, "rotate90")
+        || refuse_wide_region(dst, src, roi, "rotate90"))
         return false;
     return OIIO::ImageBufAlgo::rotate90(dst, src, roi, nthreads);
 }
@@ -2260,7 +2294,8 @@ bool
 imagebufalgo_rotate180(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
                        int nthreads)
 {
-    if (refuse_empty_region(dst, src, roi, "rotate180"))
+    if (refuse_empty_region(dst, src, roi, "rotate180")
+        || refuse_wide_region(dst, src, roi, "rotate180"))
         return false;
     return OIIO::ImageBufAlgo::rotate180(dst, src, roi, nthreads);
 }
@@ -2269,7 +2304,8 @@ bool
 imagebufalgo_rotate270(ImageBuf& dst, const ImageBuf& src, const ROI& roi,
                        int nthreads)
 {
-    if (refuse_empty_region(dst, src, roi, "rotate270"))
+    if (refuse_empty_region(dst, src, roi, "rotate270")
+        || refuse_wide_region(dst, src, roi, "rotate270"))
         return false;
     return OIIO::ImageBufAlgo::rotate270(dst, src, roi, nthreads);
 }
@@ -2364,6 +2400,11 @@ imagebufalgo_st_warp(ImageBuf& dst, const ImageBuf& src, const ImageBuf& stbuf,
     // stbuf is a third image, so IBAprep never sees it.
     if (refuse_deep(dst, stbuf, "st_warp", "coordinate map"))
         return false;
+    // warp clamps its region to the source before IBAprep; st_warp does not,
+    // and deliberately restores the channel range IBAprep chose, so the
+    // destination's width is what the sampler accumulates over.
+    if (refuse_wide_destination(dst, src, "st_warp"))
+        return false;
     return OIIO::ImageBufAlgo::st_warp(dst, src, stbuf,
                                        to_string_view(filtername), filterwidth,
                                        chan_s, chan_t, flip_s, flip_t, roi,
@@ -2442,7 +2483,12 @@ bool
 imagebufalgo_invert(ImageBuf& dst, const ImageBuf& a, const ROI& roi,
                     int nthreads)
 {
-    if (refuse_empty_region(dst, a, roi, "invert"))
+    // IBAprep widens an undefined region to the destination's whole window,
+    // chend included, and the kernel then indexes the source with it. See
+    // refuse_wide_region above for why these four need the destination guard
+    // and the mirrors and rotations need the region one.
+    if (refuse_empty_region(dst, a, roi, "invert")
+        || refuse_wide_destination(dst, a, "invert"))
         return false;
     return OIIO::ImageBufAlgo::invert(dst, a, roi, nthreads);
 }
@@ -2461,7 +2507,12 @@ imagebufalgo_clamp(ImageBuf& dst, const ImageBuf& src,
                    rust::Slice<const float> min, rust::Slice<const float> max,
                    bool clampalpha01, const ROI& roi, int nthreads)
 {
-    if (refuse_empty_region(dst, src, roi, "clamp"))
+    // IBAprep widens an undefined region to the destination's whole window,
+    // chend included, and the kernel then indexes the source with it. See
+    // refuse_wide_region above for why these four need the destination guard
+    // and the mirrors and rotations need the region one.
+    if (refuse_empty_region(dst, src, roi, "clamp")
+        || refuse_wide_destination(dst, src, "clamp"))
         return false;
     return OIIO::ImageBufAlgo::clamp(dst, src, to_cspan(min), to_cspan(max),
                                      clampalpha01, roi, nthreads);
@@ -2551,7 +2602,12 @@ imagebufalgo_contrast_remap(ImageBuf& dst, const ImageBuf& src,
                             rust::Slice<const float> sthresh, const ROI& roi,
                             int nthreads)
 {
-    if (refuse_empty_region(dst, src, roi, "contrast_remap"))
+    // IBAprep widens an undefined region to the destination's whole window,
+    // chend included, and the kernel then indexes the source with it. See
+    // refuse_wide_region above for why these four need the destination guard
+    // and the mirrors and rotations need the region one.
+    if (refuse_empty_region(dst, src, roi, "contrast_remap")
+        || refuse_wide_destination(dst, src, "contrast_remap"))
         return false;
     return OIIO::ImageBufAlgo::contrast_remap(dst, src, to_cspan(black),
                                               to_cspan(white), to_cspan(min),

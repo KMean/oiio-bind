@@ -4,6 +4,50 @@ This fork's changes, newest first.
 
 ## Unreleased
 
+### Nine more operations no longer read past a narrower source
+
+Widening the invariant below from one shape to thirteen, and adding the
+operations an audit of the shims said were exposed, found nine more members of
+the same class. Each is verified by arithmetic rather than by the absence of a
+crash, and each is OpenImageIO's kernel rather than this crate's code; the
+crate's part is the guard that was missing.
+
+Two guards, because the operations decide their channel range two different
+ways and one guard would have refused working calls.
+
+**Four take their range from the destination**, because they hand `IBAprep` an
+undefined region and its initialized-destination branch replaces that with the
+destination's whole window, `chend` included. They now carry
+`refuse_wide_destination`, the check `copy` has had inline since 0.2.0:
+
+- `invert`, which OpenImageIO implements as `mad(A, -1.0, 1.0)`, so it reaches
+  the kernel the `mad` shims guard. It called the library directly rather than
+  routing through the guarded shim, which is the same bypass shape as the
+  no-alpha copy fallback in `premult`. A two-channel source into a six-channel
+  destination came back with `-2 -3 -4 -5` in the channels the source does not
+  have, which is `1 - x` of the next pixels' `3 4 5 6`.
+- `clamp`, where empty `min` and `max` are the documented pass-through, so the
+  value read past the source pixel lands verbatim: `3 4 5 6` for the same
+  fixture, reading straight through the two following pixels.
+- `contrast_remap`, whose default remap is the identity, with the same result.
+- `st_warp`. `warp` clamps its region to the source before calling `IBAprep`;
+  `st_warp` does not, and then deliberately restores the range `IBAprep` chose.
+
+**Five take the range from the region they were given**, substituting
+`src.roi()` when it is undefined. Those are correct with no region, and only a
+region whose `chend` runs past the source reaches an unchecked read, so
+guarding them on the destination's width would have refused the working case.
+They now carry a new `refuse_wide_region`: `flip`, `flop`, `rotate_90`,
+`rotate_180` and `rotate_270`. `transpose` already clamped its region to the
+source and is the model for what the others should have done.
+
+Upstream has the same unguarded read in all nine places.
+[PR #5664](https://github.com/AcademySoftwareFoundation/OpenImageIO/pull/5664)
+fixes it in `copy` and `circular_shift`, which are the two
+[#5661](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5661)
+reported, with one clamp each after `IBAprep`. The same clamp is what these
+nine need.
+
 ### `mad` no longer reads past a narrower operand, and an invariant now covers the class
 
 `mad` computes `a * b + c`, and the shim already refused operands that
