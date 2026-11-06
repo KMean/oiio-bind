@@ -18,6 +18,15 @@ const NAMES: &[&str] = &[
 ];
 
 fn main() -> Result<()> {
+    // Declared before the early return below, so that a build made with
+    // DOCS_RS set is re-run once it is unset. Without it the docs-mode run
+    // emits no rerun directives at all, cargo has no reason to run this script
+    // again, and the target directory stays in docs mode: every later build
+    // links nothing and fails with unresolved externals until a clean. The
+    // release checklist runs `DOCS_RS=1 cargo doc` before the test gates, so
+    // following it in order used to need a clean in between.
+    println!("cargo:rerun-if-env-changed=DOCS_RS");
+
     // Skip linking on docs.rs: https://docs.rs/about/builds#detecting-docsrs
     let building_docs = std::env::var("DOCS_RS").is_ok();
     if building_docs {
