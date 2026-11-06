@@ -5,7 +5,8 @@
 //! wider than its source reads past each source pixel and, at the end of the
 //! buffer, past the allocation. The class has produced defects in `mad`,
 //! `copy`, `channel_sum`, `circular_shift` and, through the no-alpha copy
-//! fallback, `premult` and `unpremult`. Three are filed upstream, the last as
+//! fallback, `premult` and `unpremult`. Several are filed upstream, the copy
+//! one as
 //! [#5661](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5661).
 //!
 //! **Why this file exists rather than relying on the suites that already run.**
@@ -20,68 +21,196 @@
 //!   defect inside a shim is invisible to it, and that is where `premult`'s
 //!   was.
 //!
-//! The invariant here needs no reference implementation. Give the source
-//! values that are all distinct and all non-zero, hand the operation a
-//! pre-allocated destination with more channels than the source, and require
-//! that every channel the source lacks comes back either untouched or zeroed.
-//! A constant-filled source would hide the defect, because an over-read into
-//! the next pixel would return the same constant; the ramp is what makes it
+//! The invariant needs no reference implementation. Give the source values
+//! that are all distinct and all non-zero, hand the operation a pre-allocated
+//! destination with more channels than the source, and require that every
+//! channel the source lacks comes back either untouched or zeroed. A
+//! constant-filled source would hide the defect, because an over-read into the
+//! next pixel would return the same constant; the ramp is what makes it
 //! visible.
 //!
 //! An operation is free to refuse. `Err` is a pass: the crate's guards exist
 //! precisely to refuse these shapes, and this file pins that they either
 //! refuse or answer correctly, never answer wrongly.
+//!
+//! **On pixel formats.** Only the float formats are probed, which still gives
+//! three different strides, 2, 4 and 8 bytes, and therefore three different
+//! typed kernels. The integer formats are deliberately left out: `set_pixel_at`
+//! normalises a float into them, so a ramp of 1 through 32 would clamp to the
+//! same maximum in every channel and lose the distinctness the whole oracle
+//! rests on, and `-1` cannot be stored at all so an untouched channel would be
+//! indistinguishable from a deliberately zeroed one. Testing them with a
+//! blunted oracle would read as coverage without being any.
 
 mod common;
 
 use oiio::algo::Operand;
 use oiio::{algo, ImageBuf, ImageSpec, PixelFormat, Roi};
 
-const WIDTH: u32 = 4;
-const HEIGHT: u32 = 4;
-/// Channels the source has.
-const SRC_CHANNELS: u32 = 2;
-/// Channels the destination has. The gap is where the over-read lands.
-const DST_CHANNELS: u32 = 6;
 /// Left in the destination's extra channels. Negative, so it cannot be
-/// confused with a source value or with a deliberate zero.
+/// confused with a source value or with a deliberate zero. Exactly
+/// representable in all three probed formats.
 const SENTINEL: f32 = -1.0;
 
-/// A source whose every value is distinct and non-zero: channel `c` of pixel
-/// `(x, y)` holds `1 + c + SRC_CHANNELS * (y * WIDTH + x)`, so 1 through 32.
+/// One shape to ask the invariant of.
 ///
-/// Distinctness is the whole mechanism. Non-zero matters too, because zero is
-/// an allowed answer in an extra channel and a source full of zeroes would
-/// make a real over-read indistinguishable from a deliberate fill.
-fn ramp_source() -> ImageBuf {
-    let spec = ImageSpec::new(WIDTH, HEIGHT, SRC_CHANNELS, PixelFormat::F32).unwrap();
-    let mut image = ImageBuf::new(&spec).unwrap();
-    algo::zero(&mut image, None).unwrap();
-    for y in 0..HEIGHT as i32 {
-        for x in 0..WIDTH as i32 {
-            let base = 1 + SRC_CHANNELS as i32 * (y * WIDTH as i32 + x);
-            let values: Vec<f32> = (0..SRC_CHANNELS)
-                .map(|c| (base + c as i32) as f32)
-                .collect();
-            image.set_pixel_at(x, y, &values).unwrap();
+/// The shape is parameterised because the first version of this file probed
+/// exactly one, F32 at the origin with 2 channels against 6, and that one shape
+/// was enough to find the `mad` defect. A shape that has not been probed is an
+/// unknown one, not a safe one: the pixel format decides the stride and which
+/// typed kernel runs, and the data windows decide whether the region guards
+/// refuse before the kernel is reached at all.
+#[derive(Clone, Copy)]
+struct Shape {
+    name: &'static str,
+    width: u32,
+    height: u32,
+    src_channels: u32,
+    dst_channels: u32,
+    src_format: PixelFormat,
+    dst_format: PixelFormat,
+    src_origin: [i32; 3],
+    dst_origin: [i32; 3],
+}
+
+impl Shape {
+    const fn base(name: &'static str) -> Self {
+        Self {
+            name,
+            width: 4,
+            height: 4,
+            src_channels: 2,
+            dst_channels: 6,
+            src_format: PixelFormat::F32,
+            dst_format: PixelFormat::F32,
+            src_origin: [0, 0, 0],
+            dst_origin: [0, 0, 0],
         }
     }
-    image
+
+    /// A source whose every value is distinct and non-zero: channel `c` of
+    /// pixel `(x, y)` holds `1 + c + src_channels * (y * width + x)`.
+    ///
+    /// Distinctness is the whole mechanism, because it is what identifies a
+    /// returned value as having come from a neighbouring pixel. Non-zero
+    /// matters too: zero is an allowed answer in an extra channel, so a source
+    /// containing zeroes would make a real over-read indistinguishable from a
+    /// deliberate fill.
+    fn source(&self) -> ImageBuf {
+        let spec = ImageSpec::new(self.width, self.height, self.src_channels, self.src_format)
+            .unwrap()
+            .with_origin(self.src_origin);
+        let mut image = ImageBuf::new(&spec).unwrap();
+        algo::zero(&mut image, None).unwrap();
+        let [origin_x, origin_y, _] = self.src_origin;
+        for row in 0..self.height as i32 {
+            for column in 0..self.width as i32 {
+                let base = 1 + self.src_channels as i32 * (row * self.width as i32 + column);
+                let values: Vec<f32> = (0..self.src_channels)
+                    .map(|c| (base + c as i32) as f32)
+                    .collect();
+                image
+                    .set_pixel_at(origin_x + column, origin_y + row, &values)
+                    .unwrap();
+            }
+        }
+        image
+    }
+
+    fn destination(&self) -> ImageBuf {
+        let spec = ImageSpec::new(self.width, self.height, self.dst_channels, self.dst_format)
+            .unwrap()
+            .with_origin(self.dst_origin);
+        let mut image = ImageBuf::new(&spec).unwrap();
+        let fill = vec![SENTINEL; self.dst_channels as usize];
+        algo::fill(&mut image, &fill, None).unwrap();
+        image
+    }
+
+    /// Every value the source holds, for deciding whether a stray value was
+    /// read out of it or out of whatever followed it in memory.
+    fn source_values(&self) -> Vec<f32> {
+        (1..=(self.src_channels * self.width * self.height) as i32)
+            .map(|v| v as f32)
+            .collect()
+    }
 }
 
-fn wide_destination() -> ImageBuf {
-    let spec = ImageSpec::new(WIDTH, HEIGHT, DST_CHANNELS, PixelFormat::F32).unwrap();
-    let mut image = ImageBuf::new(&spec).unwrap();
-    algo::fill(&mut image, &[SENTINEL; DST_CHANNELS as usize], None).unwrap();
-    image
-}
-
-/// Every value the source holds, for deciding whether a stray value was read
-/// out of it or out of whatever followed it in memory.
-fn source_values() -> Vec<f32> {
-    (1..=(SRC_CHANNELS * WIDTH * HEIGHT) as i32)
-        .map(|v| v as f32)
-        .collect()
+/// The shapes probed. Each line is one question; adding a line is the whole
+/// cost of covering a new shape.
+fn shapes() -> Vec<Shape> {
+    vec![
+        // The shape that found `mad`.
+        Shape::base("f32 2->6"),
+        // Narrower and wider strides, which select different typed kernels.
+        Shape {
+            src_format: PixelFormat::F16,
+            dst_format: PixelFormat::F16,
+            ..Shape::base("f16 2->6")
+        },
+        Shape {
+            src_format: PixelFormat::F64,
+            dst_format: PixelFormat::F64,
+            ..Shape::base("f64 2->6")
+        },
+        // Mismatched strides in both directions, which is what sends `copy`
+        // down its conversion path rather than its copy path.
+        Shape {
+            src_format: PixelFormat::F16,
+            dst_format: PixelFormat::F32,
+            ..Shape::base("f16 src -> f32 dst")
+        },
+        Shape {
+            src_format: PixelFormat::F32,
+            dst_format: PixelFormat::F16,
+            ..Shape::base("f32 src -> f16 dst")
+        },
+        // One channel against five is the `premult` and `copy` shape.
+        Shape {
+            src_channels: 1,
+            dst_channels: 5,
+            ..Shape::base("f32 1->5")
+        },
+        // A wide gap, so an over-read runs further past each pixel.
+        Shape {
+            src_channels: 1,
+            dst_channels: 8,
+            ..Shape::base("f32 1->8")
+        },
+        // A single channel of headroom, the alpha-shaped case.
+        Shape {
+            src_channels: 3,
+            dst_channels: 4,
+            ..Shape::base("f32 3->4")
+        },
+        // Non-square, so a row-stride error cannot hide behind a square.
+        Shape {
+            width: 7,
+            height: 3,
+            ..Shape::base("f32 7x3 2->6")
+        },
+        // Data windows away from the origin, separately and together. The
+        // region guards are what should decide these, and a refusal is a pass.
+        Shape {
+            dst_origin: [500, 500, 0],
+            ..Shape::base("destination at 500,500")
+        },
+        Shape {
+            src_origin: [500, 500, 0],
+            ..Shape::base("source at 500,500")
+        },
+        Shape {
+            src_origin: [-250, -250, 0],
+            ..Shape::base("source at -250,-250, as an overscan render")
+        },
+        // The direction of the original CI sighting: a destination far away
+        // from its source. `refuse_distant_pair` should stop most operations
+        // here, which is exactly what this asks.
+        Shape {
+            dst_origin: [1_000_000, 1_000_000, 0],
+            ..Shape::base("destination a million pixels away")
+        },
+    ]
 }
 
 /// Describes one channel that should not have been written.
@@ -101,8 +230,8 @@ struct Violation {
 /// the odd rotations swap the axes, `crop` and `cut` move the window, and an
 /// operation is free to reset it outright. A fixed region would read out of
 /// range and panic, which says nothing about the invariant.
-fn channels_the_source_lacks(dst: &ImageBuf) -> Vec<Violation> {
-    let known = source_values();
+fn channels_the_source_lacks(shape: &Shape, dst: &ImageBuf) -> Vec<Violation> {
+    let known = shape.source_values();
     let mut found = Vec::new();
 
     let Ok(spec) = dst.spec() else {
@@ -112,7 +241,7 @@ fn channels_the_source_lacks(dst: &ImageBuf) -> Vec<Violation> {
     // The operation replaced the destination with one no wider than the
     // source, so it kept none of our allocation and there is no extra channel
     // to inspect. Nothing to assert.
-    if channels <= SRC_CHANNELS {
+    if channels <= shape.src_channels {
         return found;
     }
     let Ok(window) = spec.data_window() else {
@@ -129,7 +258,7 @@ fn channels_the_source_lacks(dst: &ImageBuf) -> Vec<Violation> {
             for (channel, &value) in pixel
                 .iter()
                 .enumerate()
-                .skip(SRC_CHANNELS as usize)
+                .skip(shape.src_channels as usize)
                 .map(|(c, v)| (c as u32, v))
             {
                 // Untouched, or deliberately zeroed. Both are defensible.
@@ -149,11 +278,16 @@ fn channels_the_source_lacks(dst: &ImageBuf) -> Vec<Violation> {
     found
 }
 
-fn report(operation: &str, outcome: Result<(), oiio::Error>, dst: &ImageBuf) -> Vec<String> {
+fn report(
+    shape: &Shape,
+    operation: &str,
+    outcome: Result<(), oiio::Error>,
+    dst: &ImageBuf,
+) -> Vec<String> {
     match outcome {
         // A refusal is a pass. The guards exist to produce exactly this.
         Err(_) => Vec::new(),
-        Ok(()) => channels_the_source_lacks(dst)
+        Ok(()) => channels_the_source_lacks(shape, dst)
             .into_iter()
             .map(|v| {
                 let origin = if v.from_the_source {
@@ -162,9 +296,9 @@ fn report(operation: &str, outcome: Result<(), oiio::Error>, dst: &ImageBuf) -> 
                     "not a value in the source, so read past its allocation"
                 };
                 format!(
-                    "{operation}: ({},{}) channel {} came back {}; the source has \
-                     {SRC_CHANNELS} channels, and this is {origin}",
-                    v.x, v.y, v.channel, v.value
+                    "[{}] {operation}: ({},{}) channel {} came back {}; the source \
+                     has {} channels, and this is {origin}",
+                    shape.name, v.x, v.y, v.channel, v.value, shape.src_channels
                 )
             })
             .collect(),
@@ -172,8 +306,27 @@ fn report(operation: &str, outcome: Result<(), oiio::Error>, dst: &ImageBuf) -> 
 }
 
 /// The operations sharing `fn(&mut ImageBuf, &ImageBuf, Option<Roi>)`.
-/// `flatten` is excluded because it needs a deep source, which cannot be
-/// handed a wider flat destination in the first place.
+///
+/// Two are deliberately absent.
+///
+/// `flatten` needs a deep source, which cannot be handed a wider flat
+/// destination in the first place.
+///
+/// `fft` cannot be asked this question at all, because its output channel
+/// count is defined by the transform rather than inherited from the
+/// destination: it always produces a two-channel complex image, real part then
+/// imaginary, whatever the destination held before. Against a one-channel
+/// source it therefore writes channel 1 legitimately, and the widened shapes
+/// below caught it doing so and reported it as an over-read. The coefficients
+/// even looked the part, coming back as 2, -2, 8 and -8 where 2 and 8 are
+/// genuinely values in the source. That was a flaw in this file's oracle, not
+/// a defect in the crate, and it is worth recording because it is the one
+/// shape of false positive this invariant can produce: an operation that
+/// resets the destination's channel count.
+///
+/// `ifft` and the polar pair stay, because they require two channels on both
+/// sides and so refuse the narrow shapes rather than resetting them, and a
+/// refusal is a pass.
 #[allow(clippy::type_complexity)]
 fn uniform_operations() -> Vec<(
     &'static str,
@@ -181,7 +334,6 @@ fn uniform_operations() -> Vec<(
 )> {
     vec![
         ("laplacian", algo::laplacian),
-        ("fft", algo::fft),
         ("ifft", algo::ifft),
         ("polar_to_complex", algo::polar_to_complex),
         ("complex_to_polar", algo::complex_to_polar),
@@ -201,38 +353,38 @@ fn uniform_operations() -> Vec<(
     ]
 }
 
-#[test]
-fn no_operation_writes_a_channel_the_source_lacks() {
-    let src = ramp_source();
+/// Asks every operation the invariant's question, for one shape.
+fn probe(shape: &Shape) -> Vec<String> {
+    let src = shape.source();
     let mut complaints = Vec::new();
 
     for (name, operation) in uniform_operations() {
-        let mut dst = wide_destination();
+        let mut dst = shape.destination();
         let outcome = operation(&mut dst, &src, None);
-        complaints.extend(report(name, outcome, &dst));
+        complaints.extend(report(shape, name, outcome, &dst));
     }
 
     // The operations whose signatures differ, listed individually. Each of
-    // these has produced a defect of this class in OpenImageIO.
+    // these has produced a defect of this class, here or upstream.
     {
-        let mut dst = wide_destination();
+        let mut dst = shape.destination();
         let outcome = algo::copy(&mut dst, &src, None, None);
-        complaints.extend(report("copy", outcome, &dst));
+        complaints.extend(report(shape, "copy", outcome, &dst));
     }
     {
-        let mut dst = wide_destination();
+        let mut dst = shape.destination();
         let outcome = algo::circular_shift(&mut dst, &src, [0, 0, 0], None);
-        complaints.extend(report("circular_shift", outcome, &dst));
+        complaints.extend(report(shape, "circular_shift", outcome, &dst));
     }
     {
-        let mut dst = wide_destination();
+        let mut dst = shape.destination();
         let outcome = algo::paste(&mut dst, [0, 0, 0], 0, &src, None);
-        complaints.extend(report("paste", outcome, &dst));
+        complaints.extend(report(shape, "paste", outcome, &dst));
     }
     // All four `mad` operand combinations, because the shim is four separate
     // functions and only the ones taking two images shared a guard. The
     // image-and-constant forms reach the same kernel.
-    let constant = vec![2.0_f32; SRC_CHANNELS as usize];
+    let constant = vec![2.0_f32; shape.src_channels as usize];
     for (label, b, c) in [
         (
             "mad(image, image)",
@@ -255,72 +407,96 @@ fn no_operation_writes_a_channel_the_source_lacks() {
             Operand::Constant(&constant),
         ),
     ] {
-        let mut dst = wide_destination();
+        let mut dst = shape.destination();
         let outcome = algo::mad(&mut dst, &src, b, c, None);
-        complaints.extend(report(label, outcome, &dst));
+        complaints.extend(report(shape, label, outcome, &dst));
     }
     {
         // zover shares `mad`'s source-against-source guard, so it is worth
         // asking the same question of it. It may refuse for wanting a Z
         // channel, which is a pass.
-        let mut dst = wide_destination();
+        let mut dst = shape.destination();
         let outcome = algo::zover(&mut dst, &src, &src, false, None);
-        complaints.extend(report("zover", outcome, &dst));
+        complaints.extend(report(shape, "zover", outcome, &dst));
     }
     {
-        let mut dst = wide_destination();
-        let weights = vec![1.0_f32; SRC_CHANNELS as usize];
+        let mut dst = shape.destination();
+        let weights = vec![1.0_f32; shape.src_channels as usize];
         let outcome = algo::channel_sum(&mut dst, &src, &weights, None);
-        complaints.extend(report("channel_sum", outcome, &dst));
+        complaints.extend(report(shape, "channel_sum", outcome, &dst));
     }
     {
-        let mut dst = wide_destination();
+        let mut dst = shape.destination();
         let outcome = algo::add(&mut dst, &src, &src, None);
-        complaints.extend(report("add", outcome, &dst));
+        complaints.extend(report(shape, "add", outcome, &dst));
     }
 
+    complaints
+}
+
+#[test]
+fn no_operation_writes_a_channel_the_source_lacks() {
+    let mut complaints = Vec::new();
+    for shape in shapes() {
+        complaints.extend(probe(&shape));
+    }
     assert!(
         complaints.is_empty(),
-        "{} operation(s) wrote a channel the source does not have:\n  {}",
+        "{} case(s) wrote a channel the source does not have:\n  {}",
         complaints.len(),
         complaints.join("\n  ")
     );
 }
 
-/// The ramp is load-bearing: this pins that the fixture really does hold
-/// distinct non-zero values, so a passing run above means something.
+/// The ramp is load-bearing: this pins that every probed shape really does
+/// build a source of distinct non-zero values, so a passing run above means
+/// something. A shape whose fixture collapsed would pass the invariant for the
+/// wrong reason.
 #[test]
-fn the_fixture_makes_an_over_read_visible() {
-    let src = ramp_source();
-    let mut seen = Vec::new();
-    for y in 0..HEIGHT as i32 {
-        for x in 0..WIDTH as i32 {
-            let roi = Roi::new(x..x + 1, y..y + 1, 0..1, 0..SRC_CHANNELS).unwrap();
-            let mut pixel = [0.0_f32; SRC_CHANNELS as usize];
-            src.get_pixels_into(roi, &mut pixel).unwrap();
-            for &value in &pixel {
-                assert_ne!(value, 0.0, "a zero in the source would hide an over-read");
-                assert_ne!(
-                    value, SENTINEL,
-                    "a sentinel value in the source would hide an over-read"
-                );
-                assert!(
-                    !seen.contains(&value),
-                    "{value} appears twice in the source; distinct values are what \
-                     make the over-read identifiable"
-                );
-                seen.push(value);
+fn every_shape_makes_an_over_read_visible() {
+    for shape in shapes() {
+        let src = shape.source();
+        let [origin_x, origin_y, _] = shape.src_origin;
+        let mut seen: Vec<f32> = Vec::new();
+        for row in 0..shape.height as i32 {
+            for column in 0..shape.width as i32 {
+                let x = origin_x + column;
+                let y = origin_y + row;
+                let roi = Roi::new(x..x + 1, y..y + 1, 0..1, 0..shape.src_channels).unwrap();
+                let mut pixel = vec![0.0_f32; shape.src_channels as usize];
+                src.get_pixels_into(roi, &mut pixel).unwrap();
+                for &value in &pixel {
+                    assert_ne!(
+                        value, 0.0,
+                        "[{}] a zero in the source would hide an over-read",
+                        shape.name
+                    );
+                    assert_ne!(
+                        value, SENTINEL,
+                        "[{}] a sentinel value in the source would hide an over-read",
+                        shape.name
+                    );
+                    assert!(
+                        !seen.contains(&value),
+                        "[{}] {value} appears twice in the source; distinct values \
+                         are what make the over-read identifiable",
+                        shape.name
+                    );
+                    seen.push(value);
+                }
             }
         }
+        assert_eq!(
+            seen.len(),
+            (shape.src_channels * shape.width * shape.height) as usize,
+            "[{}] every source value should have been visited exactly once",
+            shape.name
+        );
+        assert_eq!(
+            seen.len(),
+            shape.source_values().len(),
+            "[{}] source_values() must agree with the ramp it describes",
+            shape.name
+        );
     }
-    assert_eq!(
-        seen.len(),
-        (SRC_CHANNELS * WIDTH * HEIGHT) as usize,
-        "every source value should have been visited exactly once"
-    );
-    assert_eq!(
-        seen.len(),
-        source_values().len(),
-        "source_values() must agree with the ramp it describes"
-    );
 }

@@ -37,6 +37,28 @@ its own header says, so a defect inside a shim is invisible to it. The
 `premult` defect in 0.3.1 was inside a shim and produced `0 1 2 3 4`, every
 value plausible.
 
+It asks that question of thirteen shapes rather than one, because the shape
+that found `mad` was the only one the first version probed and a shape that
+has not been probed is an unknown one rather than a safe one. The shapes vary
+the pixel format across `F16`, `F32` and `F64`, which is three strides and
+therefore three typed kernels, and in both mismatched directions; the channel
+gap from one-against-five through three-against-four to one-against-eight; the
+dimensions, so a row-stride error cannot hide behind a square; and the data
+windows, including a source at a negative origin as an overscan render has and
+a destination a million pixels from its source. The integer formats are left
+out on purpose, with the reason in the file: `set_pixel_at` normalises a float
+into them, so the ramp would clamp to one value and lose the distinctness the
+oracle rests on.
+
+Widening it found no further defect, and one flaw in the oracle itself. `fft`
+produces a two-channel complex image whatever the destination held, so against
+a one-channel source it writes channel 1 legitimately, and the invariant
+reported that as an over-read. Its coefficients came back as 2, -2, 8 and -8,
+and 2 and 8 are genuinely values in the source, so the false positive looked
+convincing. `fft` is now excluded with that reasoning recorded, since an
+operation whose output channel count is defined by the transform rather than
+inherited from the destination cannot be asked this question at all.
+
 ## 0.3.1 — 2026-11-06
 
 `oiio` moves to 0.3.1 and `oiio-sys` to 0.4.0. The theme is defects found by
