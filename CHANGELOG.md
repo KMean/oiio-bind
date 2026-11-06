@@ -2,14 +2,38 @@
 
 This fork's changes, newest first.
 
-## Unreleased
+## 0.3.1 — 2026-11-06
 
-**When this is released `oiio-sys` needs 0.4.0, and `oiio` needs no bump.**
+`oiio` moves to 0.3.1 and `oiio-sys` to 0.4.0. The theme is defects found by
+running the crate against real images rather than synthetic ones, and by
+reading the library's source rather than inferring from its behaviour. Most of
+them were OpenImageIO's own; those are filed upstream and linked from the
+entries below.
+
+**`oiio-sys` takes a minor bump rather than a patch.**
 `TextureLookupOptions` in the cxx bridge gained two fields and is
 constructible, so `cargo-semver-checks` reports
 `constructible_struct_adds_field` against it. `oiio`'s own additions sit on
 `#[non_exhaustive]` structs and are additive. Checked with the tool rather
 than by reading the diff.
+
+`oiio` is a patch rather than a minor. Its one behavioural change is
+`premult` and `unpremult` refusing a destination wider than the source where
+they previously returned success with values read past the source's pixel, so
+no signature moved and the call that changes was returning garbage.
+
+### A docs-mode build no longer poisons the target directory
+
+`oiio-sys/build.rs` skips OpenImageIO discovery and linking when `DOCS_RS` is
+set, which is what lets docs.rs build a crate it cannot link. It did that by
+returning early, before emitting any `rerun-if-env-changed` directives, so
+cargo had no reason to run the script again once `DOCS_RS` was unset. The
+target directory stayed in docs mode and every later build failed at the link
+step with unresolved externals until `cargo clean`.
+
+The release checklist runs `DOCS_RS=1 cargo doc` before the test gates, so
+following it in order hit this. `rerun-if-env-changed=DOCS_RS` is now emitted
+before the early return.
 
 ### `premult` and `unpremult` no longer reach past the source's pixel
 
