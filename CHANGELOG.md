@@ -132,13 +132,20 @@ which is a plausible colour value rather than a wrong-looking number.
 `deep_value_uint` is the accessor that answers, and its documentation now says
 what the other one does instead of calling it approximate.
 
-`ImageBuf::mip_level_count` returns 0 for every file. `ImageBufImpl::init_spec`
-fills `m_nmiplevels` only on its cache-backed branch; the branch that opens
-through `ImageInput` sets `m_nsubimages` beside it and leaves `m_nmiplevels`
-at zero. Every buffer this crate opens from a file passes a null cache, which
-is what the `Send` reasoning on the type rests on, so that is the only branch
-it takes. `ImageCache::mip_level_count` reports the real number, and the
-documentation now points there.
+`ImageBuf::mip_level_count` returns 0 for every file **on OpenImageIO older
+than 3.2.2.0**. `ImageBufImpl::init_spec` used to fill `m_nmiplevels` only on
+its cache-backed branch; the branch that opens through `ImageInput` set
+`m_nsubimages` beside it and left `m_nmiplevels` at zero. Every buffer this
+crate opens from a file passes a null cache, which is what the `Send`
+reasoning on the type rests on, so that is the only branch it takes.
+
+OpenImageIO PR #5437 gave that branch a real value from `oiio:miplevels`, and
+it reached the 3.2 release line as a backport that ships in 3.2.2.0, so from
+that release on the accessor answers. The documentation says which versions
+answer, and `ImageCache::mip_level_count`, which reports the real number on
+every version, is still the one to reach for if you do not want to care. The
+corpus tripwire asserts both sides rather than pinning one, so it keeps
+testing the asymmetry instead of failing on the versions that are correct.
 
 ### The guards run against real pixels
 
