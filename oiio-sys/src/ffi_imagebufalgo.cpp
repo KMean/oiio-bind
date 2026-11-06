@@ -2370,6 +2370,20 @@ imagebufalgo_st_warp(ImageBuf& dst, const ImageBuf& src, const ImageBuf& stbuf,
                                        nthreads);
 }
 
+// Every `mad` variant needs TWO channel guards, and they answer different
+// questions. `refuse_channel_mismatch` compares the image operands against
+// each other, because a*b+c reads each of them over the union width.
+// `refuse_wide_destination` compares the destination against operand `a`,
+// because the kernel takes its channel range from the DESTINATION: a
+// pre-allocated destination wider than the operands makes it read past each
+// operand's pixel and, at the end of the buffer, past the allocation. Only the
+// first was here, so a two-channel operand into a six-channel destination
+// passed the guard and came back holding 12, 20, 30 and 42 in the channels the
+// operands do not have, which is a*b+c computed on the NEXT pixel's values.
+// `copy` has carried the destination check inline since 0.2.0; this is the same
+// check, and `mad` is the same defect reached through another kernel.
+//
+// Found by tests/wide_destination_test.rs, which exists for this class.
 bool
 imagebufalgo_mad_iii(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
                      const ImageBuf& c, const ROI& roi, int nthreads)
@@ -2379,7 +2393,8 @@ imagebufalgo_mad_iii(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
         || refuse_channel_mismatch(dst, a, b, "mad")
         // a*b+c reads every image operand to the union channel count, so c has
         // to line up too, not only a and b.
-        || refuse_channel_mismatch(dst, a, c, "mad"))
+        || refuse_channel_mismatch(dst, a, c, "mad")
+        || refuse_wide_destination(dst, a, "mad"))
         return false;
     return OIIO::ImageBufAlgo::mad(dst, a, b, c, roi, nthreads);
 }
@@ -2390,7 +2405,8 @@ imagebufalgo_mad_iic(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
 {
     if (refuse_distant_pair(dst, a, b, "mad")
         || refuse_deep_mismatch(dst, a, b, "mad")
-        || refuse_channel_mismatch(dst, a, b, "mad"))
+        || refuse_channel_mismatch(dst, a, b, "mad")
+        || refuse_wide_destination(dst, a, "mad"))
         return false;
     return OIIO::ImageBufAlgo::mad(dst, a, b, to_cspan(c), roi, nthreads);
 }
@@ -2403,7 +2419,8 @@ imagebufalgo_mad_ici(ImageBuf& dst, const ImageBuf& a,
     if (refuse_distant_pair(dst, a, c, "mad")
         || refuse_deep_mismatch(dst, a, c, "mad")
         // b is a constant; a and c are both images and must line up.
-        || refuse_channel_mismatch(dst, a, c, "mad"))
+        || refuse_channel_mismatch(dst, a, c, "mad")
+        || refuse_wide_destination(dst, a, "mad"))
         return false;
     return OIIO::ImageBufAlgo::mad(dst, a, to_cspan(b), c, roi, nthreads);
 }
@@ -2413,6 +2430,10 @@ imagebufalgo_mad_icc(ImageBuf& dst, const ImageBuf& a,
                      rust::Slice<const float> b, rust::Slice<const float> c,
                      const ROI& roi, int nthreads)
 {
+    // One image operand, so there is nothing to line up against it, but the
+    // destination's width still drives the kernel.
+    if (refuse_wide_destination(dst, a, "mad"))
+        return false;
     return OIIO::ImageBufAlgo::mad(dst, a, to_cspan(b), to_cspan(c), roi,
                                    nthreads);
 }

@@ -2,6 +2,41 @@
 
 This fork's changes, newest first.
 
+## Unreleased
+
+### `mad` no longer reads past a narrower operand, and an invariant now covers the class
+
+`mad` computes `a * b + c`, and the shim already refused operands that
+disagreed with each other, because the kernel reads each of them to the union
+channel count. It did not compare the operands against the **destination**,
+and the channel range the kernel runs comes from the destination. A
+two-channel operand into a pre-allocated six-channel destination therefore
+passed the guard and came back holding 12, 20, 30 and 42 in the channels the
+operands do not have: `a * b + c` computed on the *next pixel's* values, and
+at the end of the buffer on whatever followed the allocation. All four operand
+combinations were affected, and the one taking two constants had no guard at
+all.
+
+`copy` has carried that destination check inline since 0.2.0. `mad` now
+carries it too, which makes the two consistent, and the remaining difference
+between them is only where the check is written.
+
+`tests/wide_destination_test.rs` is new and is what found it. It asks one
+question of every operation that takes a source and a destination: given a
+source whose values are all distinct and all non-zero, and a destination with
+more channels than the source, does any channel the source lacks come back
+holding something other than its sentinel or zero? A refusal counts as a pass,
+since refusing these shapes is what the guards are for.
+
+The reason it needed writing is that neither existing suite can see this
+class. `property_test` asks whether a value is plausible, `is_finite()` and
+`abs() < 1e30`, and an over-read lands on the next pixel, so it returns a
+small finite number and passes. `differential_algo_test` compares the safe
+layer against the raw sys bridge, and both go through the same C++ shim, as
+its own header says, so a defect inside a shim is invisible to it. The
+`premult` defect in 0.3.1 was inside a shim and produced `0 1 2 3 4`, every
+value plausible.
+
 ## 0.3.1 — 2026-11-06
 
 `oiio` moves to 0.3.1 and `oiio-sys` to 0.4.0. The theme is defects found by
