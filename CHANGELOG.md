@@ -11,6 +11,34 @@ constructible, so `cargo-semver-checks` reports
 `#[non_exhaustive]` structs and are additive. Checked with the tool rather
 than by reading the diff.
 
+### `premult` and `unpremult` no longer reach past the source's pixel
+
+`premult` and `unpremult` on a source with no alpha channel are documented to
+copy instead of dividing, and this fork already replaced the library's own
+copy-by-paste with a real copy, because paste adds its offset to the source's
+own coordinates and counted the origin twice. That replacement called
+`ImageBufAlgo::copy` directly, which routed around the channel guard `copy`
+itself carries here, and so made these two functions the only way through this
+crate into the unchecked read the guard exists for.
+
+A 4 by 4 one-channel ramp holding 0 through 15, copied into a pre-allocated 4
+by 4 five-channel destination filled with -1, came back from `premult` as
+success with pixel 0,0 holding `0 1 2 3 4`, the source's value followed by its
+next four pixels, and pixel 3,3 holding `15 3157.1953 9.5e-44 0.0037381276
+-3.8537407e-34`, the last two from past the end of the source's 16-float
+allocation. `unpremult` was identical. A direct `copy` with the same arguments
+was refused, as it has been since 0.2.0, and `repremult` was refused for having
+no alpha to re-premultiply by.
+
+The no-alpha copy now goes through the same shim a direct `copy` does, so the
+guard applies once and in one place. Reported upstream as
+[#5661](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5661),
+where OpenImageIO's own `copy` and `circular_shift` have the same unguarded
+read; Larry Gritz opened
+[PR #5664](https://github.com/AcademySoftwareFoundation/OpenImageIO/pull/5664),
+which clamps the channel range after `IBAprep` and leaves the destination's
+extra channels as it found them.
+
 ### A deep paste lands where it was asked
 
 `ImageBufAlgo::paste` sends a deep source down a path that never calls

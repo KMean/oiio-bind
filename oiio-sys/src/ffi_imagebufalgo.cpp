@@ -1019,12 +1019,20 @@ imagebufalgo_over(ImageBuf& dst, const ImageBuf& a, const ImageBuf& b,
 // as allocated. Measured on a 4x1 RGB image at origin 5,7 — every pixel of the
 // result came back empty, and the call reported success.
 //
-// The copy is the intent, so do the copy.
+// The copy is the intent, so do the copy -- but through `imagebufalgo_copy`
+// rather than `OIIO::ImageBufAlgo::copy`, so that the guards that shim applies
+// to a direct `copy` apply here too. Calling the library function directly
+// routed around the channel guard at the top of this file, which made
+// `premult` and `unpremult` on an alpha-less source the one public way into the
+// unchecked read past the source's pixel: measured on a 4x4 one-channel ramp
+// into a pre-allocated 4x4 five-channel destination, pixel 0,0 came back as the
+// source's next four pixels and pixel 3,3 read past the end of its allocation,
+// both under a success return. The policy belongs in one place.
 bool
 copy_instead_of_alpha_division(ImageBuf& dst, const ImageBuf& src,
                                const ROI& roi, int nthreads)
 {
-    return OIIO::ImageBufAlgo::copy(dst, src, OIIO::TypeDesc(), roi, nthreads);
+    return imagebufalgo_copy(dst, src, OIIO::TypeDesc(), roi, nthreads);
 }
 
 bool
