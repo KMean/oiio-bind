@@ -1510,8 +1510,7 @@ fn every_mip_level_of_a_colour_coded_pyramid_reads_as_itself() {
     );
 
     let base = ImageBuf::from_path(&path).expect("could not open the pyramid");
-    let fills_nmiplevels_without_a_cache =
-        oiio_sys::imageio::openimageio_version() >= 30_202;
+    let fills_nmiplevels_without_a_cache = oiio_sys::imageio::openimageio_version() >= 30_202;
     let expected = if fills_nmiplevels_without_a_cache {
         i32::try_from(count).expect("level count should fit an i32")
     } else {
