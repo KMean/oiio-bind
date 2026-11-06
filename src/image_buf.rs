@@ -434,27 +434,27 @@ impl ImageBuf {
         sys::imagebuf::imagebuf_nsubimages(self.inner())
     }
 
-    /// Always 0 for a buffer this crate made. Use
-    /// [`ImageCache::mip_level_count`](crate::ImageCache::mip_level_count).
-    ///
-    /// `ImageBufImpl::init_spec` fills `m_nmiplevels` only on its
-    /// cache-backed branch (`imagebuf.cpp:1137`). The branch that opens the
-    /// file through `ImageInput` sets `m_nsubimages` from
-    /// `oiio:subimages` and leaves `m_nmiplevels` at the zero it was
-    /// initialised with (`imagebuf.cpp:1232-1267`), so `nmiplevels()`
-    /// answers 0 for every file, mipmapped or not. `nsubimages()`, from the
-    /// same function, is correct.
+    /// Number of mip levels of the attached file, **which is 0 on
+    /// OpenImageIO older than 3.2.2.0**. On those versions use
+    /// [`ImageCache::mip_level_count`](crate::ImageCache::mip_level_count),
+    /// which answers on every version.
     ///
     /// Every buffer this crate opens from a file passes a null cache, which
-    /// is what the `Send` reasoning on this type rests on, so that branch is
-    /// the only one it takes. The number is still available: an
+    /// is what the `Send` reasoning on this type rests on, so it always
+    /// takes `ImageBufImpl::init_spec`'s `ImageInput` branch rather than the
+    /// cache-backed one. Up to and including 3.2.1.3 that branch set
+    /// `m_nsubimages` from `oiio:subimages` and left `m_nmiplevels` at the
+    /// zero it was initialised with, so this answered 0 for every file,
+    /// mipmapped or not, while `subimage_count` from the same function was
+    /// correct. OpenImageIO PR #5437 gave the branch a real value from
+    /// `oiio:miplevels`; it reached the 3.2 line as a backport that ships in
+    /// 3.2.2.0, so from that release on this returns the real count. An
     /// [`ImageCache`](crate::ImageCache) reports 10 levels for OpenEXR's
-    /// `ColorCodedLevels.exr` where this returns 0. Reading a level works
-    /// regardless, and [`ImageBuf::from_path_at`] refuses one past the last.
+    /// `ColorCodedLevels.exr`, and so does this on 3.2.2.0 and newer.
     ///
-    /// This is kept rather than removed because it is OpenImageIO's own
-    /// accessor, and a caller comparing the two libraries should find it
-    /// where they expect and read what it does.
+    /// Reading a level works on every version regardless of what this
+    /// returns, and [`ImageBuf::from_path_at`] refuses one past the last, so
+    /// code that reads levels rather than counting them was never affected.
     pub fn mip_level_count(&self) -> i32 {
         sys::imagebuf::imagebuf_nmiplevels(self.inner())
     }

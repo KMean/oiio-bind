@@ -1483,12 +1483,23 @@ fn every_mip_level_of_a_colour_coded_pyramid_reads_as_itself() {
         return;
     }
 
-    // The level count comes from a cache, not from the buffer.
-    // `ImageBuf::mip_level_count` answers 0 for every file this crate opens,
-    // because `ImageBufImpl::init_spec` fills `m_nmiplevels` only on its
-    // cache-backed branch and the `ImageInput` branch leaves it at zero while
-    // setting `m_nsubimages` beside it. Both are asserted here so the
-    // asymmetry is recorded rather than rediscovered.
+    // The level count is always available from a cache. Whether it is also
+    // available from the buffer depends on the library version.
+    //
+    // Up to and including 3.2.1.3, `ImageBufImpl::init_spec` filled
+    // `m_nmiplevels` only on its cache-backed branch, and the `ImageInput`
+    // branch left it at zero while setting `m_nsubimages` beside it, so
+    // `ImageBuf::mip_level_count` answered 0 for every file. PR #5437 gave the
+    // `ImageInput` branch a real value from `oiio:miplevels`. It landed on main
+    // as `ee1c64138` and was backported onto the 3.2 line as `76fca2633`, which
+    // ships in **v3.2.2.0**, so the change is in a release rather than only in
+    // 3.3. Both behaviours are asserted rather than one being pinned, so this
+    // keeps testing the asymmetry on every supported OpenImageIO instead of
+    // failing on the ones that answer.
+    //
+    // Note for anyone re-deriving the boundary: asking whether `ee1c64138` is
+    // an ancestor of `v3.2.2.0` says no, because the released fix is the
+    // backport. Read the file at the tag instead.
     let cache = oiio::ImageCache::new().expect("could not make a cache");
     let count = cache
         .mip_level_count(&path, 0)
@@ -1499,17 +1510,30 @@ fn every_mip_level_of_a_colour_coded_pyramid_reads_as_itself() {
     );
 
     let base = ImageBuf::from_path(&path).expect("could not open the pyramid");
+    let fills_nmiplevels_without_a_cache =
+        oiio_sys::imageio::openimageio_version() >= 30_202;
+    let expected = if fills_nmiplevels_without_a_cache {
+        i32::try_from(count).expect("level count should fit an i32")
+    } else {
+        0
+    };
     assert_eq!(
         base.mip_level_count(),
-        0,
-        "ImageBuf::mip_level_count is 0 for a buffer with no cache; if this ever \
-         returns {count} then OpenImageIO has filled m_nmiplevels on the ImageInput \
-         branch and the documentation on it should say so"
+        expected,
+        "ImageBuf::mip_level_count on a buffer with no cache: expected \
+         {expected} on OpenImageIO {}, where the ImageInput branch {} fill \
+         m_nmiplevels",
+        oiio_sys::imageio::openimageio_version(),
+        if fills_nmiplevels_without_a_cache {
+            "does"
+        } else {
+            "does not"
+        }
     );
     assert_eq!(
         base.subimage_count(),
         1,
-        "subimage_count, from the same function, is correct"
+        "subimage_count, from the same function, is correct on every version"
     );
 
     let mut colours = Vec::new();
