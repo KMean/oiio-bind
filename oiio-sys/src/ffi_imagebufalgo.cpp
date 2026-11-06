@@ -1,4 +1,5 @@
 #include "ffi_imagebufalgo.h"
+#include "ffi_version.h"
 #include "oiio-sys/src/imagebufalgo.rs.h"
 
 #include <OpenImageIO/color.h>
@@ -778,8 +779,13 @@ imagebufalgo_copy(ImageBuf& dst, const ImageBuf& src, TypeDesc convert,
     // window did not even overlap the source's: success, with inf in a
     // channel the source does not have. Refuse the shapes the copy cannot
     // cover.
+    // The predicate sits on the channel check alone. The non-overlapping
+    // window refusal below it waits on no upstream fix at all, and PR #5664
+    // does not touch it, so gating the enclosing block would have retired it
+    // on the strength of a fix that never reached it.
     if (dst.initialized() && !dst.deep()) {
-        if (dst.nchannels() != src.nchannels()) {
+        if (dst.nchannels() != src.nchannels()
+            && !detail::library_clamps_mutual_channel_range()) {
             dst.errorfmt("copy: the destination is allocated with {} channels "
                          "and the source has {}; line them up with channels "
                          "first, or copy into an empty destination",
@@ -2007,6 +2013,12 @@ static bool
 refuse_unsafe_binomial_kernel(ImageBuf& dst, const rust::Str name, float width,
                               float height)
 {
+    // Gated inside the helper rather than at the call site, which is safe here
+    // for the reason it is not safe for refuse_wide_destination: this one has a
+    // single caller and upstream PR #5653 fixes the only kernel it protects. See
+    // ffi_version.h.
+    if (detail::library_handles_even_binomial_kernels())
+        return false;
     if (!is_binomial(name)
         || (binomial_extent_is_safe(width) && binomial_extent_is_safe(height)))
         return false;
@@ -2079,7 +2091,8 @@ imagebufalgo_unsharp_mask(ImageBuf& dst, const ImageBuf& src,
     // three, `make_kernel(kernel, width, width)` at or below it. Either way
     // the width reaches the binomial branch as an extent, so the same
     // allocation defect applies and the same rule has to hold here.
-    if (is_binomial(kernel) && !binomial_extent_is_safe(width)) {
+    if (is_binomial(kernel) && !binomial_extent_is_safe(width)
+        && !detail::library_handles_even_binomial_kernels()) {
         dst.errorfmt(
             "unsharp_mask: a binomial kernel needs an odd whole width, and "
             "was asked for {}; OpenImageIO sizes the taps from the width "
