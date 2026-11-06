@@ -8,7 +8,38 @@ their reasoning; the current release is immediately below.
 Remember that publishing is irreversible: a published version can be yanked,
 but never replaced or deleted.
 
-## Ready to publish: `oiio` 0.3.1 and `oiio-sys` 0.4.0
+## Ready to publish: `oiio` 0.3.2 and `oiio-sys` 0.4.1
+
+Prepared 2026-11-06. **Both are patches.** No signature moved and nothing was
+removed; the content is ten operations that returned a wrong answer now
+returning an error. `oiio-sys` moves because the change is in its C++ shims.
+
+Gates, all run on 2026-11-06 at these versions, against the vcpkg 3.1.12, with
+the three corpus variables set and `OIIO_BIND_REQUIRE_CORPUS=1`:
+
+- [x] `cargo fmt --all --check`
+- [x] `cargo clippy --workspace --all-targets -- -D warnings`
+- [x] `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`
+- [x] `DOCS_RS=1 cargo doc --workspace --no-deps`
+- [x] `cargo test --workspace --all-targets`: **472 pass**
+- [x] `cargo test --workspace --doc`: **26 pass**, so 498 in total
+- [x] The new `wide_destination_test`, plus `algo_test`,
+      `algo_pixelmath_test`, `algo_geometry_test`, `algo_rotate_test` and
+      `guard_coverage_test`, also green against the 3.3.0.0dev build in
+      `F:/dev/dist/OIIO-verify-base`. Worth doing for this release because
+      every change in it is a refusal, and a refusal that fires on a newer
+      library than it was written for is the failure mode to watch.
+- [x] `cargo package -p oiio-sys`: see below.
+
+**Note on the ten refusals.** Each is a workaround for an OpenImageIO defect,
+and upstream
+[PR #5664](https://github.com/AcademySoftwareFoundation/OpenImageIO/pull/5664)
+fixes two of the same class with a one-line clamp. When that lands, these
+guards become stricter than the library and should be revisited together. There
+is no version-gating mechanism in `ffi_imagebufalgo.cpp` yet, which is the
+thing to build before that happens.
+
+## Published: `oiio` 0.3.1 and `oiio-sys` 0.4.0
 
 Prepared 2026-11-06, commit `4a0acae`. Versions are bumped, the changelog
 section is dated, and the tree is clean.

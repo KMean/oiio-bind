@@ -2,7 +2,19 @@
 
 This fork's changes, newest first.
 
-## Unreleased
+## 0.3.2 — 2026-11-06
+
+`oiio` moves to 0.3.2 and `oiio-sys` to 0.4.1. Both are patches: no signature
+moved and nothing was removed. Ten operations that returned a wrong answer now
+return an error instead, which is the whole content of the release.
+
+The theme is one defect class and the test that finds it. OpenImageIO's kernels
+take their channel range from the destination and index the source with it
+unchecked, so an operation handed a destination wider than its source reads
+past each source pixel. `copy` has been guarded against that since 0.2.0 and
+0.3.1 fixed `premult` and `unpremult`, which reached the kernel through a
+fallback that bypassed the guard. This release adds the invariant that looks
+for the rest of the class systematically, and fixes the ten it found.
 
 ### Nine more operations no longer read past a narrower source
 
