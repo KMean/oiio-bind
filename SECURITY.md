@@ -63,11 +63,24 @@ is reachable from this crate, it is guarded here and reported upstream:
 
 | upstream | what | state |
 |---|---|---|
-| [#5400](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5400) | `read_image` with an `image_span` transposed x and y on tiled files | fixed |
-| [#5638](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5638) | the colour engine wrote `0.5 + 10 * src` into channels past the fourth | fixed |
-| [#5645](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5645) | `ImageBufAlgo::max` reads past the narrower input | fixed |
-| [#5648](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5648) | `make_kernel("binomial", ...)` indexes its tap arrays past their allocation for even or fractional extents | fix open in [#5653](https://github.com/AcademySoftwareFoundation/OpenImageIO/pull/5653) |
-| [#5649](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5649) | a deep `paste` wraps into the next scanline instead of clipping, and drops `chbegin` | fix open in [#5652](https://github.com/AcademySoftwareFoundation/OpenImageIO/pull/5652) |
+| [#5400](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5400) | `read_image` with an `image_span` transposed x and y on tiled files | released |
+| [#5638](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5638) | the colour engine wrote `0.5 + 10 * src` into channels past the fourth | fixed, on the 3.2 line |
+| [#5645](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5645) | `ImageBufAlgo::max` reads past the narrower input | fixed, on the 3.2 line |
+| [#5648](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5648) | `make_kernel("binomial", ...)` indexes its tap arrays past their allocation for even or fractional extents | fixed, on the 3.2 line |
+| [#5649](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5649) | a deep `paste` wraps into the next scanline instead of clipping, and drops `chbegin` | fixed, on the 3.2 line |
+| [#5660](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5660) | a UDIM pattern holding a regex metacharacter threw out of the `ImageCache`, matched nothing, or matched the wrong file | fixed on the development line |
+| [#5662](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5662) | `get_image_info` returned true after copying an uninitialised buffer, for a UDIM set with no readable tile | fixed on the development line |
+| [#5661](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5661) | operations take their channel range from the destination and index the source with it unchecked | fix open in [#5664](https://github.com/AcademySoftwareFoundation/OpenImageIO/pull/5664) |
+
+The state column distinguishes three things, because only the first of them
+changes what an installed library does. "Released" means a published version
+carries the fix. "Fixed, on the 3.2 line" means it is merged and cherry-picked
+to the branch the 3.2 patch releases are cut from, but no tag carries it yet:
+as of 2026-11-14 the newest releases are 3.2.2.0 of 2026-10-28 and 3.1.19.0 of
+2026-10-27, and every fix above except #5400 postdates both. "Fixed on the
+development line" means merged to `main` only. Each guard here is retired
+against the first release that carries its fix, read from the file at that tag,
+so a guard outlives the merge that makes it unnecessary.
 
 A defect that is only reachable by calling OpenImageIO directly, not through
 this crate, is an upstream matter rather than a vulnerability here.

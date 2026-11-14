@@ -294,7 +294,7 @@ verified.
 
 Binding this library turned up defects in OpenImageIO itself, many of which
 let safe Rust read or write out of bounds, crash, or silently corrupt an
-image. Five were reported upstream:
+image. Eight were reported upstream:
 
 - [#5400](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5400),
   `read_image` with an `image_span` transposing x and y on tiled files. Fixed
@@ -308,12 +308,30 @@ image. Five were reported upstream:
   in PR #5646.
 - [#5648](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5648),
   `make_kernel("binomial", ...)` sizing its tap arrays from the requested
-  extent and indexing them over the odd-rounded one. A fix is open as PR #5653,
-  with a regression test.
+  extent and indexing them over the odd-rounded one. Fixed in PR #5653, with a
+  regression test, and cherry-picked to the 3.2 branch.
 - [#5649](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5649),
   a deep `paste` writing through an unrange-checked `pixelindex`, so an offset
   wraps into the next scanline rather than clipping, and ignoring `chbegin`.
-  A fix is open as PR #5652, with a regression test.
+  Fixed in PR #5652, with a regression test, and cherry-picked to the 3.2
+  branch.
+- [#5660](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5660),
+  `Filesystem::filename_to_regex` leaving regex metacharacters unescaped, so a
+  UDIM pattern holding one threw out of the `ImageCache` while it held a
+  file-cache bin lock. Fixed in PR #5665, which also wraps the bin in a scope
+  guard so no exception can leak the lock.
+- [#5662](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5662),
+  `get_image_info` copying an uninitialised buffer to the caller and returning
+  true, for a UDIM set with no readable tile. Fixed in PR #5667.
+- [#5661](https://github.com/AcademySoftwareFoundation/OpenImageIO/issues/5661),
+  operations taking their channel range from the destination and indexing the
+  source with it unchecked. The fix is open as PR #5664, which grew from the
+  two operations reported to the whole family after a measured table of nine
+  more went onto the PR.
+
+Only #5400's fix is in a release, in 3.2.1.1 and 3.1.18.1 of 2026-10-02. The
+newest releases are 3.2.2.0 of 2026-10-28 and 3.1.19.0 of 2026-10-27, and every
+other fix above postdates both.
 
 The others are guarded here rather than passed on, which is why a few
 operations refuse arguments OpenImageIO accepts:
@@ -332,15 +350,27 @@ operations refuse arguments OpenImageIO accepts:
   than wrapping into the next scanline. Where the destination is already
   allocated it clips the source to what fits, which is the flat path's
   behaviour and what the call documents; a paste that lands nowhere succeeds
-  having changed nothing, again as the flat path does. All of this matches
-  upstream's own fix in PR #5652, so the answer does not depend on which
-  OpenImageIO is linked.
+  having changed nothing, again as the flat path does. Upstream's own fix in
+  PR #5652 agrees on all of that, and on refusing a destination that could not
+  be sized, which the shim catches after the call rather than before it. The
+  merged fix went further in two places the shim does not follow, so for two
+  shapes the answer does depend on which OpenImageIO is linked: it clips
+  `srcroi` to the source's own window, where the shim takes the region as
+  given, and it refuses a deep paste whose destination and source disagree on
+  channel count, which the shim does not check. Settling both is on the list.
 - Every measurement, and `ifft`, refuse inputs whose pixels they would
   dereference through a null pointer.
 
-The colour operations do not refuse anything: they repair, copying the
+The colour operations repair rather than refuse where they can, copying the
 channels past the fourth that OpenImageIO's colour engine would otherwise
-scale and offset.
+scale and offset. They do refuse one thing, a region that begins above channel
+zero, because the engine transforms the wrong channels for such a region
+rather than the ones asked for. Upstream has since arrived at the same
+restriction from the other side: PR #5664 makes a channel range that does not
+start at zero an error for every OCIO entry point, since each delegates to the
+one `colorconvert` overload that now carries the check, and documents it in
+`colorconvert`'s own header block. That PR also requires the range to cover the
+colour channels, which the shim does not yet check.
 
 Each of these is a documented restriction with a test, not a silent narrowing.
 

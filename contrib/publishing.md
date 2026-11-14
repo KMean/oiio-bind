@@ -34,10 +34,15 @@ the three corpus variables set and `OIIO_BIND_REQUIRE_CORPUS=1`:
 **Note on the ten refusals.** Each is a workaround for an OpenImageIO defect,
 and upstream
 [PR #5664](https://github.com/AcademySoftwareFoundation/OpenImageIO/pull/5664)
-fixes two of the same class with a one-line clamp. When that lands, these
-guards become stricter than the library and should be revisited together. There
-is no version-gating mechanism in `ffi_imagebufalgo.cpp` yet, which is the
-thing to build before that happens.
+now fixes the whole class rather than the two operations it started with: it
+passes `IBAprep_CLAMP_MUTUAL_NCHANNELS` at fourteen call sites and rewrites
+`resize_`'s channel loops. When that lands, these guards become stricter than
+the library and should be revisited together, except for two that become
+divergences rather than strictness, because the fixed library defines what they
+refuse. The version-gating mechanism now exists, in `oiio-sys/src/ffi_version.h`
+with the predicates wired in at the call sites; read its header comment before
+moving a threshold, since a fix that first ships in a tweak release cannot be
+expressed as one.
 
 ## Published: `oiio` 0.3.1 and `oiio-sys` 0.4.0
 
